@@ -9,6 +9,7 @@ import { dataDir } from "@harbor/store";
 import { basename, join } from "node:path";
 import type { TabCtx, TabUi } from "../api.ts";
 import { sameRow, syncRows } from "../../modelsync.ts";
+import { isImage } from "../../logic/images.ts";
 import { loadQr } from "../../qr.ts";
 import { releaseBlocks } from "../../markdown.ts";
 import { aiSlintParts, type PPartData } from "./aiparts.ts";
@@ -129,6 +130,8 @@ class PersonsTab {
   private sideModel = new slint.ArrayModel<Record<string, unknown>>([]);
   private listModel = new slint.ArrayModel<Record<string, unknown>>([]);
   private msgModel = new slint.ArrayModel<Record<string, unknown>>([]);
+  /** The pictures going with the next message, as tiles over the composer (PAttach). */
+  private tileModel = new slint.ArrayModel<{ name: string; thumb: Pixels }>([]);
   private renderQueued = false;
   private chatSeq = 0;
   /**
@@ -144,6 +147,7 @@ class PersonsTab {
     this.pics = new Pictures(() => this.render());
     const b = this.bus;
     b.side = this.sideModel;
+    b.attach_tiles = this.tileModel;
     b.list = this.listModel;
     b.msgs = this.msgModel;
     const on = (name: string, f: Cb): void => {
@@ -214,11 +218,19 @@ class PersonsTab {
     // Ctrl+V / Shift+Insert in the composer: a picture on the clipboard joins the message (the text pastes as usual)
     on("paste", () => void this.pasteImage());
     on("clear_attached", () => {
-      if (this.aiMode) this.aiFiles = [];
-      else if (this.sr) this.srFiles = [];
-      else this.files = [];
+      this.curFiles = this.curFiles.filter((f) => isImage(f));
       this.render();
     });
+    on("remove_attached", ((i: number) => {
+      const pic = this.curFiles.filter((f) => isImage(f))[i];
+      if (pic === undefined) return;
+      this.curFiles = this.curFiles.filter((f) => f !== pic);
+      this.render();
+    }) as Cb);
+    on("open_attached", ((i: number) => {
+      const pics = this.curFiles.filter((f) => isImage(f));
+      if (pics[i] !== undefined) this.ctx.openImage?.(pics[i]!, pics);
+    }) as Cb);
     on("set_to", ((to: string) => this.setTo(to === "ai")) as Cb);
     on("cancel_forward", () => {
       this.forwarded = null;
@@ -490,7 +502,7 @@ class PersonsTab {
     b.reply_text = this.aiMode ? "" : this.replyTo?.text ?? "";
     b.fwd_name = this.aiMode && this.forwarded ? this.forwarded.name : "";
     b.fwd_text = this.aiMode && this.forwarded ? this.forwarded.text : "";
-    b.attached = (this.aiMode ? this.aiFiles : this.files).map((f) => basename(f)).join(", ");
+    this.paintAttached(b);
     b.ai_mode = this.aiMode;
     b.panel = this.panelOpen;
     const rows = aiFolds(chatRows(c).slice(-400), this.aiFold);
@@ -499,6 +511,25 @@ class PersonsTab {
     const js = rows.map((r) => this.msgJs(r));
     // pictures (`images[].image`) compare by identity: never serialised (see sameRow)
     syncRows(this.msgModel, js, sameRow);
+  }
+
+  /** The files the composer on screen sends with its next message: the AI's, a site request's reply's or the person's. */
+  private get curFiles(): string[] {
+    return this.aiMode ? this.aiFiles : this.sr ? this.srFiles : this.files;
+  }
+  private set curFiles(v: string[]) {
+    if (this.aiMode) this.aiFiles = v;
+    else if (this.sr) this.srFiles = v;
+    else this.files = v;
+  }
+
+  /** The composer's attachments: pictures as tiles showing the picture (decoded small, once), other files in one chip. */
+  private paintAttached(b: Bus): void {
+    const list = this.curFiles;
+    b.attached = list.map((f) => basename(f)).join(", ");
+    b.attached_files = list.filter((f) => !isImage(f)).map((f) => basename(f)).join(", ");
+    const tiles = list.filter((f) => isImage(f)).map((p) => ({ name: basename(p), thumb: this.pics.get(p, 256) ?? NO_PX }));
+    syncRows(this.tileModel, tiles, (x, y) => x.name === y.name && x.thumb === y.thumb);
   }
 
   private attachPaths = new Map<string, string | null>();
@@ -1455,7 +1486,7 @@ class PersonsTab {
     b.reply_text = "";
     b.fwd_name = this.aiMode && this.forwarded ? this.forwarded.name : "";
     b.fwd_text = this.aiMode && this.forwarded ? this.forwarded.text : "";
-    b.attached = this.aiMode ? this.aiFiles.map((f) => basename(f)).join(", ") : this.srFiles.length ? `${this.srFiles.length === 1 ? "1 picture" : `${this.srFiles.length} pictures`}: ${this.srFiles.map((f) => basename(f)).join(", ")}` : "";
+    this.paintAttached(b);
     b.ai_mode = this.aiMode;
     if (!p) {
       b.sr_subject = row?.subject || sr.ref;

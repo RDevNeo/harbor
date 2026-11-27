@@ -4,6 +4,7 @@
 // Built on Hub's design system (ds.slint, DESIGN.md): rows, heads, panels, dialogs and menus are the shared ones.
 import { Theme, Icons, Ds, Glyph, TipArea, Btn, Variant, BtnSize, Ui, Input, SearchField, Spinner, Empty, MenuItem, MenuLabel, MenuSeparator, ListRow, SectionHead, FoldBar, ListNote, Avatar, ChannelMark, StatusDot, SideSurface, SideHead, ShowSideBtn, PageBar, PanelSurface, PanelSection, DialogFrame, DialogActions, Field, FieldLabel, TextBox, MenuPanel, Toast, Chip, PillSwitch, Card, ComposeField, Scroll } from "ds.slint";
 import { MdBlock, MdBlockView } from "markdown.slint";
+import { ImageTile } from "composer.slint";
 
 export struct PRow {
     kind: string, // all | section | store | person | settled | empty | sr-head | sr-notice | sr-empty | sr | sr-gap
@@ -109,6 +110,8 @@ export struct PChip { id: string, label: string, on: bool, color: color }
 
 // A site request's pane (SpokPay's admin request page): a picture of the brief or a message at its drawn size, a fact
 // row of the brief (two half ones side by side), and one line of the timeline (an event or a message).
+// A picture going with the next message, shown over the composer as Projects' composer does (ImageTile).
+export struct PAttach { name: string, thumb: image }
 export struct PSrImg { image: image, w: length, h: length }
 export struct PSrFact { a-label: string, a-text: string, b-label: string, b-text: string, two: bool }
 export struct PSrItem {
@@ -165,6 +168,8 @@ export global PersonsBus {
     in property <string> reply-name; // the message being replied to: its author ("" none) and text
     in property <string> reply-text;
     in property <string> attached; // the files going with the next message (or note), one line
+    in property <[PAttach]> attach-tiles; // its pictures, as tiles over the composer
+    in property <string> attached-files; // its other files, one line (the chip)
     // The composer (Person Hub's): to the person or to their AI ("To: AI | Name"), each with its own draft.
     in property <bool> ai-mode;
     in property <bool> c-ai-on: true; // the person's AI is there: the switch shows
@@ -296,7 +301,9 @@ export global PersonsBus {
     callback cancel-reply();
     callback attach();
     callback paste(); // Ctrl+V in the composer: a picture on the clipboard joins the message
-    callback clear-attached();
+    callback clear-attached(); // drops the files that aren't pictures (each picture has its own ×)
+    callback remove-attached(int); // a picture's ×, by its place among the tiles
+    callback open-attached(int); // a picture clicked: the lightbox
     callback toggle-ai();
     callback set-to(string); // "ai" | "person"
     callback cancel-forward();
@@ -1770,10 +1777,29 @@ component Composer inherits Rectangle {
                             PersonsBus.cancel-forward();
                         }
                     }
-                    if PersonsBus.attached != "": QuoteChip {
+                    if PersonsBus.attach-tiles.length > 0: Rectangle {
+                        height: 70px;
+                        clip: true;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: start;
+                            for t[i] in PersonsBus.attach-tiles: ImageTile {
+                                thumb: t.thumb;
+                                name: t.name;
+                                number: 0;
+                                remove => {
+                                    PersonsBus.remove-attached(i);
+                                }
+                                open => {
+                                    PersonsBus.open-attached(i);
+                                }
+                            }
+                        }
+                    }
+                    if PersonsBus.attached-files != "": QuoteChip {
                         glyph: Icons.file;
                         lead: "";
-                        name: PersonsBus.attached;
+                        name: PersonsBus.attached-files;
                         close-tip: "Remove the files";
                         close => {
                             PersonsBus.clear-attached();

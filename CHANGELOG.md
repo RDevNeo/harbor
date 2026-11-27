@@ -6,6 +6,9 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 ## [Unreleased]
 
 ### Fixed
+- **Persons: pictures attached to a message show as pictures over the composer**, as in Projects' composer (the same
+  rounded 64 px tile, × on its corner, click for the lightbox), side by side, instead of one row of file names. Other
+  files keep the one-line chip. Desktop only: the phone app's Persons composer is its own UI, unchanged.
 - **Attach opens a file picker on Linux desktops without zenity or kdialog.** Every attach button (Projects' and
   Persons' composers, site requests' pictures, icons, uploads) ran zenity, then kdialog, and with neither (Hyprland,
   Sway) returned nothing, its "no file picker found" toast shown nowhere: the click did nothing. It now falls back to
