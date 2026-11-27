@@ -68,7 +68,7 @@ the same content as a full-screen sheet:
   **Reject** (R or ←) moves the lead to Restricted; **Skip** (S or ↓) leaves it as it is; **Approve** (A or →) marks
   it approved (out of Available, into Approved). Each then shows the next lead
   of the list the detail was opened from (its filter and order at that moment; a lead that left that list meanwhile
-  is passed over); after the last one the detail closes with "All reviewed". The keys act only while no text field
+  is passed over); after the last one the detail closes (no toast after Reject, Skip, Approve, Restrict or Unapprove: the move is the feedback; a failed one still toasts why). The keys act only while no text field
   has the focus. Approved and rejected leads stay in the ledger: never collected again. Phone: the same bar at the
   bottom of the sheet (no caps).
 

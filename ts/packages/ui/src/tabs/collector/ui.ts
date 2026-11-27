@@ -625,7 +625,7 @@ export function createCollectorUi(): TabUi {
   };
 
   /** The review bar: Reject (to Restricted), Skip (as it is), Approve (to the Approved list); then the next lead of the list
-   *  the detail was opened from, or "All reviewed" at its end. */
+   *  the detail was opened from, or back to the list at its end (no toast: the move is the feedback, errors still toast). */
   const review = async (what: "reject" | "skip" | "approve"): Promise<void> => {
     const d = detail;
     if (!d || !detailOpen || reviewBusy || editOpen || sendOpen) return;
@@ -635,22 +635,14 @@ export function createCollectorUi(): TabUi {
       // On a Restricted lead Reject is "Move to Available", on an Approved one Approve is.
       if (what === "reject" && d.restricted) {
         take((await call("POST", "v1/collector/restrict", { id: d.id, restricted: false })) as CollectorView);
-        ctx?.toast(`${d.name} is back in Available.`);
       } else if (what === "approve" && d.approved) {
         take((await call("POST", "v1/collector/approve", { id: d.id, approved: false })) as CollectorView);
-        ctx?.toast(`${d.name} is back in Available.`);
       } else if (what === "reject") take((await call("POST", "v1/collector/restrict", { id: d.id, restricted: true })) as CollectorView);
-      else if (what === "approve") {
-        take((await call("POST", "v1/collector/approve", { id: d.id, approved: true, to: "list" })) as CollectorView);
-        ctx?.toast(`${d.name} approved.`);
-      }
+      else if (what === "approve") take((await call("POST", "v1/collector/approve", { id: d.id, approved: true, to: "list" })) as CollectorView);
       const v = view;
       const next = v ? nextLead(queue, d.id, leadsOf(v, page, bus?.filter ?? "", historyRun).rows.map((r) => r.id)) : null;
       if (next) await showDetail(next, false);
-      else {
-        closeDetail();
-        ctx?.toast("All reviewed.");
-      }
+      else closeDetail();
     } catch (e) {
       ctx?.toast(errText(e));
     } finally {
@@ -774,10 +766,7 @@ export function createCollectorUi(): TabUi {
     on("open", (url: string) => {
       if (url) ctx?.openExternal(url);
     });
-    on("restrict", (id: string, yes: boolean) => {
-      const name = view?.creators.find((c) => c.id === id)?.name ?? "Lead";
-      void post("restrict", { id, restricted: yes }).then(() => ctx?.toast(yes ? `${name} moved to Restricted.` : `${name} is back in Available.`));
-    });
+    on("restrict", (id: string, yes: boolean) => void post("restrict", { id, restricted: yes }));
     on("filter_edited", () => render());
     on("email_edit", (id: string) => {
       emailFor = id;
@@ -897,10 +886,7 @@ export function createCollectorUi(): TabUi {
       render();
       void post("settings", { platforms: view.settings.platforms });
     });
-    on("approve_set", (id: string, yes: boolean) => {
-      const name = view?.creators.find((c) => c.id === id)?.name ?? "Lead";
-      void post("approve", { id, approved: yes }).then(() => ctx?.toast(yes ? `${name} approved.` : `${name} is back in Available.`));
-    });
+    on("approve_set", (id: string, yes: boolean) => void post("approve", { id, approved: yes }));
     on("reach_pick", (k: string) => {
       if (!(REACH_KINDS as readonly string[]).includes(k) || k === reachKind) return;
       drafts[reachKind] = b.d_reach_text;

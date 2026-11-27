@@ -727,11 +727,8 @@ final class CollectorCreator {
             LinearLayout chips = Ui.row(a);
             chips.addView(Ds.chip(a, "Edit profile", false, v -> edit()), Ui.margins(Ui.wrap(), 0, 0, 6, 0));
             if (!approved) chips.addView(Ds.chip(a, "Approve to Persons › Creators", false, v -> approveToPersons(name)), Ui.margins(Ui.wrap(), 0, 0, 6, 0));
-            else chips.addView(Ds.chip(a, "Unapprove", false, v -> a.post("approve", () -> { Ui.toast(a, name + " is back in Available"); load(false); }, "id", id, "approved", false)), Ui.margins(Ui.wrap(), 0, 0, 6, 0));
-            if (!approved) chips.addView(Ds.chip(a, restricted ? "Unrestrict" : "Restrict", false, v -> a.post("restrict", () -> {
-                Ui.toast(a, restricted ? name + " is back in Available" : name + " moved to Restricted");
-                load(false);
-            }, "id", id, "restricted", !restricted)), Ui.margins(Ui.wrap(), 0, 0, 6, 0));
+            else chips.addView(Ds.chip(a, "Unapprove", false, v -> a.post("approve", () -> load(false), "id", id, "approved", false)), Ui.margins(Ui.wrap(), 0, 0, 6, 0));
+            if (!approved) chips.addView(Ds.chip(a, restricted ? "Unrestrict" : "Restrict", false, v -> a.post("restrict", () -> load(false), "id", id, "restricted", !restricted)), Ui.margins(Ui.wrap(), 0, 0, 6, 0));
             if (!url.isEmpty()) chips.addView(Ds.chip(a, "Copy link", false, v -> Ui.copy(a, url)), Ui.wrap());
             hs.addView(chips);
             body.addView(hs, Ui.margins(Ui.fill(), 0, 10, 0, 0));
@@ -783,10 +780,7 @@ final class CollectorCreator {
         private void approveToPersons(String name) {
             Ui.dialog(a).setTitle("Approve " + name + "?")
                     .setMessage("They leave Available for Approved and are added to Persons › Creators. No message is sent.")
-                    .setPositiveButton("Approve", (x, w) -> a.post("approve", () -> {
-                        Ui.toast(a, name + " approved and added to Persons › Creators");
-                        load(false);
-                    }, "id", id, "approved", true, "to", "persons"))
+                    .setPositiveButton("Approve", (x, w) -> a.post("approve", () -> load(false), "id", id, "approved", true, "to", "persons"))
                     .setNegativeButton("Cancel", null).show();
         }
 

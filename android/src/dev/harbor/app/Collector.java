@@ -1003,20 +1003,16 @@ public class Collector extends Base {
     }
 
     /** The review bar: "reject" (to Restricted), "skip" (as it is), "approve" (to the Approved list); then the next
-     *  lead of the list the detail was opened from, or back to the list with "All reviewed". */
+     *  lead of the list the detail was opened from, or back to the list at its end. No toast: the move is the feedback
+     *  (a failed call still toasts its reason, in post). */
     void review(String id, String name, String what, List<String> queue) {
         Runnable next = () -> {
             String n = nextLead(queue, id, rowIds());
-            if (n == null) {
-                pop();
-                Ui.toast(this, "All reviewed");
-            } else replace(new CollectorCreator.Detail(this, n, nameOf(n), queue));
+            if (n == null) pop();
+            else replace(new CollectorCreator.Detail(this, n, nameOf(n), queue));
         };
         if ("reject".equals(what)) post("restrict", next, "id", id, "restricted", true);
-        else if ("approve".equals(what)) post("approve", () -> {
-            Ui.toast(this, name + " approved");
-            next.run();
-        }, "id", id, "approved", true, "to", "list");
+        else if ("approve".equals(what)) post("approve", next, "id", id, "approved", true, "to", "list");
         else next.run();
     }
 
@@ -1284,8 +1280,8 @@ public class Collector extends Base {
                 if (cur == null) return;
                 final String rid = cur.optString("id"), nm = cur.optString("name");
                 final boolean restricted = cur.optBoolean("restricted"), approved = !restricted && cur.optBoolean("approved");
-                if (approved) post("approve", () -> Ui.toast(c, nm + " is back in Available"), "id", rid, "approved", false);
-                else post("restrict", () -> Ui.toast(c, restricted ? nm + " is back in Available" : nm + " moved to Restricted"), "id", rid, "restricted", !restricted);
+                if (approved) post("approve", "id", rid, "approved", false);
+                else post("restrict", "id", rid, "restricted", !restricted);
             });
             acts.addView(act, Ui.margins(Ui.wrap(), 6, 0, 0, 0));
             card.addView(acts, Ui.margins(Ui.fill(), 0, 10, 0, 0));
