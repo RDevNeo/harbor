@@ -622,12 +622,15 @@ public class Collector extends Base {
         return null;
     }
 
-    /** The newest run that found someone (the screenshot rig's). */
+    /** The newest finished run that found someone (the screenshot rig's). */
     private JSONObject firstRunWithLeads() {
         JSONArray days = view == null ? null : view.optJSONArray("history");
         for (int d = 0; days != null && d < days.length(); d++) {
             JSONArray runs = days.optJSONObject(d) == null ? null : days.optJSONObject(d).optJSONArray("runs");
-            for (int i = 0; runs != null && i < runs.length(); i++) if (runs.optJSONObject(i) != null && runs.optJSONObject(i).optInt("found") > 0) return runs.optJSONObject(i);
+            for (int i = 0; runs != null && i < runs.length(); i++) {
+                JSONObject r = runs.optJSONObject(i);
+                if (r != null && !r.optBoolean("running") && r.optInt("found") > 0) return r;
+            }
         }
         return null;
     }
@@ -694,6 +697,8 @@ public class Collector extends Base {
             view.setTag(this);
             view.setPadding(Ui.dp(8), 0, Ui.dp(8), 0);
             row = Ui.row(c);
+            // The time and the dot sit on the title's line, at the top (not centred on the row).
+            row.setGravity(Gravity.TOP);
             row.setPadding(Ui.dp(8), 0, Ui.dp(8), 0);
             row.setBackground(Ui.press(0, 0, 8));
             row.setOnClickListener(v -> { if (cur != null) openRun(cur.optString("id")); });
@@ -702,7 +707,9 @@ public class Collector extends Base {
             time.setTypeface(Ui.mono);
             time.setGravity(Gravity.END);
             time.setPadding(0, Ui.dp(1), 0, 0);
-            row.addView(time, new LinearLayout.LayoutParams(Ui.dp(52), -2));
+            LinearLayout.LayoutParams tl = new LinearLayout.LayoutParams(Ui.dp(52), -2);
+            tl.gravity = Gravity.TOP;
+            row.addView(time, tl);
             LinearLayout guide = Ui.col(c);
             guide.setGravity(Gravity.CENTER_HORIZONTAL);
             dot = new View(c);
