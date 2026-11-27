@@ -65,6 +65,7 @@ import { type PaneInfo, type PaneTarget, SplitPanes } from "./splitrun.ts";
 import { AttachThumbs, sameFile } from "./attachthumbs.ts";
 import { VideoPane } from "./videopane.ts";
 import { CaptchaPane } from "./captchapane.ts";
+import { DiscordCaptchaSource } from "./hcaptcha.ts";
 import { ChatCaptcha, FRAME_W, hereCaptcha, noChatCaptcha } from "./chatcaptcha.ts";
 import { fakeCaptcha } from "./fakecaptcha.ts";
 import { emptyText, Favorites, type PickerLook, type PickerState, pickerRows, railStep, railTip, type Row, workspaceLine } from "./picker.ts";
@@ -319,10 +320,14 @@ export class Shell {
     this.mediaRows = new MediaRows(pkg, () => this.changed(this.chatId), (p) => this.nativeImage(p));
     this.mediaPkg = pkg;
     this.syncFiles();
-    // A Discord join that waits on a captcha comes up over the window for the person to solve.
-    this.captcha = new CaptchaPane(this.win, async (b) => (await pkg.images.decodeBytes(b, 1280)).image);
+    // A Discord captcha (Persons' friend request or message) comes up over the window for the person to solve.
+    const pane = new CaptchaPane(this.win, async (b) => (await pkg.images.decodeBytes(b, 1280)).image, this.discordCaptcha);
+    this.discordCaptcha.wake = () => pane.show(true);
+    this.captcha = pane;
     this.captcha.start();
   }
+  /** Discord's captchas, in a hidden browser, while one waits for the person. */
+  private readonly discordCaptcha = new DiscordCaptchaSource();
   private captcha: CaptchaPane | null = null;
   /** The invitation the top-right card shows (null: none), and those closed with its X this run (Settings keeps them). */
   private inviteShown: string | null = null;
@@ -4304,6 +4309,7 @@ export class Shell {
     this.surfaces.dispose();
     this.videoPane?.shutdown();
     this.captcha?.stop();
+    this.discordCaptcha.stop();
     this.chatCap.stop();
     for (const [id, run] of this.engine.turns) {
       this.engine.persist(id);
@@ -5968,6 +5974,7 @@ export class Shell {
       },
       kv: { get: (k) => this.data.store.get(k), setLater: (k, v) => this.data.store.setLater(k, v) },
       saveSoon: () => this.keepResume.poke(),
+      captcha: (job) => this.discordCaptcha.show(job),
     });
     // What a phone changed shows here too: while a tab besides Projects is on screen, it re-reads every 3 s.
     const tick = setInterval(() => {

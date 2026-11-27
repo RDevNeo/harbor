@@ -211,6 +211,24 @@ export type PresenceStatus = "online" | "idle" | "dnd" | "offline" | "invisible"
 /** Discord: where the account stands with someone (no entry = none). `sent`: our friend request waits; `incoming`: theirs. */
 export type Relation = "friend" | "sent" | "incoming" | "blocked";
 
+/** Discord wants a captcha before it takes a call (a friend request, a message): the person solves it in Hub (hCaptcha,
+ * its sitekey and rqdata), then the same call goes again with the answer. `id` names it for the answer. */
+export interface CaptchaAsk {
+  id: string;
+  sitekey: string;
+  rqdata: string | null;
+  what: "friend" | "message";
+  /** When it came (ms): it waits 10 minutes at most. */
+  at: number;
+}
+
+/** A captcha's answer, once the call went again: `captcha` when Discord asked for another. */
+export interface CaptchaOutcome {
+  ok: boolean;
+  error?: string;
+  captcha?: CaptchaAsk;
+}
+
 export type ConnEvent =
   | { type: "state"; state: ConnState }
   | { type: "messages"; peerId: string; messages: Message[] }
@@ -219,7 +237,9 @@ export type ConnEvent =
   | { type: "presence"; presence: Record<string, PresenceStatus | null>; lastSeen?: Record<string, number> }
   | { type: "typing"; peerId: string; kind: "typing" | "recording"; until: number }
   /** Discord relationships: `all` replaces every one (a new session), else only these change (null = none now). */
-  | { type: "relations"; relations: Record<string, Relation | null>; all?: boolean };
+  | { type: "relations"; relations: Record<string, Relation | null>; all?: boolean }
+  /** A captcha waits for the person before a call to this peer goes (null: none waits any more). */
+  | { type: "captcha"; peerId: string; captcha: CaptchaAsk | null };
 
 export interface LookupResult {
   matches: ChannelUser[];
@@ -235,4 +255,6 @@ export interface SendResult {
   ok: boolean;
   message?: Message;
   error?: string;
+  /** Discord asked for a captcha first: the message waits for the person's answer (the chat's `captcha`). */
+  captcha?: CaptchaAsk;
 }

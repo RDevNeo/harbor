@@ -357,6 +357,15 @@ export function friendButton(relation: string | null, sending: boolean): string 
   return relation === "incoming" ? "accept" : "add";
 }
 
+/** Discord's captcha as the engine hands it over: the page to draw it on (served as discord.com) and where the answer goes. */
+export interface CaptchaJson {
+  id: string;
+  what: "friend" | "message";
+  account: string;
+  url: string;
+  html: string;
+}
+
 export interface ChatJson {
   person: { id: string; name: string; initials: string; color: string; avatar: string | null; avatarPath: string | null; presence: string | null; status: { text: string; tone: string } | null };
   /** The chat the composer sends on: `id` is its key ("<connection>:<who>", what `account` takes back). */
@@ -365,6 +374,8 @@ export interface ChatJson {
   peer: string | null;
   /** Discord: friend | sent | incoming | blocked | none; null on the other channels (or signed out). */
   relation?: string | null;
+  /** Discord: a captcha the person solves before a friend request or a message goes (null: none waits). */
+  captcha?: CaptchaJson | null;
   typing: string | null;
   more: boolean;
   unreadFrom: string | null;

@@ -600,6 +600,37 @@ export const FRIEND_ERRORS: Readonly<Record<number, string>> = {
   20026: "Discord flagged this account; open Discord",
 };
 
+/** What Discord answers a call it wants a captcha for with (captcha_key, captcha_sitekey, captcha_service,
+ * captcha_rqdata, captcha_rqtoken, captcha_session_id): the hCaptcha a person solves, and what the retry sends back. */
+export interface CaptchaChallenge {
+  sitekey: string;
+  service: string;
+  rqdata: string | null;
+  rqtoken: string | null;
+  sessionId: string | null;
+}
+
+const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
+
+/** The captcha in an error answer (null: none, or one Hub can't show: no sitekey, a service besides hCaptcha). */
+export function captchaOf(json: unknown): CaptchaChallenge | null {
+  if (typeof json !== "object" || json === null) return null;
+  const j = json as Record<string, unknown>;
+  if (!j.captcha_key) return null;
+  const sitekey = str(j.captcha_sitekey);
+  const service = str(j.captcha_service) ?? "hcaptcha";
+  if (!sitekey || service !== "hcaptcha") return null;
+  return { sitekey, service, rqdata: str(j.captcha_rqdata), rqtoken: str(j.captcha_rqtoken), sessionId: str(j.captcha_session_id) };
+}
+
+/** The headers Discord's client retries a captcha'd call with: the solved token, the rqtoken and the session id it gave. */
+export function captchaHeaders(c: CaptchaChallenge, key: string): Record<string, string> {
+  const h: Record<string, string> = { "X-Captcha-Key": key };
+  if (c.rqtoken) h["X-Captcha-Rqtoken"] = c.rqtoken;
+  if (c.sessionId) h["X-Captcha-Session-Id"] = c.sessionId;
+  return h;
+}
+
 /** X-Context-Properties of the web client's Add Friend on a user's profile (base64 JSON). */
 export const FRIEND_CONTEXT = btoa(JSON.stringify({ location: "User Profile" }));
 

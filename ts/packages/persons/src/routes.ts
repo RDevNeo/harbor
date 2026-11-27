@@ -14,12 +14,13 @@ import { parsePlace, type Place } from "./model/move.ts";
 import { cleanUsername, isDiscordId, isEmail, joinScope, normalizeData, personLabel, searchText } from "./model/data.ts";
 import { headerStatus } from "./model/presence.ts";
 import { seenOf } from "./model/readState.ts";
-import type { AppData, ChannelKind, Message, OutgoingFile, Person, SectionId, Store } from "./model/types.ts";
+import type { AppData, CaptchaAsk, ChannelKind, Message, OutgoingFile, Person, SectionId, Store } from "./model/types.ts";
 import { Avatars, pictureUrls, storeImageFile, whatsappNumber } from "./avatars.ts";
 import { normalizeSocials } from "./socials.ts";
 import type { ConnView, PersonsService, RowInfo } from "./service.ts";
 import { forwardableFiles, forwardedNote, projectChatTitle, projectNote, splitForwarded } from "./forward.ts";
 import { defaultProject, projectChoices } from "./projects.ts";
+import { CAPTCHA_PAGE_URL, captchaPage } from "./captchapage.ts";
 import type { SiteRequests } from "./siterequests.ts";
 import type { SiteRequestBoard } from "./srboard.ts";
 import { initialsOf, siteRequestPageUrl } from "./srlist.ts";
@@ -126,6 +127,7 @@ export class PersonsRoutes {
         if (m === "POST" && rest[2] === "typing") return this.typing(rest[1], obj(c.body));
         if (m === "POST" && rest[2] === "retry") return this.retry(rest[1], obj(c.body));
         if (m === "POST" && rest[2] === "friend") return await this.friend(rest[1], obj(c.body));
+        if (m === "POST" && rest[2] === "captcha") return await this.captcha(rest[1], obj(c.body));
         if (m === "POST" && rest[2] === "ai") return await this.ai(rest[1], obj(c.body));
         if (m === "POST" && rest[2] === "site-request") return this.siteRequest(rest[1], obj(c.body));
         if (m === "POST" && rest[2] === "to-project") return await this.toProject(rest[1], obj(c.body));
@@ -758,6 +760,8 @@ export class PersonsRoutes {
       peer: picked.peer,
       // Discord: where this account stands with them (the header's Add friend); null on the other channels
       relation: conn.kind === "discord" && cur.connected ? (cur.relations?.[picked.peer] ?? "none") : null,
+      // Discord: a captcha the person solves before a friend request or a message goes (null: none waits)
+      captcha: this.chatCaptcha(choices),
       typing: typing ?? null,
       more: all.length > 0,
       unreadFrom: firstUnread?.m.id ?? null,
@@ -799,7 +803,7 @@ export class PersonsRoutes {
     const subject = str(b.subject);
     if (subject) opts.subject = subject;
     const res = await this.s.send(r.p.id, r.conn.id, text, opts);
-    return ok(json(res));
+    return ok(json(res.captcha ? { ...res, captcha: captchaJson(res.captcha, chatKey(r)) } : res));
   }
 
   /** Seen: every chat on the page (one timeline shows them all). */
@@ -827,7 +831,28 @@ export class PersonsRoutes {
     const r = this.resolve(personId, b);
     if (!r) return err(404, "no channel");
     if (r.conn.kind !== "discord") return err(400, "friend requests are Discord's only");
-    return ok(json(await this.s.addFriend(r.conn.id, r.peer)));
+    const out = await this.s.addFriend(r.conn.id, r.peer);
+    return ok(json(out.captcha ? { ...out, captcha: captchaJson(out.captcha, chatKey(r)) } : out));
+  }
+
+  /** The first captcha waiting in any of the person's chats, with its page (the phone's WebView loads it). */
+  private chatCaptcha(choices: ChatRef<ConnView>[]): Json {
+    for (const ch of choices) {
+      const a = (this.s.view(ch.conn.id) ?? ch.conn).captchas?.[ch.peer];
+      if (a) return captchaJson(a, chatKey(ch));
+    }
+    return null;
+  }
+
+  /** The person's answer to a Discord captcha in this chat: `{id, key}` (hCaptcha's token) or `{id, cancel: true}`. */
+  private async captcha(personId: string, b: Record<string, unknown>): Promise<Reply> {
+    const r = this.resolve(personId, b);
+    if (!r) return err(404, "no channel");
+    const id = typeof b.id === "string" ? b.id : "";
+    const key = b.cancel === true ? null : typeof b.key === "string" && b.key !== "" ? b.key : undefined;
+    if (!id || key === undefined) return err(400, "id and key (or cancel) needed");
+    const out = await this.s.solveCaptcha(r.conn.id, id, key);
+    return ok(json(out.captcha ? { ...out, captcha: captchaJson(out.captcha, chatKey(r)) } : out));
   }
 
   /** A failed message: retried or dismissed in the chat it was sent on (`key` is the outgoing item's). */
@@ -1367,3 +1392,9 @@ export { validPeer };
 
 /** The Person AI chat of a store nobody here is linked to (ai.ts askAbout): one per SpokPay store. */
 const srAiKey = (v: { ref: string; storeSlug: string | null }): string => `sr:${v.storeSlug ?? v.ref}`;
+
+/** A captcha as the apps take it: what to draw, the page to draw it on (served as Discord's), and the chat (`account`)
+ * its answer goes to. */
+export function captchaJson(a: CaptchaAsk, account: string): Json {
+  return { id: a.id, what: a.what, sitekey: a.sitekey, rqdata: a.rqdata, account, url: CAPTCHA_PAGE_URL, html: captchaPage(a) };
+}

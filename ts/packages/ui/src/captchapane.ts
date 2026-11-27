@@ -14,6 +14,9 @@ export interface CaptchaWindow {
 /** A captcha frame as the overlay draws it (JPEG, base64; `rect`: where the captcha is, the only place clicks go). */
 export interface CaptchaFrame {
   guild: string | null;
+  /** What it's for and the give-up button's words (a Discord friend request, a message); absent: a server join's. */
+  intro?: string;
+  cancel?: string;
   data?: string;
   width: number;
   height: number;
@@ -34,9 +37,9 @@ export function inChat(status: unknown): boolean {
   return typeof c === "object" && c !== null && typeof (c as { chat?: unknown }).chat === "number";
 }
 
-// Hub's Discord has no page any more (agents use the Persons connection over Discord's API), so no captcha ever
-// waits here: a join Discord gates behind one is the user's to make in their own Discord app. The overlay stays
-// for older hubs' notices only and never looks for one.
+// Hub's Discord has no page any more (agents use the Persons connection over Discord's API), so no join's captcha
+// waits here. The overlay now shows the captchas Persons' Discord meets (a friend request, a message): the shell hands
+// in their source (hcaptcha.ts); without one it never looks.
 const real: CaptchaApi = {
   signedIn: () => false,
   frame: async () => undefined,
@@ -44,7 +47,7 @@ const real: CaptchaApi = {
   cancel: async () => {},
 };
 
-export const noCaptcha: CaptchaData = { image: noPixels, width: 0, height: 0, rect_x: 0, rect_y: 0, rect_w: 0, rect_h: 0, guild: "" };
+export const noCaptcha: CaptchaData = { image: noPixels, width: 0, height: 0, rect_x: 0, rect_y: 0, rect_w: 0, rect_h: 0, guild: "", intro: "", cancel_label: "" };
 
 /**
  * A Discord join waiting on a captcha: the hidden page's frames over the window, and the person's
@@ -92,7 +95,7 @@ export class CaptchaPane {
         // A new captcha comes up in front; one put away stays a pill.
         if (!this.w.cap_open) this.w.cap_shown = true;
         this.w.cap_open = true;
-        const d: CaptchaData = { ...this.w.cap_data, guild: f.guild ?? "" };
+        const d: CaptchaData = { ...this.w.cap_data, guild: f.guild ?? "", intro: f.intro ?? "", cancel_label: f.cancel ?? "" };
         if (f.data !== undefined && this.w.cap_shown) {
           d.image = await this.decode(Buffer.from(f.data, "base64"));
           d.width = f.width;

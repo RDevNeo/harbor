@@ -14,6 +14,9 @@ export struct CaptchaData {
     rect-w: length,
     rect-h: length,
     guild: string,
+    // What the captcha is for, in a line ("To add Ana as a friend…"), and the give-up button; empty: a server join's.
+    intro: string,
+    cancel-label: string,
 }
 
 // The captcha for a person to solve, over the window: the page's frames, the person's pointer
@@ -45,7 +48,7 @@ export component CaptchaView inherits Rectangle {
         x: 48px;
         y: 52px;
         width: root.width - 300px;
-        text: "To join " + (root.data.guild != "" ? root.data.guild : "a server") + ", Discord wants a person to solve this. Only the captcha takes your clicks; Hub never answers it for you.";
+        text: root.data.intro != "" ? root.data.intro : "To join " + (root.data.guild != "" ? root.data.guild : "a server") + ", Discord wants a person to solve this. Only the captcha takes your clicks; Hub never answers it for you.";
         font-size: 13px;
         color: #d2d2d2;
         wrap: word-wrap;
@@ -124,7 +127,7 @@ export component CaptchaView inherits Rectangle {
         }
         Btn {
             y: 2px;
-            text: "Don't join";
+            text: root.data.cancel-label != "" ? root.data.cancel-label : "Don't join";
             size: xs;
             variant: secondary;
             clicked => {

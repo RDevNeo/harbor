@@ -15,7 +15,7 @@ import { DEFAULT_LISTS } from "./model/data.ts";
 import { applyDiscordUser, applyPhoto, applySocialPhoto, cleanUsername, emailsOf, inScope, isSettled, personLabel, photoStale, renamePerson, settlePerson, socialPhotoKey, socialPhotoSources, socialPhotoStale, staleProfiles, unsettlePerson, wakeSettled } from "./model/data.ts";
 import { mergePresence, PRESENCE_RANK, rowStatus, type RowStatus } from "./model/presence.ts";
 import { badgeChats, chatUnread, defaultChat, laterMark, migrateAllSeen, seenOf } from "./model/readState.ts";
-import type { AppData, ChannelKind, ChannelUser, ConnEvent, ConnState, Conversation, LookupResult, Message, OutgoingFile, Person, PresenceStatus, Relation, SectionId, SendResult } from "./model/types.ts";
+import type { AppData, CaptchaAsk, CaptchaOutcome, ChannelKind, ChannelUser, ConnEvent, ConnState, Conversation, LookupResult, Message, OutgoingFile, Person, PresenceStatus, Relation, SectionId, SendResult } from "./model/types.ts";
 import type { Connection, ConnFactory, ConnMeta } from "./conn/types.ts";
 import { attachmentFileName } from "./conn/discord-core.ts";
 import { DataFile, loadConnections, personsDir, saveConnections } from "./store.ts";
@@ -42,6 +42,8 @@ export interface Slice {
   typing: Typing;
   /** Discord: friends, pending requests and blocks by id (none = absent). */
   relations: Record<string, Relation>;
+  /** Discord: a captcha waiting for the person before a call to that peer goes, by peer. */
+  captchas: Record<string, CaptchaAsk>;
 }
 
 /** A connection as the views see it (meta + live slice). */
@@ -104,7 +106,7 @@ export interface ServiceOptions {
 }
 
 const REFRESH_EVERY_MS = 30 * 60_000;
-const emptySlice = (): Slice => ({ state: { status: "starting", me: null, gateway: "down" }, convos: {}, outgoing: {}, presence: {}, lastSeen: {}, typing: {}, relations: {} });
+const emptySlice = (): Slice => ({ state: { status: "starting", me: null, gateway: "down" }, convos: {}, outgoing: {}, presence: {}, lastSeen: {}, typing: {}, relations: {}, captchas: {} });
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const without = <T>(o: Record<string, T>, k: string): Record<string, T> => {
@@ -120,6 +122,8 @@ export class PersonsService {
   private slices = new Map<string, Slice>();
   private file: DataFile;
   private listeners = new Set<() => void>();
+  /** Calls waiting to hear of a captcha for `<connection>:<peer>` (Add friend answers at once when one comes). */
+  private captchaWaiters = new Map<string, Set<(a: CaptchaAsk) => void>>();
   private waiters = new Set<() => void>();
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private emitTimer: ReturnType<typeof setTimeout> | null = null;
@@ -419,6 +423,9 @@ export class PersonsService {
         }
         return { ...s, relations: r };
       });
+    } else if (ev.type === "captcha") {
+      this.patch(id, (s) => ({ ...s, captchas: ev.captcha ? { ...(s.captchas ?? {}), [ev.peerId]: ev.captcha } : without(s.captchas ?? {}, ev.peerId) }));
+      if (ev.captcha) for (const f of [...(this.captchaWaiters.get(`${id}:${ev.peerId}`) ?? [])]) f(ev.captcha);
     }
   }
 
@@ -787,18 +794,53 @@ export class PersonsService {
     if (opts.replyTo) item.replyTo = opts.replyTo;
     if (opts.subject) item.subject = opts.subject;
     this.setOut(m.id, pid, (l) => [...l, item]);
-    const r = await this.deliver(m, pid, key, item);
+    // A captcha comes back at once (the message stays "sending" until the person answers it in the chat)
+    const r = await this.untilCaptcha(m.id, pid, this.deliver(m, pid, key, item));
     if (r.ok) this.markSeen(personId, connId, undefined, pid);
     return r;
   }
 
   /** Discord: sends `peer` a friend request (or accepts theirs) on that connection; on the user's click only. */
-  async addFriend(connId: string, peer: string): Promise<{ ok: boolean; relation?: Relation; error?: string }> {
+  async addFriend(connId: string, peer: string): Promise<{ ok: boolean; relation?: Relation; error?: string; captcha?: CaptchaAsk }> {
     const c = this.conns.get(connId);
     if (!c?.addFriend) return { ok: false, error: "Friend requests are Discord's only" };
     if (!this.view(connId)?.connected) return { ok: false, error: "Connect Discord first" };
+    return this.untilCaptcha(
+      connId,
+      peer,
+      c.addFriend(peer).catch((e: unknown) => ({ ok: false, error: errText(e) })),
+    );
+  }
+
+  /**
+   * `run`'s outcome, or sooner `{ok: false, captcha}` when Discord asks for a captcha before it's done: the person
+   * solves it in Hub (the chat's `captcha`, then POST captcha) while `run` waits for their answer and finishes on its
+   * own (a phone's call can't wait minutes).
+   */
+  private async untilCaptcha<T>(connId: string, peer: string, run: Promise<T>): Promise<T | { ok: false; error: string; captcha: CaptchaAsk }> {
+    const key = `${connId}:${peer}`;
+    let hear: ((a: CaptchaAsk) => void) | null = null;
+    const asked = new Promise<{ ok: false; error: string; captcha: CaptchaAsk }>((ok) => {
+      hear = (a) => ok({ ok: false, error: "Discord asked for a captcha", captcha: a });
+      const set = this.captchaWaiters.get(key) ?? new Set();
+      set.add(hear);
+      this.captchaWaiters.set(key, set);
+    });
     try {
-      return await c.addFriend(peer);
+      return await Promise.race([run, asked]);
+    } finally {
+      const set = this.captchaWaiters.get(key);
+      if (set && hear) set.delete(hear);
+      if (set?.size === 0) this.captchaWaiters.delete(key);
+    }
+  }
+
+  /** The person's answer to a Discord captcha (`key`: hCaptcha's token; null: gave up): the call it held goes again. */
+  async solveCaptcha(connId: string, id: string, key: string | null): Promise<CaptchaOutcome> {
+    const c = this.conns.get(connId);
+    if (!c?.solveCaptcha) return { ok: false, error: "No captcha waits there" };
+    try {
+      return await c.solveCaptcha(id, key);
     } catch (e) {
       return { ok: false, error: errText(e) };
     }

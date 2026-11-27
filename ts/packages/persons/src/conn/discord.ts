@@ -6,7 +6,7 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { ChannelUser, ConnState, ConnStatus, Conversation, LookupResult, Message, OutgoingFile, PresenceStatus, Relation, SendResult } from "../model/types.ts";
+import type { CaptchaAsk, CaptchaOutcome, ChannelUser, ConnState, ConnStatus, Conversation, LookupResult, Message, OutgoingFile, PresenceStatus, Relation, SendResult } from "../model/types.ts";
 import { tokenStore, type TokenStore } from "../tokens.ts";
 import * as core from "./discord-core.ts";
 import { createWorld, type World } from "./discord-world.ts";
@@ -16,6 +16,8 @@ import type { Connection, ConnContext } from "./types.ts";
 export { discordFiles, partitionOf, partitionFolder } from "./discord-core.ts";
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+/** How long a captcha waits for the person before the call gives up. */
+const CAPTCHA_WAIT_MS = 10 * 60_000;
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 /** A connection's folder: <persons dir>/discord/<conn id> (its client headers; no login in it). */
@@ -48,8 +50,10 @@ export class ApiError extends Error {
     msg: string,
     readonly status: number,
     readonly code?: number,
-    /** Discord answered with a captcha to solve (a join, a new DM): only a person can, in Discord's own app. */
+    /** Discord answered with a captcha to solve (a friend request, a new DM): only a person can. */
     readonly captcha = false,
+    /** The captcha, when it's one a person can solve in Hub (hCaptcha). */
+    readonly challenge: core.CaptchaChallenge | null = null,
   ) {
     super(msg);
   }
@@ -420,8 +424,68 @@ export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Disc
         void signedOut("Discord signed this session out", false);
       }
       const j = (json ?? {}) as { captcha_key?: unknown; message?: unknown; code?: unknown };
-      const msg = j.captcha_key ? "Discord asked for a captcha. Send this one from the Discord app." : typeof j.message === "string" ? j.message : `Discord answered HTTP ${res.status}`;
-      throw new ApiError(msg, res.status, typeof j.code === "number" ? j.code : undefined, !!j.captcha_key);
+      const msg = j.captcha_key ? "Discord asked for a captcha and it wasn't solved" : typeof j.message === "string" ? j.message : `Discord answered HTTP ${res.status}`;
+      throw new ApiError(msg, res.status, typeof j.code === "number" ? j.code : undefined, !!j.captcha_key, core.captchaOf(json));
+    }
+  }
+
+  // ---------- captchas a person solves in Hub ----------
+  // A call Discord answers with a captcha (hCaptcha) waits here: the service shows it in the chat (`captcha` event),
+  // the person solves it in Hub, and the very same call goes again with the headers Discord's client sends
+  // (X-Captcha-Key, X-Captcha-Rqtoken, X-Captcha-Session-Id). Given up, or 10 minutes gone: the call fails as before.
+  type Answer = { key: string; report: (o: CaptchaOutcome) => void };
+  const captchas = new Map<string, { ask: CaptchaAsk; peer: string; answer: (a: Answer | null) => void }>();
+
+  function askPerson(peer: string, ch: core.CaptchaChallenge, what: CaptchaAsk["what"]): { ask: CaptchaAsk; answer: Promise<Answer | null> } {
+    // one waits per peer: an older one for them gives up
+    for (const [id, w] of captchas) if (w.peer === peer) settleCaptcha(id, null);
+    const ask: CaptchaAsk = { id: `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`, sitekey: ch.sitekey, rqdata: ch.rqdata, what, at: Date.now() };
+    const answer = new Promise<Answer | null>((ok) => {
+      const timer = setTimeout(() => settleCaptcha(ask.id, null), CAPTCHA_WAIT_MS);
+      captchas.set(ask.id, {
+        ask,
+        peer,
+        answer: (a) => {
+          clearTimeout(timer);
+          ok(a);
+        },
+      });
+    });
+    ctx.emit({ type: "captcha", peerId: peer, captcha: ask });
+    return { ask, answer };
+  }
+
+  function settleCaptcha(id: string, a: Answer | null): boolean {
+    const w = captchas.get(id);
+    if (!w) return false;
+    captchas.delete(id);
+    ctx.emit({ type: "captcha", peerId: w.peer, captcha: null });
+    w.answer(a);
+    return true;
+  }
+
+  /** `call` (one Discord request, `extra`: the captcha's headers), its captchas solved by the person; another
+   * captcha after an answer (a wrong or stale token) is asked for again, three times at most. */
+  async function solving<T>(peer: string, what: CaptchaAsk["what"], call: (extra: Record<string, string>) => Promise<T>): Promise<T> {
+    let extra: Record<string, string> = {};
+    let report: ((o: CaptchaOutcome) => void) | null = null;
+    for (let round = 0; ; round++) {
+      try {
+        const r = await call(extra);
+        report?.({ ok: true });
+        return r;
+      } catch (e) {
+        if (!(e instanceof ApiError) || !e.challenge || round >= 3) {
+          report?.({ ok: false, error: e instanceof ApiError && e.captcha ? "Discord didn't take the captcha" : errMsg(e) });
+          throw e;
+        }
+        const q = askPerson(peer, e.challenge, what);
+        report?.({ ok: false, error: "Discord wants another captcha", captcha: q.ask });
+        const a = await q.answer;
+        if (!a) throw e;
+        report = a.report;
+        extra = core.captchaHeaders(e.challenge, a.key);
+      }
     }
   }
 
@@ -990,10 +1054,12 @@ export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Disc
     if (status !== "connected" || !token) throw new Error("Connect Discord first");
   };
 
-  async function ensureChannel(peer: string): Promise<string> {
+  /** The DM channel with `peer`, opened when there's none (`solve`: a captcha Discord asks for waits for the person). */
+  async function ensureChannel(peer: string, solve = false): Promise<string> {
     let cid = convos.channelOf(peer);
     if (cid) return cid;
-    const ch = await api<{ id: string }>("POST", "/users/@me/channels", { recipients: [peer] });
+    const open = (extra: Record<string, string>): Promise<{ id: string }> => api<{ id: string }>("POST", "/users/@me/channels", { recipients: [peer] }, Object.keys(extra).length ? { extra } : {});
+    const ch = solve ? await solving(peer, "message", open) : await open({});
     cid = String(ch.id);
     convos.setChannel(peer, cid);
     return cid;
@@ -1008,6 +1074,7 @@ export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Disc
     users.clear();
     profileCache.clear();
     searchCache.clear();
+    for (const id of [...captchas.keys()]) settleCaptcha(id, null);
   }
 
   let started = false;
@@ -1215,12 +1282,12 @@ export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Disc
       const wait = pacer.reserve();
       if (wait) await sleep(wait);
       try {
-        const cid = await ensureChannel(peer);
+        const cid = await ensureChannel(peer, true);
         const body: Record<string, unknown> = { mobile_network_type: "unknown", content: voice ? "" : text, nonce: core.nowSnowflake(), tts: false, flags: voice ? 8192 : 0 };
         // a reply, as the client sends it (the replied-to message's author is pinged, as in Discord)
         if (replyTo && core.isSnowflake(String(replyTo))) body.message_reference = { channel_id: cid, message_id: String(replyTo) };
         if (ups.length) Object.assign(body, { channel_id: cid, type: 0, sticker_ids: [], attachments: await upload(cid, ups) });
-        const m = await api<core.RawMessage>("POST", `/channels/${cid}/messages`, body, { tries: 2 });
+        const m = await solving(peer, "message", (cap) => api<core.RawMessage>("POST", `/channels/${cid}/messages`, body, { tries: 2, extra: cap }));
         const slim = core.slimMessage(m, me?.id);
         channelLast.set(cid, slim.id);
         if (convos.merge(peer, [slim])) saveCache();
@@ -1247,10 +1314,10 @@ export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Disc
       const wait = pacer.reserve();
       if (wait) await sleep(wait);
       try {
-        await api("PUT", `/users/@me/relationships/${peer}`, {}, { tries: 2, extra: { "X-Context-Properties": core.FRIEND_CONTEXT } });
+        await solving(peer, "friend", (cap) => api("PUT", `/users/@me/relationships/${peer}`, {}, { tries: 2, extra: { "X-Context-Properties": core.FRIEND_CONTEXT, ...cap } }));
       } catch (e) {
         log("friend request failed", e instanceof ApiError ? `${e.status} ${e.code ?? ""}` : errMsg(e));
-        if (e instanceof ApiError && e.captcha) return { ok: false, error: "Discord asked for a captcha. Add them from the Discord app." };
+        if (e instanceof ApiError && e.captcha) return { ok: false, error: e.challenge ? "Discord asked for a captcha and it wasn't solved" : "Discord asked for a captcha. Add them from the Discord app." };
         const code = e instanceof ApiError ? e.code : undefined;
         return { ok: false, error: (code !== undefined ? core.FRIEND_ERRORS[code] : undefined) ?? errMsg(e) };
       }
@@ -1260,6 +1327,18 @@ export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Disc
       if (now === "friend") friends.add(peer);
       emitRelations([peer]);
       return { ok: true, relation: now };
+    },
+
+    /** The person's answer to a captcha that waits: the call goes again with it; its outcome comes back. */
+    async solveCaptcha(id, key) {
+      if (!captchas.has(id)) return { ok: false, error: "That captcha isn't waiting any more" };
+      if (key === null || key === "") {
+        settleCaptcha(id, null);
+        return { ok: true };
+      }
+      const outcome = new Promise<CaptchaOutcome>((report) => settleCaptcha(id, { key, report }));
+      const late = new Promise<CaptchaOutcome>((ok) => setTimeout(() => ok({ ok: true }), 60_000));
+      return Promise.race([outcome, late]);
     },
 
     /** Downloads an attachment from Discord's CDN into <persons dir>/files (once); returns the path. */
