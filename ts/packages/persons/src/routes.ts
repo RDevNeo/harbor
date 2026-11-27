@@ -1092,7 +1092,8 @@ export class PersonsRoutes {
 
   private patchPerson(personId: string, b: Record<string, unknown>): Reply {
     const id = decodeURIComponent(personId);
-    if (!this.s.person(id)) return err(404, "no such person");
+    const before = this.s.person(id);
+    if (!before) return err(404, "no such person");
     const settle = obj(b.settle);
     const sec = sectionOf(str(settle.section));
     if (sec) this.s.setSettled(id, sec, settle.on !== false);
@@ -1139,6 +1140,8 @@ export class PersonsRoutes {
       n.updatedAt = at;
       return n;
     });
+    // a WhatsApp number set or changed in Personal (or a person with one joining it): saved in the user's WhatsApp contacts
+    this.s.saveWhatsAppContact(before, this.s.person(id));
     return ok({ ok: true, person: json(this.s.person(id) ?? null) });
   }
 
@@ -1179,6 +1182,7 @@ export class PersonsRoutes {
     if (!p.name && !p.discordId && !p.discordUsername && !p.email && !p.whatsapp) return err(400, "give a name, a Discord id or username, an email or a WhatsApp number");
     const person = p;
     this.s.update((x) => ({ ...x, people: [...x.people, person] }));
+    this.s.saveWhatsAppContact(undefined, person);
     return ok({ ok: true, person: json(person) });
   }
 

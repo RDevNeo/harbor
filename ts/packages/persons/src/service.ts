@@ -7,7 +7,7 @@ import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync } fro
 import { join } from "node:path";
 import { allPeers, chatKey, chatsFor, KIND_LABEL, peerOf, personSections, phoneVariants, SECTION_LABEL, seenKey, serves, validPeer, type ChatRef } from "./model/accounts.ts";
 import { freshIncoming, type IncomingLine } from "./incoming.ts";
-import { contactConflict, personalShares, resolveContact, type ContactKind } from "./model/personal.ts";
+import { contactConflict, personalShares, resolveContact, whatsAppContactToSave, type ContactKind } from "./model/personal.ts";
 import { linkPeople, unlinkPerson } from "./model/link.ts";
 import { lastMessage, mergeMessages } from "./model/conversation.ts";
 import { movePerson, type Place } from "./model/move.ts";
@@ -552,6 +552,11 @@ export class PersonsService {
       const renamed = confirm && !!typed && typed !== existing.name;
       if (joined || renamed) this.updatePerson(existing.id, (x) => ({ ...(renamed ? renamePerson(x, typed) : x), listIds: joined ? [...x.listIds, "personal"] : x.listIds, updatedAt: at }));
       this.log("personal contact existed", kind, existing.id, joined ? "joined" : "", renamed ? "renamed" : "");
+      // the number they were found by (their main one may be another): saved in WhatsApp contacts unless named there already
+      if (kind === "whatsapp") {
+        const now = this.person(existing.id) ?? existing;
+        this.saveWhatsAppContact(undefined, { ...now, whatsapp: r.id });
+      }
       return { person: this.person(existing.id) ?? existing, existed: true, was, joined, renamed };
     }
     const p: Person = { id: this.newId(), name: name.trim(), discordId: "", storeIds: [], listIds: ["personal"], createdAt: at, updatedAt: at };
@@ -575,7 +580,26 @@ export class PersonsService {
     }
     this.log("personal contact added", kind, p.id);
     this.update((d) => ({ ...d, people: [...d.people, p] }));
+    if (kind === "whatsapp") this.saveWhatsAppContact(undefined, p);
     return { person: p, existed: false, was: "", joined: true, renamed: false };
+  }
+
+  /**
+   * A person just added or edited (`before` = as they were): a WhatsApp number new to them in Personal is saved in the
+   * user's WhatsApp contacts (the phone's address book) under their name, through the WhatsApp connection serving Personal.
+   * In the background; logged, never failing the edit.
+   */
+  saveWhatsAppContact(before: Person | undefined, after: Person | undefined): void {
+    const want = whatsAppContactToSave(before, after);
+    if (!want) return;
+    const views = this.views().filter((v) => v.kind === "whatsapp" && serves(v, "personal"));
+    const conn = views.find((v) => v.connected);
+    const c = conn && this.conns.get(conn.id);
+    if (!c?.saveContact) return this.log("whatsapp contact not saved", want.number, conn ? "no saveContact" : "no connected WhatsApp in Personal");
+    void c.saveContact(want.number, want.name).then(
+      (r) => this.log("whatsapp contact", want.number, r.saved ? "saved" : r.already ? "already saved" : `not saved: ${r.error ?? "?"}`),
+      (e) => this.log("whatsapp contact failed", want.number, errText(e)),
+    );
   }
 
   async removeConnection(id: string): Promise<void> {

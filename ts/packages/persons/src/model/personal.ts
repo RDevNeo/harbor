@@ -2,7 +2,7 @@
 // connections Personal talks through, and how Add contact's one field (a number or a username) becomes who they are.
 import { isInstagramId, normWhatsApp, serves, type ConnMeta } from './accounts.ts'
 import { isDiscordId } from './data.ts'
-import type { LookupResult } from './types.ts'
+import type { LookupResult, Person } from './types.ts'
 
 export type ContactKind = 'discord' | 'whatsapp' | 'instagram'
 export const CONTACT_KINDS: ContactKind[] = ['discord', 'whatsapp', 'instagram']
@@ -111,4 +111,18 @@ export function contactConflict(o: { typed: string; handle: string; existing: { 
   }
   if (o.platformName && !sameName(typed, o.platformName)) return new ContactConflict(`${o.handle} is “${o.platformName}” on your WhatsApp, not ${typed}. Check the number, or press Add anyway.`, 'Add anyway', null, o.platformName)
   return null
+}
+
+/**
+ * A WhatsApp number to save in the user's WhatsApp contacts after a person changed (`before` absent = just created): when
+ * they're in Personal with a number and a name, and the number is new to them there (set, changed, or they just joined
+ * Personal). Null otherwise: nothing to save.
+ */
+export function whatsAppContactToSave(before: Person | undefined, after: Person | undefined): { number: string; name: string } | null {
+  if (!after?.listIds.includes('personal')) return null
+  const number = normWhatsApp(after.whatsapp ?? '')
+  const name = (after.name || after.displayName || '').trim()
+  if (!number || !name) return null
+  if (before?.listIds.includes('personal') && normWhatsApp(before.whatsapp ?? '') === number) return null
+  return { number, name }
 }

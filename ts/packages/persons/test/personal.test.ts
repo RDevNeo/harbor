@@ -3,7 +3,7 @@
 import { describe, expect, test } from "bun:test";
 import { chatsFor, serves, type ConnMeta } from "../src/model/accounts.ts";
 import { normalizeData } from "../src/model/data.ts";
-import { contactConflict, contactHandleError, personalShares, resolveContact, sameName } from "../src/model/personal.ts";
+import { contactConflict, contactHandleError, personalShares, resolveContact, sameName, whatsAppContactToSave } from "../src/model/personal.ts";
 import type { ChannelUser, LookupResult, Person } from "../src/model/types.ts";
 
 const CONNS: ConnMeta[] = [
@@ -128,5 +128,29 @@ describe("Add contact: a name that isn't theirs waits for a confirm", () => {
     expect(contactConflict({ typed: "Rafael", handle: "+5571933007100", existing: null, platformName: "Filipe" })).toMatchObject({ confirm: "Add anyway", personId: null });
     expect(contactConflict({ typed: "Filipe", handle: "+5571933007100", existing: null, platformName: "Filipe Sales" })).toBeNull();
     expect(contactConflict({ typed: "", handle: "+5571933007100", existing: { id: "pf", label: "Fagner", inPersonal: true } })).toBeNull();
+  });
+});
+
+describe("whatsAppContactToSave", () => {
+  const base: Person = { id: "p1", name: "Filipe", discordId: "", storeIds: [], listIds: ["personal"], createdAt: "", updatedAt: "" };
+  test("a new Personal person with a number and a name", () => {
+    expect(whatsAppContactToSave(undefined, { ...base, whatsapp: "5571933007100" })).toEqual({ number: "5571933007100", name: "Filipe" });
+  });
+  test("a changed number", () => {
+    expect(whatsAppContactToSave({ ...base, whatsapp: "5571933007100" }, { ...base, whatsapp: "5519998546449" })).toEqual({ number: "5519998546449", name: "Filipe" });
+  });
+  test("the same number (either Brazilian form) or a rename only: nothing", () => {
+    expect(whatsAppContactToSave({ ...base, whatsapp: "5519998546449" }, { ...base, name: "Filipe S", whatsapp: "5519998546449" })).toBeNull();
+    expect(whatsAppContactToSave({ ...base, whatsapp: "551998546449" }, { ...base, whatsapp: "5519998546449" })).toBeNull();
+  });
+  test("joining Personal with a number saves it", () => {
+    expect(whatsAppContactToSave({ ...base, listIds: [], whatsapp: "5519998546449" }, { ...base, whatsapp: "5519998546449" })).toEqual({ number: "5519998546449", name: "Filipe" });
+  });
+  test("outside Personal, without a number or without a name: nothing", () => {
+    expect(whatsAppContactToSave(undefined, { ...base, listIds: [], whatsapp: "5519998546449" })).toBeNull();
+    expect(whatsAppContactToSave(undefined, base)).toBeNull();
+    expect(whatsAppContactToSave(undefined, { ...base, name: "", whatsapp: "5519998546449" })).toBeNull();
+    expect(whatsAppContactToSave(undefined, { ...base, name: "", displayName: "Fil", whatsapp: "5519998546449" })).toEqual({ number: "5519998546449", name: "Fil" });
+    expect(whatsAppContactToSave({ ...base, whatsapp: "5519998546449" }, { ...base })).toBeNull();
   });
 });
