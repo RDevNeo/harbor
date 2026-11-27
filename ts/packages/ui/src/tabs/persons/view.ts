@@ -405,6 +405,8 @@ export interface MsgRow {
   time: string;
   meta: string;
   reply: string;
+  /** The id of the message it replies to ("" none, or only forwarded): a click on the quote jumps there. */
+  replyId: string;
   images: ImgTile[];
   imgW: number;
   imgH: number;
@@ -483,7 +485,7 @@ export function imageTiles(imgs: readonly { url: string; width: number | null; h
 }
 
 /** An empty chat row of a kind (the fields every PMsg carries). */
-export const blankRow = (kind: MsgRow["kind"], id: string): MsgRow => ({ kind, id, mine: false, text: "", time: "", meta: "", reply: "", images: [], imgW: 0, imgH: 0, files: "", first: true, failed: false, sending: false, streaming: false, toAi: false, parts: [], card: { title: "", sub: "", state: "", note: "", why: "", chat: false }, folded: false, preview: "", draft: "", chan: "", chanLabel: "", audio: null });
+export const blankRow = (kind: MsgRow["kind"], id: string): MsgRow => ({ kind, id, mine: false, text: "", time: "", meta: "", reply: "", replyId: "", images: [], imgW: 0, imgH: 0, files: "", first: true, failed: false, sending: false, streaming: false, toAi: false, parts: [], card: { title: "", sub: "", state: "", note: "", why: "", chat: false }, folded: false, preview: "", draft: "", chan: "", chanLabel: "", audio: null });
 
 /** A turn with the Person AI as its bubble: the user's note ("out", to the AI) or the AI's answer in parts. */
 export function aiRow(a: AiJson): MsgRow {
@@ -537,8 +539,10 @@ export function chatRows(c: ChatJson, now = Date.now()): MsgRow[] {
     r.text = m.text || (m.embed ? "(embed)" : "");
     r.time = hhmm(m.at);
     r.meta = [m.edited ? "edited" : "", m.fromMe && m.status ? TICKS[m.status] ?? "" : ""].filter(Boolean).join(" · ");
-    if (m.reply) r.reply = `${m.reply.fromMe ? "You" : c.person.name}: ${plainEmoji(m.reply.text) || "…"}`;
-    else if (m.forwarded) r.reply = "Forwarded";
+    if (m.reply) {
+      r.reply = `${m.reply.fromMe ? "You" : c.person.name}: ${plainEmoji(m.reply.text) || "…"}`;
+      r.replyId = m.reply.id;
+    } else if (m.forwarded) r.reply = "Forwarded";
     // every picture shown in the bubble (none of them again as a file below it)
     const imgs = m.files.filter((f) => f.image);
     const box = imageTiles(imgs);

@@ -288,8 +288,11 @@ final class PersonsChat {
         if (!holdUnread && (wasFirst || PersonsUi.info(q, section).optInt("unread") > 0 || !PersonsUi.s(r, "unreadFrom").isEmpty())) markRead();
     }
 
-    private void loadOlder() {
-        if (loadingOlder || msgs.isEmpty() || p.hub == null) return;
+    private void loadOlder() { loadOlder(null); }
+
+    /** The page before the oldest message shown; `done` runs after it came in (true) or failed (false). */
+    private void loadOlder(java.util.function.Consumer<Boolean> done) {
+        if (loadingOlder || msgs.isEmpty() || p.hub == null) { if (done != null) done.accept(false); return; }
         loadingOlder = true;
         render();
         String path = base() + query() + "&before=" + PersonsUi.enc(PersonsUi.s(msgs.get(0), "id"));
@@ -302,7 +305,7 @@ final class PersonsChat {
             Ui.main.post(() -> {
                 loadingOlder = false;
                 if (closed || a.isDestroyed()) return;
-                if (fr == null) { Ui.toast(a, fe); render(); return; }
+                if (fr == null) { Ui.toast(a, fe); render(); if (done != null) done.accept(false); return; }
                 more = fr.optBoolean("more");
                 Map<String, JSONObject> byId = new LinkedHashMap<>();
                 for (JSONObject m : PersonsHome.objs(PersonsUi.arr(fr, "messages"))) byId.put(PersonsUi.s(m, "id"), m);
@@ -311,8 +314,75 @@ final class PersonsChat {
                 msgs.addAll(byId.values());
                 sortMsgs();
                 render();
+                if (done != null) done.accept(true);
             });
         });
+    }
+
+    // ---- a reply's quote tapped: to the message it replies to (WhatsApp's) ----
+
+    /** Older pages read at most while looking for it (Discord's are 50 messages each). */
+    private static final int JUMP_PAGES = 40;
+    /** The message flashing (its row tinted, fading out) and when it started. */
+    private String flashId = "";
+    private long flashAt;
+    /** Each tap's own search: a newer tap (or another chat) ends an older one. */
+    private int jumpSeq;
+
+    /** Scrolls to the message `id` and flashes it; one not loaded yet is looked for in older pages. */
+    private void jumpTo(String id) {
+        if (id.isEmpty()) return;
+        int seq = ++jumpSeq;
+        jumpStep(id, seq, 0);
+    }
+
+    private void jumpStep(String id, int seq, int pages) {
+        if (seq != jumpSeq || closed || a.isDestroyed()) return;
+        if (rows.containsKey(id)) { flash(id); return; }
+        boolean loaded = false;
+        for (JSONObject m : msgs) if (id.equals(PersonsUi.s(m, "id"))) { loaded = true; break; }
+        if (loaded) { flash(id); return; }
+        if (!more || pages >= JUMP_PAGES) { Ui.toast(a, "Original message not available"); return; }
+        int n = msgs.size();
+        loadOlder(ok -> {
+            if (seq != jumpSeq) return;
+            if (!ok || msgs.size() == n) { Ui.toast(a, "Original message not available"); return; }
+            jumpStep(id, seq, pages + 1);
+        });
+    }
+
+    /** The row comes into view at about 40% of the height, tinted, fading out over ~1.5 s. */
+    private void flash(String id) {
+        flashId = id;
+        flashAt = android.os.SystemClock.uptimeMillis();
+        View row = rows.get(id);
+        if (row == null) return;
+        tint(row);
+        afterLayout(() -> {
+            View v = rows.get(id);
+            if (v == null) return;
+            int y = v.getTop() + v.getHeight() / 2 - (int) (sv.getHeight() * 0.4f);
+            sv.smoothScrollTo(0, Math.max(0, Math.min(y, content.getHeight() - sv.getHeight())));
+        });
+    }
+
+    /** The tint holds, then fades. A test build (the screenshot rig) holds it 6 s, so a shot taken once the screen is
+     *  still shows it. */
+    private static final long FLASH_HOLD = Rig.on() ? 6000 : 400, FLASH_FADE = 1100;
+
+    /** A flashing row's tint for what's left of its flash (a render in between keeps it going). */
+    private void tint(View row) {
+        long gone = android.os.SystemClock.uptimeMillis() - flashAt;
+        if (gone >= FLASH_HOLD + FLASH_FADE) return;
+        int on = (Ui.BLUE & 0x00ffffff) | ((Ui.dark ? 0x3a : 0x2c) << 24);
+        android.animation.ValueAnimator va = android.animation.ValueAnimator.ofArgb(on, on & 0x00ffffff);
+        va.setDuration(FLASH_FADE);
+        va.setStartDelay(Math.max(0, FLASH_HOLD - gone));
+        if (gone > FLASH_HOLD) va.setCurrentPlayTime(gone - FLASH_HOLD);
+        va.setInterpolator(new android.view.animation.DecelerateInterpolator());
+        va.addUpdateListener(x -> row.setBackgroundColor((Integer) x.getAnimatedValue()));
+        row.setBackgroundColor(on);
+        va.start();
     }
 
     private void sortMsgs() {
@@ -424,7 +494,11 @@ final class PersonsChat {
 
     private int maxW() { return (int) (a.getResources().getDisplayMetrics().widthPixels * 0.78f); }
 
+    /** Each message's row as drawn now, by id (a reply's quote scrolls to it). */
+    private final Map<String, View> rows = new java.util.HashMap<>();
+
     private void render() {
+        rows.clear();
         boolean atBottom = first || toBottom || content.getHeight() == 0 || sv.getScrollY() + sv.getHeight() >= content.getHeight() - Ui.dp(80);
         int fromBottom = content.getHeight() - sv.getScrollY();
         toBottom = false;
@@ -497,7 +571,10 @@ final class PersonsChat {
                 broke = true;
             }
             boolean joined = !broke && prev != null && prev.optBoolean("fromMe") == o.optBoolean("fromMe") && t - prevAt < GROUP_MS && chanOf(prev).equals(chanOf(o));
-            content.addView(bubble(o, joined, gallery));
+            View row = bubble(o, joined, gallery);
+            rows.put(id, row);
+            if (id.equals(flashId)) tint(row);
+            content.addView(row);
             prev = o;
             prevAt = t;
         }
@@ -568,8 +645,14 @@ final class PersonsChat {
         JSONObject reply = PersonsUi.obj(m, "reply");
         if (reply != null) {
             LinearLayout q = Ui.row(a);
+            // a tap scrolls to the message it replies to and flashes it
+            String rid = PersonsUi.s(reply, "id");
+            if (!rid.isEmpty()) {
+                q.setBackground(Ui.press(0, 0, 4));
+                q.setOnClickListener(v -> jumpTo(rid));
+            }
             View bar = new View(a);
-            bar.setBackgroundColor(Ui.G500);
+            bar.setBackgroundColor(Ui.BLUE);
             q.addView(bar, new LinearLayout.LayoutParams(Ui.dp(2), -1));
             SpannableStringBuilder sb = new SpannableStringBuilder();
             sb.append(reply.optBoolean("fromMe") ? "You" : name());

@@ -81,6 +81,7 @@ export struct PMsg {
     // emoji drawn big instead of the text.
     emojis: [PEmoji],
     jumbo: [PEmoji],
+    reply-id: string, // the message it replies to ("" none): a click on the quote jumps there
     images: [PImg],
     has-image: bool,
     img-w: length,
@@ -187,6 +188,11 @@ export global PersonsBus {
     in property <bool> c-loading;
     in property <[PMsg]> msgs;
     in property <int> msgs-rev; // bumps when the conversation changes: the view sticks to the bottom
+    // A reply's quote clicked: the chat scrolls to `jump-id` (each jump bumps `jump-rev`) and the row `flash-id` is
+    // tinted, fading out once it's cleared (WhatsApp's flash).
+    in property <string> jump-id;
+    in property <int> jump-rev;
+    in property <string> flash-id;
     in-out property <string> draft;
     in-out property <string> subject;
     in property <string> reply-name; // the message being replied to: its author ("" none) and text
@@ -350,6 +356,7 @@ export global PersonsBus {
     callback send();
     callback typing();
     callback older();
+    callback jump-reply(string); // a reply's quote clicked (the replying message's id)
     callback toggle-panel();
     callback account-menu(length, length);
     callback msg-menu(string, length, length);
@@ -1365,7 +1372,9 @@ component Bubble {
                 if root.m.has-reply: Rectangle {
                     height: rt.preferred-height + 6px;
                     border-radius: 4px;
-                    background: Theme.fg.with-alpha(0.06);
+                    clip: true;
+                    background: Theme.fg.with-alpha(quote-ta.has-hover ? (quote-ta.pressed ? 0.14 : 0.10) : 0.06);
+                    animate background { duration: 100ms; }
                     Rectangle {
                         x: 0;
                         width: 2px;
@@ -1376,9 +1385,17 @@ component Bubble {
                         width: parent.width - 12px;
                         text: root.m.reply;
                         font-size: 11.5px;
-                        color: Theme.subtle;
+                        color: quote-ta.has-hover ? Theme.fg : Theme.subtle;
                         overflow: elide;
                         vertical-alignment: center;
+                    }
+                    // the replied-to message: a click scrolls there and flashes it
+                    quote-ta := TouchArea {
+                        enabled: root.m.reply-id != "";
+                        mouse-cursor: self.enabled ? pointer : default;
+                        clicked => {
+                            PersonsBus.jump-reply(root.m.id);
+                        }
                     }
                 }
                 if root.m.has-image: Rectangle {
@@ -1723,7 +1740,29 @@ component SiteCard {
 component MsgRow {
     in property <PMsg> m;
     in property <length> max-w;
+    // how far the tint reaches past the row on each side (the chat's padding: it spans the whole column)
+    in property <length> bleed: 0px;
+    property <bool> flash: m.id != "" && m.id == PersonsBus.flash-id;
     height: m.kind == "day" || m.kind == "unread" ? 30px : m.kind == "subject" ? 30px : m.kind == "proposal" || m.kind == "proposing" ? card.preferred-height : bubble.preferred-height;
+    // WhatsApp's flash when a reply's quote jumps here: tinted at once, fading out over ~1.1 s once it's cleared
+    tint := Rectangle {
+        x: -root.bleed;
+        y: -1px;
+        width: root.width + 2 * root.bleed;
+        height: root.height + 2px;
+        background: Theme.blue-700.with-alpha(0);
+    }
+    states [
+        lit when root.flash: {
+            tint.background: Theme.blue-700.with-alpha(Theme.dark ? 0.22 : 0.16);
+            in {
+                animate tint.background { duration: 120ms; }
+            }
+            out {
+                animate tint.background { duration: 1100ms; easing: ease-out; }
+            }
+        }
+    ]
     if root.m.kind == "day": Text {
         width: root.width;
         height: root.height;
@@ -2268,8 +2307,17 @@ component ChatPane inherits Rectangle {
                         horizontal-alignment: center;
                     }
                     for m in PersonsBus.msgs: MsgRow {
+                        property <int> jump: m.id == PersonsBus.jump-id ? PersonsBus.jump-rev : 0;
                         m: m;
                         max-w: sv.max-w;
+                        bleed: 16px;
+                        // a reply's quote jumped here: the row comes into view at about 40% of the height
+                        changed jump => {
+                            if self.jump > 0 {
+                                root.at-bottom = false;
+                                sv.content-y = max(min(0px, sv.visible-height - sv.content-height), min(0px, sv.visible-height * 0.4 - self.y - self.height / 2));
+                            }
+                        }
                     }
                 }
             }

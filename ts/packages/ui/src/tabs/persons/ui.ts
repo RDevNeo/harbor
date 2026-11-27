@@ -211,6 +211,7 @@ class PersonsTab {
     on("send", () => void (this.sr ? this.srSend() : this.send()));
     on("typing", () => this.typing());
     on("older", () => void this.older());
+    on("jump_reply", ((id: string) => void this.jumpReply(id)) as Cb);
     on("toggle_panel", () => {
       this.panelOpen = !this.panelOpen;
       if (this.panelOpen) void this.loadPanel();
@@ -742,6 +743,7 @@ class PersonsTab {
       has_reply: r.reply !== "",
       emojis: em.emojis,
       jumbo: em.jumbo,
+      reply_id: r.replyId,
       images,
       has_image: images.length > 0,
       img_w: r.imgW,
@@ -930,6 +932,50 @@ class PersonsTab {
     c.messages = [...page.messages, ...c.messages.filter((m) => !page.messages.some((x) => x.id === m.id))];
     c.more = page.more && page.messages.length > 0;
     this.render();
+  }
+
+  /** Older pages read at most while looking for a replied-to message (Discord's are 50 messages each). */
+  private static readonly JUMP_PAGES = 40;
+  private flashTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * A click on a reply's quote: the chat scrolls to the message it replies to and flashes it (WhatsApp's). One not
+   * loaded yet is looked for in older pages; one that isn't there (deleted, too old) says so in a toast.
+   */
+  private async jumpReply(rowId: string): Promise<void> {
+    const target = this.chat?.messages.find((m) => m.id === rowId)?.reply?.id;
+    const key = this.chatKey();
+    if (!target) return;
+    const has = (): boolean => !!this.chat?.messages.some((m) => m.id === target);
+    let loaded = false;
+    for (let page = 0; !has() && page < PersonsTab.JUMP_PAGES; page++) {
+      const c = this.chat;
+      if (!c?.more || this.chatKey() !== key) break;
+      const n = c.messages.length;
+      await this.older();
+      loaded = true;
+      // a live refresh may swap the chat meanwhile: go on with the new one; a page that brought nothing ends it
+      if (this.chat === c && c.messages.length === n) break;
+    }
+    if (this.chatKey() !== key) return;
+    if (!has()) return this.setToast("Original message not available");
+    // rows of a page just read exist once Slint has laid them out: jump on its next frames
+    if (loaded) setTimeout(() => this.chatKey() === key && this.flash(target), 80);
+    else this.flash(target);
+  }
+
+  /** Scrolls the chat to a message and tints its row, fading out over ~1.5 s. */
+  private flash(id: string): void {
+    const b = this.bus;
+    b.flash_id = id;
+    b.jump_id = id;
+    b.jump_rev = (Number(b.jump_rev) || 0) + 1;
+    if (this.flashTimer) clearTimeout(this.flashTimer);
+    // the tint holds a moment, then fades as the row's flash goes off (persons.slint MsgRow)
+    this.flashTimer = setTimeout(() => {
+      this.flashTimer = null;
+      if (b.flash_id === id) b.flash_id = "";
+    }, 400);
   }
 
   // ---------- sending ----------

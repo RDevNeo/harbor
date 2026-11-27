@@ -61,7 +61,33 @@ for (const d of ["home", "run", "state", "data", "cache", "config", "persons"]) 
       person("p7", "Gabi Torres", { discordId: "100000000000000007", listIds: ["spokpay"] }),
     ],
   }));
-  writeFileSync(join(dir, "persons", "connections.json"), "{}");
+  // Ana's Discord chat (from the Stores connection's cache, offline): replies to a message further up (a tap on the
+  // quote scrolls there and flashes it) and to one that isn't in the chat ("Original message not available").
+  writeFileSync(join(dir, "persons", "connections.json"), JSON.stringify({ version: 1, connections: [{ id: "stores", kind: "discord", section: "stores" }] }));
+  const ana = "100000000000000001";
+  const lines: [boolean, string][] = [
+    [true, "Ana, boa tarde. Referente às entregas desta semana: consegue confirmar o novo prazo da transportadora até sexta?"],
+    [false, "Boa tarde! Vou verificar com eles e te retorno."],
+    [true, "Perfeito, obrigado."],
+    [false, "Aliás, o checkout novo já está no ar?"],
+    [true, "Está sim, subimos ontem à noite."],
+    [false, "Show, vou testar com um pedido."],
+    [false, "Funcionou certinho 👍"],
+    [true, "Ótimo! Qualquer coisa me avisa."],
+    [false, "A taxa do Pix é por transação ou mensal?"],
+    [true, "Por transação, 0,99%. Sem mensalidade."],
+    [false, "Configurei o domínio, mas o SSL ainda não ativou"],
+    [true, "Normal, leva até 1h para propagar."],
+    [false, "Ativou agora ✅"],
+    [false, "Sobre isso: a transportadora confirmou entrega até quinta-feira."],
+    [true, "Combinado então."],
+    [false, "E sobre aquele pedido de ontem, já foi resolvido?"],
+  ];
+  const t = Date.parse("2026-11-26T12:02:00.000Z");
+  const msgs: Record<string, unknown>[] = lines.map(([mine, content], i) => ({ id: String(500000000000000100n + BigInt(i)), channelId: "300000000000000001", authorId: mine ? "900000000000000009" : ana, fromMe: mine, content, timestamp: new Date(t + i * 7 * 60_000).toISOString() }));
+  msgs[13].reply = { id: String(msgs[0].id), fromMe: true, content: lines[0][1] };
+  msgs[15].reply = { id: "500000000000000001", fromMe: true, content: "Ana, o pedido #4821 voltou para o centro de distribuição." };
+  writeFileSync(join(dir, "persons", "discord-cache.json"), JSON.stringify({ conversations: { [ana]: { channelId: "300000000000000001", messages: msgs } } }));
 }
 // OpenCode as its installer puts it (~/.opencode/bin), so the Account sheet lists it: a stub that only lists models.
 mkdirSync(join(dir, "home", ".opencode", "bin"), { recursive: true });
