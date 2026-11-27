@@ -2,7 +2,7 @@
 // Collector (the search form, one line while a run goes, and the leads it found), Available (every lead not
 // Approved or Restricted), Approved (approved in a lead's review bar), Restricted (leads the user keeps out of
 // Available) and History (every search run by day, as Headquarters' Timeline; a click shows the leads it found). A lead is a card: picture, name and handle, platform, profile link, their way of contact (email, WhatsApp, Discord or Instagram: found, or typed by hand)
-// and followers; a click opens its detail, with the 3 newest videos, the review bar (Reject / Skip / Approve, or Move to
+// and followers; a click opens its detail, with the 3 newest videos, the review bar (Reject / Skip / Approve / Neobux, or Move to
 // Available) and Send message (which adds them to Persons › Creators). The runs happen in the engine (ts/tabs/collector); CollectorBus is
 // driven by src/tabs/collector/ui.ts, the same data Hub for Android shows. Built on Hub's design system (ds.slint,
 // DESIGN.md): sidebar, page bar, cards, chips, inputs, a dialog.
@@ -226,7 +226,8 @@ export global CollectorBus {
     callback edit-show();
     callback edit-save();
     callback edit-close();
-    /** "reject", "skip" or "approve": then the next lead of the list. */
+    /** "reject", "skip", "approve" (Approved and Persons › Creators) or "neobux" (Approved and Persons › Neobux): then
+     *  the next lead of the list. */
     callback review(string);
     /** A card's Unapprove (false). */
     callback approve-set(string, bool);
@@ -1843,7 +1844,7 @@ component ReviewCap inherits Rectangle {
     }
 }
 
-/** One third of the review bar: its icon, label and key caps, centred; the cell tints on hover. */
+/** One cell of the review bar: its icon, label and key caps, centred; the cell tints on hover. */
 component ReviewCell inherits Rectangle {
     in property <string> label;
     in property <string> icon;
@@ -1893,7 +1894,7 @@ component ReviewCell inherits Rectangle {
                     text: root.cap;
                 }
             }
-            VerticalLayout {
+            if root.cap-icon != "" || root.cap-down: VerticalLayout {
                 alignment: center;
                 ReviewCap {
                     icon: root.cap-icon;
@@ -1981,6 +1982,10 @@ component DetailDialog inherits Rectangle {
             }
             if e.text == "a" || e.text == "A" || e.text == Key.RightArrow {
                 CollectorBus.review("approve");
+                return accept;
+            }
+            if (e.text == "n" || e.text == "N") && !CollectorBus.d-approved {
+                CollectorBus.review("neobux");
                 return accept;
             }
             reject
@@ -2326,7 +2331,7 @@ component DetailDialog inherits Rectangle {
                 y: 1px;
                 height: root.bar-h;
                 ReviewCell {
-                    width: (root.box-w - 2px) / 3;
+                    width: (root.box-w - 3px) / 4;
                     // A Restricted lead's Reject is Move to Available (an Approved one's is Approve's cell).
                     label: CollectorBus.d-restricted ? "Move to Available" : "Reject";
                     icon: CollectorBus.d-restricted ? Icons.rotate-cw : Icons.x;
@@ -2344,7 +2349,7 @@ component DetailDialog inherits Rectangle {
                     background: Theme.border;
                 }
                 ReviewCell {
-                    width: (root.box-w - 2px) / 3;
+                    width: (root.box-w - 3px) / 4;
                     label: "Skip";
                     down: true;
                     ink: Theme.fg.with-alpha(0.6);
@@ -2361,16 +2366,33 @@ component DetailDialog inherits Rectangle {
                     background: Theme.border;
                 }
                 ReviewCell {
-                    width: (root.box-w - 2px) / 3;
+                    width: (root.box-w - 3px) / 4;
                     label: CollectorBus.d-approved ? "Move to Available" : "Approve";
                     icon: CollectorBus.d-approved ? Icons.rotate-cw : Icons.check;
                     ink: CollectorBus.d-approved ? Theme.fg.with-alpha(0.8) : Theme.green-900;
                     cap: "A";
                     cap-icon: Icons.arrow-right;
-                    tip: CollectorBus.d-approved ? "Back to Available, then the next lead" : "To the Approved list, then the next lead";
+                    tip: CollectorBus.d-approved ? "Back to Available, then the next lead" : "To Approved and Persons › Creators (nothing sent), then the next lead";
                     enabled: !CollectorBus.review-busy;
                     clicked => {
                         CollectorBus.review("approve");
+                    }
+                }
+                Rectangle {
+                    width: 1px;
+                    background: Theme.border;
+                }
+                // Approve into Persons › Neobux instead of Creators.
+                ReviewCell {
+                    width: (root.box-w - 3px) / 4;
+                    label: "Neobux";
+                    icon: Icons.check;
+                    ink: Theme.blue-900;
+                    cap: "N";
+                    tip: "To Approved and Persons › Neobux (nothing sent), then the next lead";
+                    enabled: !CollectorBus.review-busy && !CollectorBus.d-approved;
+                    clicked => {
+                        CollectorBus.review("neobux");
                     }
                 }
             }

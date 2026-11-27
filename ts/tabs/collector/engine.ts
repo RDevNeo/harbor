@@ -19,9 +19,10 @@
 //   POST v1/collector/settings        {platform?, query?, gapDays?, target?, approveTo?, sort?, platforms?}
 //   POST v1/collector/start | stop    a run with the settings (start answers 409 with the reason it can't)
 //   POST v1/collector/restrict        {id, restricted}: out of Available (or back)
-//   POST v1/collector/approve         {id, approved, to?: "list" | "persons"}: the review bar's Approve (out of
-//                                     Available into Approved; "persons" also adds them to Persons › Creators, no
-//                                     message sent; the last "to" is remembered as settings.approveTo), or Unapprove
+//   POST v1/collector/approve         {id, approved, to?: "list" | "persons" | "neobux"}: the review bar's Approve
+//                                     (out of Available into Approved; "persons" also adds them to Persons › Creators,
+//                                     "neobux" to Persons › Neobux, no message sent; the last "to" is remembered as
+//                                     settings.approveTo), or Unapprove
 //   POST v1/collector/note {id, note} the detail's Quick note (private: never exported)
 //   POST v1/collector/remove {id}     forget the row (still never collected again)
 //   POST v1/collector/email           {id, email}: typed by hand ("" lets a found one take its place again)
@@ -65,7 +66,7 @@ import { sweepSocial, type SocialClient } from "./lib/social.ts";
 import { sweepYouTube, type Stats } from "./lib/sweep.ts";
 import { BLANK_TEMPLATE, fillTemplate, loadTemplates, templatesToSave, type Template } from "./lib/templates.ts";
 import { TikTok, TT_NOTE } from "./lib/tiktok.ts";
-import { APPROVE_TO, normalizePlatforms, SORT_MODES, type SortMode, defaultData, exportText, GAP_CHOICES, listOf, type ApproveTo, migrate, normalizeTarget, PLATFORM_LABEL, PLATFORMS, type CollectorData, type CreatorPlatform, type CreatorRecord, type LogLine, type RecentVideo } from "./lib/types.ts";
+import { APPROVE_PLACE, APPROVE_TO, normalizePlatforms, SORT_MODES, type SortMode, defaultData, exportText, GAP_CHOICES, listOf, type ApproveTo, migrate, normalizeTarget, PLATFORM_LABEL, PLATFORMS, type CollectorData, type CreatorPlatform, type CreatorRecord, type LogLine, type RecentVideo } from "./lib/types.ts";
 import { YouTube } from "./lib/youtube.ts";
 import { keepRun, runRecord, type RunOutcome } from "./lib/history.ts";
 import { SECTION_LABEL } from "../../packages/persons/src/model/accounts.ts";
@@ -673,7 +674,8 @@ export class Collector {
   }
 
   /** The review bar's Approve (or Unapprove: back to Available). "list" keeps it in Approved; "persons" also adds them
-   *  to Persons › Creators the way Send message does, without sending anything. Still never collected again. */
+   *  to Persons › Creators, "neobux" to Persons › Neobux (the list made when missing), the way Send message does,
+   *  without sending anything. Still never collected again. */
   approve(id: string, on: boolean, to?: string): { error?: string; person?: string } {
     const c = this.find(id);
     if (!c) return { error: "No such lead." };
@@ -683,10 +685,11 @@ export class Collector {
       return {};
     }
     const where: ApproveTo = APPROVE_TO.includes(to as ApproveTo) ? (to as ApproveTo) : this.data.settings.approveTo;
+    const dest = APPROVE_PLACE[where];
     let person: string | null = null;
-    if (where === "persons") {
-      const r = this.o.persons.add(c);
-      if (!r.ok) return { error: r.error ?? "Couldn't add them to Persons › Creators." };
+    if (dest) {
+      const r = this.o.persons.add(c, dest.place);
+      if (!r.ok) return { error: r.error ?? `Couldn't add them to Persons › ${dest.label}.` };
       person = r.person ?? null;
     }
     const cur = this.find(id);
@@ -694,7 +697,7 @@ export class Collector {
     delete cur.restricted;
     cur.approved = { at: new Date().toISOString(), to: where, person };
     this.data.settings.approveTo = where;
-    this.logLine(`APPROVED ${cur.name}${where === "persons" ? "; they're in Persons › Creators" : ""}.`, "ok");
+    this.logLine(`APPROVED ${cur.name}${dest ? `; they're in Persons › ${dest.label}` : ""}.`, "ok");
     this.touch();
     return person ? { person } : {};
   }

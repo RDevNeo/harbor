@@ -88,9 +88,9 @@ export interface PersonsBridge {
   channels(section?: string): Channel[];
   guard(channel: string, to: string, now?: number): Guard;
   send(i: SendInput): Promise<SendOutcome>;
-  /** The review bar's Approve to Persons › Creators: the creator becomes (or joins) a person there, as Send makes them,
-   *  with no message sent. */
-  add(rec: CreatorRecord): SendOutcome;
+  /** The review bar's Approve (Persons › Creators) or Neobux: the creator becomes (or joins) a person in that place
+   *  ("creators" when none given; the list made when missing), as Send makes them, with no message sent. */
+  add(rec: CreatorRecord, place?: string): SendOutcome;
   /** Every message Persons sent that went out (Collector's or typed in Persons; never a failed one), with who it went
    *  to: Collector moves the lead that is that person into Sent. Returns the unsubscribe. */
   onSent?(cb: (e: SentEvent) => void): () => void;
@@ -306,22 +306,23 @@ export function livePersons(svc: () => PersonsService | null): PersonsBridge {
       }
       return { ok: true, person: p.id, created };
     },
-    add: (rec) => {
+    add: (rec, place = DEFAULT_PLACE) => {
       const s = svc();
       if (!s) return { ok: false, error: "Persons isn't up." };
       const email = (rec.email ?? "").trim().toLowerCase();
       const wa = rec.whatsapp ? normWhatsApp(rec.whatsapp) : "";
       const kind = email ? "gmail" : wa ? "whatsapp" : null;
-      const { person, created } = ensure(s, rec, kind, kind === "gmail" ? email : wa);
+      const { person, created } = ensure(s, rec, kind, kind === "gmail" ? email : wa, "", place);
       return { ok: true, person: person.id, created };
     },
   };
 }
 
 /** For tests and the screenshot rig: records what would have been sent, sends nothing. */
-export function fakePersons(o: { channels?: Channel[]; keys?: string[]; sent?: SendInput[]; added?: CreatorRecord[]; places?: PersonsPlace[] } = {}): PersonsBridge {
+export function fakePersons(o: { channels?: Channel[]; keys?: string[]; sent?: SendInput[]; added?: CreatorRecord[]; addedTo?: string[]; places?: PersonsPlace[] } = {}): PersonsBridge {
   const sent = o.sent ?? [];
   const added = o.added ?? [];
+  const addedTo = o.addedTo ?? [];
   return {
     up: () => true,
     creatorKeys: () => o.keys ?? [],
@@ -345,8 +346,9 @@ export function fakePersons(o: { channels?: Channel[]; keys?: string[]; sent?: S
       sent.push(i);
       return { ok: true, person: `p_fake${sent.length}`, created: true };
     },
-    add: (rec) => {
+    add: (rec, place = DEFAULT_PLACE) => {
       added.push(rec);
+      addedTo.push(place);
       return { ok: true, person: `p_added${added.length}`, created: true };
     },
   };

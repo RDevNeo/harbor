@@ -6,6 +6,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 ## [Unreleased]
 
 ### Changed
+- **Collector: approve a lead into Persons › Neobux (PC and phone).** A lead's review bar has four cells: Reject,
+  Skip, **Approve** (A or →) and **Neobux** (N). Approve now puts the lead in Approved *and* Persons › Creators;
+  Neobux puts it in Approved and Persons › Neobux (the list made when missing). Neither sends anything; both go on to
+  the next lead. Before this, Approve only filled Collector's Approved list. Each Approved card says where the lead
+  went and when ("Neobux · 27 Nov 2026", in the followers' place, as Sent shows its channel). Engine: `POST
+  v1/collector/approve` takes `to: "neobux"` beside `"list"` and `"persons"` (Creators); the view's rows carry
+  `approvedTo` and `approvedLine`.
 - **Phone: shell 7, Routine › Sleep sets the alarm itself.** The phone app's manifest declares
   `com.android.alarm.permission.SET_ALARM` (granted at install), so "Going to sleep now" → a time adds the alarm to
   the Clock app silently (`ACTION_SET_ALARM`, `EXTRA_SKIP_UI`) instead of asking the user to set it by hand. Phones on

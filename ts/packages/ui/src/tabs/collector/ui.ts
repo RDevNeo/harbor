@@ -1,8 +1,9 @@
 // Collector tab, window side: drives CollectorBus (slint/collector.slint) from the engine's view (GET v1/collector, the
 // same routes Hub for Android calls) and sends every change back. Five views (Collector, Available, Approved, Restricted,
 // History), picked in the sidebar; one filter box on the lists. History is every search run by day (Headquarters'
-// Timeline); a click on one shows the leads it found. A lead's detail has the review bar (Reject / Skip / Approve, R S A
-// or ← ↓ →; Approve puts them in the Approved list): each goes on to the next lead of the list the detail was opened from. Pictures and video thumbnails are files the engine cached, decoded here.
+// Timeline); a click on one shows the leads it found. A lead's detail has the review bar (Reject / Skip / Approve / Neobux,
+// R S A N or ← ↓ →; Approve puts them in the Approved list and Persons › Creators, Neobux in Approved and Persons ›
+// Neobux): each goes on to the next lead of the list the detail was opened from. Pictures and video thumbnails are files the engine cached, decoded here.
 // While a run is going it re-reads every second; otherwise on the tabs' change events.
 // Send message is a real send: it only goes out from the dialog's second step ("Send now").
 import * as slint from "slint-ui";
@@ -45,6 +46,8 @@ export interface Row {
   sent?: boolean;
   sentAt?: string;
   sentLine?: string;
+  /** Approved's "Neobux · 27 Nov 2026" (the Persons list Approve put them in, "Approved · …" the list alone). */
+  approvedLine?: string;
   /** "youtube", "tiktok", "instagram". */
   platformKey?: string;
   /** Followers (YouTube subscribers count as followers; null unknown). */
@@ -108,7 +111,16 @@ export function contactLine(list: NonNullable<Row["contacts"]>): { contact: { ki
   return { contact: all[0] ?? { kind: "", color: "#9aa4b2", text: "", tip: "", i: 0 }, has_contact: all.length > 0, more: all.slice(1, 4), more_n: Math.max(0, all.length - 4) };
 }
 
-/** The review bar (Reject / Skip / Approve) is for leads still under review: a run's, Available's, Restricted's (its
+/** The review bar's moves. */
+export const REVIEW_MOVES = ["reject", "skip", "approve", "neobux"] as const;
+export type ReviewMove = (typeof REVIEW_MOVES)[number];
+
+/** The engine's `to` for an approving move: Approve → Persons › Creators ("persons"), Neobux → Persons › Neobux. */
+export function approveTarget(what: "approve" | "neobux"): "persons" | "neobux" {
+  return what === "neobux" ? "neobux" : "persons";
+}
+
+/** The review bar (Reject / Skip / Approve / Neobux) is for leads still under review: a run's, Available's, Restricted's (its
  *  Move to Available); not an Approved lead's, nor one opened from Sent (pure: tested). */
 export function underReview(d: { approved?: boolean; sent?: boolean }, page: string): boolean {
   return !d.approved && !d.sent && page !== "approved" && page !== "sent";
@@ -553,6 +565,7 @@ export function createCollectorUi(): TabUi {
     sync(
       l.rows.map((x) => {
         const px = pics.get(x.avatarPath);
+        const side = page === "sent" ? (x.sentLine ?? "") : page === "approved" ? (x.approvedLine ?? "") : "";
         return {
           id: x.id,
           name: x.name,
@@ -567,10 +580,10 @@ export function createCollectorUi(): TabUi {
           email: x.email,
           restricted: x.restricted,
           approved: !!x.approved,
-          // Sent: the channel and the day on the right, in the followers' place
-          followers: page === "sent" && x.sentLine ? x.sentLine : x.subs !== null && x.subs !== undefined ? `${compactCount(x.subs)} followers` : "",
+          // Sent: the channel and the day on the right, in the followers' place; Approved: the Persons list and the day
+          followers: side ? side : x.subs !== null && x.subs !== undefined ? `${compactCount(x.subs)} followers` : "",
           ...contactLine(x.contacts ?? []),
-          sig: `${x.id}|${x.name}|${x.handle}|${x.email}|${x.restricted}|${!!x.approved}|${x.subs ?? ""}|${!!px}|${page === "sent" ? (x.sentLine ?? "") : ""}|${(x.contacts ?? []).map((c) => `${c.kind}:${c.value}:${c.source}`).join(",")}`,
+          sig: `${x.id}|${x.name}|${x.handle}|${x.email}|${x.restricted}|${!!x.approved}|${x.subs ?? ""}|${!!px}|${side}|${(x.contacts ?? []).map((c) => `${c.kind}:${c.value}:${c.source}`).join(",")}`,
         };
       }),
     );
@@ -702,9 +715,10 @@ export function createCollectorUi(): TabUi {
     ctx?.saveSoon?.();
   };
 
-  /** The review bar: Reject (to Restricted), Skip (as it is), Approve (to the Approved list); then the next lead of the list
-   *  the detail was opened from, or back to the list at its end (no toast: the move is the feedback, errors still toast). */
-  const review = async (what: "reject" | "skip" | "approve"): Promise<void> => {
+  /** The review bar: Reject (to Restricted), Skip (as it is), Approve (to the Approved list and Persons › Creators),
+   *  Neobux (to the Approved list and Persons › Neobux); then the next lead of the list the detail was opened from, or
+   *  back to the list at its end (no toast: the move is the feedback, errors still toast). */
+  const review = async (what: ReviewMove): Promise<void> => {
     const d = detail;
     if (!d || !detailOpen || reviewBusy || editOpen || sendOpen) return;
     reviewBusy = true;
@@ -716,7 +730,7 @@ export function createCollectorUi(): TabUi {
       } else if (what === "approve" && d.approved) {
         take((await call("POST", "v1/collector/approve", { id: d.id, approved: false })) as CollectorView);
       } else if (what === "reject") take((await call("POST", "v1/collector/restrict", { id: d.id, restricted: true })) as CollectorView);
-      else if (what === "approve") take((await call("POST", "v1/collector/approve", { id: d.id, approved: true, to: "list" })) as CollectorView);
+      else if (what === "approve" || what === "neobux") take((await call("POST", "v1/collector/approve", { id: d.id, approved: true, to: approveTarget(what) })) as CollectorView);
       const v = view;
       const next = v ? nextLead(queue, d.id, leadsOf(v, page, bus?.filter ?? "", historyRun).rows.map((r) => r.id)) : null;
       if (next) await showDetail(next, false);
@@ -959,7 +973,7 @@ export function createCollectorUi(): TabUi {
     });
     on("detail_close", () => closeDetail());
     on("review", (what: string) => {
-      if (what === "reject" || what === "skip" || what === "approve") void review(what);
+      if ((REVIEW_MOVES as readonly string[]).includes(what)) void review(what as ReviewMove);
     });
     on("list_menu_show", (which: string) => {
       // Sent has one order (the newest sent first)

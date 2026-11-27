@@ -1011,7 +1011,8 @@ public class Collector extends Base {
         return null;
     }
 
-    /** The review bar: "reject" (to Restricted), "skip" (as it is), "approve" (to the Approved list); then the next
+    /** The review bar: "reject" (to Restricted), "skip" (as it is), "approve" (to the Approved list and Persons ›
+     *  Creators), "neobux" (to the Approved list and Persons › Neobux); then the next
      *  lead of the list the detail was opened from, or back to the list at its end. No toast: the move is the feedback
      *  (a failed call still toasts its reason, in post). */
     void review(String id, String name, String what, List<String> queue) {
@@ -1021,7 +1022,8 @@ public class Collector extends Base {
             else replace(new CollectorCreator.Detail(this, n, nameOf(n), queue));
         };
         if ("reject".equals(what)) post("restrict", next, "id", id, "restricted", true);
-        else if ("approve".equals(what)) post("approve", next, "id", id, "approved", true, "to", "list");
+        else if ("approve".equals(what)) post("approve", next, "id", id, "approved", true, "to", "persons");
+        else if ("neobux".equals(what)) post("approve", next, "id", id, "approved", true, "to", "neobux");
         else next.run();
     }
 
@@ -1367,11 +1369,12 @@ public class Collector extends Base {
             String handle = r.optString("handle");
             link.setText((handle.isEmpty() ? "" : handle + " · ") + r.optString("short"));
             bindContacts(rid, r.optJSONArray("contacts"));
-            // Sent: the channel and the day it went
-            String sl = r.optString("sentLine", "");
-            boolean sentLine = "sent".equals(sel) && !sl.isEmpty();
-            email.setVisibility(sentLine ? View.VISIBLE : View.GONE);
+            // Sent: the channel and the day it went; Approved: the Persons list Approve put them in, and the day
+            String sl = r.optString("sentLine", ""), al = r.optString("approvedLine", ""), ato = r.optString("approvedTo", "");
+            boolean sentLine = "sent".equals(sel) && !sl.isEmpty(), apprLine = "approved".equals(sel) && !al.isEmpty();
+            email.setVisibility(sentLine || apprLine ? View.VISIBLE : View.GONE);
             if (sentLine) email.setText("Sent · " + sl);
+            else if (apprLine) email.setText(ato.isEmpty() ? al : "Approved · " + al);
             JSONArray vids = r.optJSONArray("videos");
             boolean any = vids != null && vids.length() > 0;
             thumbs.setVisibility(any ? View.VISIBLE : View.GONE);

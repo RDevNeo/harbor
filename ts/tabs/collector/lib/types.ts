@@ -90,13 +90,20 @@ export interface CreatorRecord {
   note?: string;
 }
 
-/** Where Approve sends a lead: Approved alone, or Approved and Persons › Creators (no message sent). */
-export type ApproveTo = "list" | "persons";
-export const APPROVE_TO: readonly ApproveTo[] = ["list", "persons"];
+/** Where Approve sends a lead: Approved alone ("list"), or Approved and a Persons list, no message sent: "persons" is
+ *  Persons › Creators (its name from before Neobux), "neobux" Persons › Neobux. */
+export type ApproveTo = "list" | "persons" | "neobux";
+export const APPROVE_TO: readonly ApproveTo[] = ["list", "persons", "neobux"];
+/** The Persons place each Approve target adds the lead to (Persons' parsePlace words), and its name. */
+export const APPROVE_PLACE: Record<ApproveTo, { place: string; label: string } | null> = {
+  list: null,
+  persons: { place: "creators", label: "Creators" },
+  neobux: { place: "neobux", label: "Neobux" },
+};
 export interface Approved {
   at: string;
   to: ApproveTo;
-  /** The person in Persons › Creators, when Approve added them there. */
+  /** The person in Persons (Creators or Neobux), when Approve added them there. */
   person: string | null;
 }
 

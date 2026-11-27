@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bioLine, contactLine, destRows, formOf, historyItems, leadsOf, runHead, nextLead, platformCounts, sortRows, sortShort, podium, reachState, runLine, underReview, type CollectorView, type Compose, type Row } from "../src/tabs/collector/ui.ts";
+import { bioLine, contactLine, destRows, formOf, historyItems, leadsOf, runHead, nextLead, platformCounts, sortRows, sortShort, podium, reachState, runLine, underReview, approveTarget, REVIEW_MOVES, type CollectorView, type Compose, type Row } from "../src/tabs/collector/ui.ts";
 import type { DetailView } from "../../../tabs/collector/view.ts";
 import { GAP_CHOICES, defaultSettings } from "../../../tabs/collector/lib/types.ts";
 
@@ -192,6 +192,10 @@ describe("review bar", () => {
   it("shows only for leads under review: not Approved ones, nor Sent's", () => {
     expect([underReview({}, "available"), underReview({}, "collector"), underReview({}, "restricted")]).toEqual([true, true, true]);
     expect([underReview({ approved: true }, "history"), underReview({}, "approved"), underReview({}, "sent")]).toEqual([false, false, false]);
+  });
+  it("has Approve (Persons › Creators) and Neobux (Persons › Neobux)", () => {
+    expect([...REVIEW_MOVES]).toEqual(["reject", "skip", "approve", "neobux"]);
+    expect([approveTarget("approve"), approveTarget("neobux")]).toEqual(["persons", "neobux"]);
   });
 });
 

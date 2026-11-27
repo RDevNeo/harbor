@@ -14,8 +14,10 @@ Six views, picked in the sidebar (the phone: the drawer's rows):
   leads that run found.
 - **Available**: every lead not Approved, Sent or Restricted, newest first, with one filter box (name, handle, email,
   platform, link).
-- **Approved**: leads approved in the review bar (below), the same filter box and its own Copy JSONL. Their detail
-  has no review bar (they're reviewed).
+- **Approved**: leads approved in the review bar (below), the same filter box and its own Copy JSONL. Each card says
+  which Persons list Approve put them in and the day, as Sent shows its channel ("Neobux · 27 Nov 2026", "Creators ·
+  …"; "Approved · …" for one approved before Approve added to Persons; the phone: "Approved · Neobux · …"), in the
+  followers' place. Their detail has no review bar (they're reviewed).
 - **Sent**: leads a message actually went out to, by email, WhatsApp, Discord or Instagram: from Collector's Send
   message, or typed in Persons to the person a lead is (matched by the address it went to, else their profiles;
   Persons tells Collector only of sends that went, `PersonsService.onSent`, so a failed send moves nobody). Newest sent
@@ -89,13 +91,16 @@ the same content as a full-screen sheet:
   "Approved on" line. Exported as the CRM's `reach_kind` / `reach_value`.
 - The **review bar** at the bottom, only for leads still under review (a run's, Available's, Restricted's: not an
   Approved lead's, wherever it's opened, nor one opened from Approved or Sent; `underReview` in the PC's ui.ts), always under the content (the podium gives way in a short window; nothing reaches
-  the bar) (a review queue's: three equal cells, the keys' caps after each label):
+  the bar) (a review queue's: four equal cells, the keys' caps after each label):
   **Reject** (R or ←) moves the lead to Restricted; **Skip** (S or ↓) leaves it as it is; **Approve** (A or →) marks
-  it approved (out of Available, into Approved). Each then shows the next lead
+  it approved (out of Available, into Approved) and adds them to **Persons › Creators**; **Neobux** (N) does the same
+  into **Persons › Neobux** instead (`POST approve {to: "persons" | "neobux"}`). Both make (or join) the person the way
+  Send message does (email and WhatsApp number when known, their profiles, Collector's notes; the list made when
+  missing), with no message sent; Unapprove leaves them in Persons. Each then shows the next lead
   of the list the detail was opened from (its filter and order at that moment; a lead that left that list meanwhile
   is passed over); after the last one the detail closes (no toast after Reject, Skip, Approve, Restrict or Unapprove: the move is the feedback; a failed one still toasts why). The keys act only while no text field
   has the focus. Approved and rejected leads stay in the ledger: never collected again. Phone: the same bar at the
-  bottom of the sheet (no caps), hidden for an Approved lead.
+  bottom of the sheet (no caps, four cells), hidden for an Approved lead.
 
 On the phone the detail is the PC dialog's structure in one scrolling column: the picture, name, platform · handle and
 tags, Open channel and Edit, the stat tiles, Most recent, Bio and Reach (with its Send message). No Copy link,
@@ -191,7 +196,7 @@ Every key goes into the never-twice ledger. Their newest videos (the CRM keeps t
 missing are then read one lead at a time through the usual fill (1.2 s apart; Instagram 2.5 s).
 
 Records are the userscript's field for field (`lib/types.ts` `CreatorRecord`) plus Hub's own (`email_source`,
-`email_manual`, `found_video`, `restricted`, `approved` {at, to, person}, `note`, `contacted`, `reach`,
+`email_manual`, `found_video`, `restricted`, `approved` {at, to: "list" | "persons" (Creators) | "neobux", person}, `note`, `contacted`, `reach`,
 `whatsapp_manual`, `edited`, `filled_at`, `imported_from`); `settings.approveTo` and `note` are kept from the
 removed Approve to and Quick note (harmless; the routes still take them). Older state.json files load as they are; the old daily
 update's state and each record's history are dropped.

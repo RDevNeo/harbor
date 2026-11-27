@@ -660,6 +660,75 @@ describe("collector", () => {
     await caller(again)("POST", "note", { id: "instagram:9", note: "   " });
     expect(again.data.creators.find((x) => x.platform_id === "9")?.note).toBeUndefined();
   });
+  it("Approve to Neobux adds them to Persons › Neobux (the review bar's N); Approved shows where each went", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "collector-"));
+    const added: CreatorRecord[] = [];
+    const addedTo: string[] = [];
+    const sent: SendInput[] = [];
+    const c = new Collector(dir, deps({ persons: fakePersons({ added, addedTo, sent }) }));
+    c.data.creators.push(rec({ platform: "youtube", platform_id: "UC1", name: "A" }), rec({ platform: "tiktok", platform_id: "7", name: "B" }), rec({ platform: "instagram", platform_id: "9", name: "C" }));
+    const call = caller(c);
+    type V = { counts: { available: number; approved: number }; creators: { id: string; approved: boolean; approvedTo: string; approvedLine: string }[]; settings: { approveTo: string } };
+    let v = (await call("POST", "approve", { id: "youtube:UC1", approved: true, to: "neobux" }))!.body as V;
+    expect(addedTo).toEqual(["neobux"]);
+    expect(added.map((r) => r.name)).toEqual(["A"]);
+    expect(sent).toEqual([]);
+    expect(c.data.creators[0]!.approved).toMatchObject({ to: "neobux", person: "p_added1" });
+    expect(v.settings.approveTo).toBe("neobux");
+    expect(v.counts).toMatchObject({ available: 2, approved: 1 });
+    v = (await call("POST", "approve", { id: "tiktok:7", approved: true, to: "persons" }))!.body as V;
+    expect(addedTo).toEqual(["neobux", "creators"]);
+    v = (await call("POST", "approve", { id: "instagram:9", approved: true, to: "list" }))!.body as V;
+    expect(addedTo).toEqual(["neobux", "creators"]);
+    const row = (id: string) => v.creators.find((x) => x.id === id)!;
+    expect([row("youtube:UC1").approvedTo, row("tiktok:7").approvedTo, row("instagram:9").approvedTo]).toEqual(["Neobux", "Creators", ""]);
+    expect(row("youtube:UC1").approvedLine).toMatch(/^Neobux · \d{1,2} \w{3} \d{4}$/);
+    expect(row("tiktok:7").approvedLine).toMatch(/^Creators · /);
+    expect(row("instagram:9").approvedLine).toMatch(/^Approved · /);
+    expect(((await call("GET", "creator", null, [["id", "youtube:UC1"]]))!.body as DetailView).approvedNote).toMatch(/ and added to Persons › Neobux$/);
+    // Unapprove: no line, back in Available.
+    v = (await call("POST", "approve", { id: "youtube:UC1", approved: false }))!.body as V;
+    expect([row("youtube:UC1").approved, row("youtube:UC1").approvedLine]).toEqual([false, ""]);
+    // Kept through a restart.
+    await call("POST", "approve", { id: "youtube:UC1", approved: true, to: "neobux" });
+    await c.flush();
+    const again = new Collector(dir, deps({}));
+    expect(again.data.creators.find((x) => x.platform_id === "UC1")?.approved?.to).toBe("neobux");
+    expect(again.data.settings.approveTo).toBe("neobux");
+    // Persons refusing (down) leaves the lead where it was, with why.
+    const down = new Collector(mkdtempSync(join(tmpdir(), "collector-")), deps({ persons: { ...fakePersons(), add: () => ({ ok: false }) } }));
+    down.data.creators.push(rec({ platform: "youtube", platform_id: "UC2", name: "D" }));
+    const r = (await caller(down)("POST", "approve", { id: "youtube:UC2", approved: true, to: "neobux" }))!;
+    expect(r.status).toBe(409);
+    expect(JSON.stringify(r.body)).toContain("Persons › Neobux");
+    expect(down.data.creators[0]!.approved).toBeUndefined();
+  });
+  it("Approve to Neobux makes the person in Persons › Neobux (the list made when missing), or adds the one there to it", () => {
+    type P = { id: string; name: string; email?: string; listIds: string[]; storeIds: string[]; listJoinedAt?: Record<string, string> };
+    type L = { id: string; name: string; accountId: string };
+    let people: P[] = [{ id: "p1", name: "Old", email: "old@x.com", listIds: ["creators"], storeIds: [] }];
+    let lists: L[] = [{ id: "creators", name: "Creators", accountId: "gmail" }];
+    let n = 0;
+    const svc = {
+      get data() {
+        return { people, lists };
+      },
+      newId: () => `p_new${++n}`,
+      update: (f: (d: { people: P[]; lists: L[] }) => { people: P[]; lists: L[] }) => {
+        const d = f({ people, lists });
+        people = d.people;
+        lists = d.lists;
+      },
+      updatePerson: (id: string, f: (p: P) => P) => void (people = people.map((p) => (p.id === id ? f(p) : p))),
+    };
+    const bridge = livePersons(() => svc as never);
+    expect(bridge.add(rec({ platform: "youtube", platform_id: "UC1", name: "Ana", email: "ana@canal.com" }), "neobux")).toMatchObject({ ok: true, person: "p_new1", created: true });
+    expect(lists.map((l) => l.id)).toEqual(["creators", "neobux"]);
+    expect(people[1]).toMatchObject({ name: "Ana", email: "ana@canal.com", listIds: ["neobux"], storeIds: [] });
+    expect(bridge.add(rec({ platform: "tiktok", platform_id: "7", name: "Old one", email: "old@x.com" }), "neobux")).toMatchObject({ ok: true, person: "p1", created: false });
+    expect(people[0]!.listIds).toContain("neobux");
+    expect(lists.map((l) => l.id)).toEqual(["creators", "neobux"]);
+  });
   it("Approve to Persons › Creators makes the person Send would (email, number, profiles), or joins the one there; sends nothing", () => {
     type P = { id: string; name: string; email?: string; whatsapp?: string; listIds: string[]; storeIds: string[]; socials?: string[]; notes?: string };
     let people: P[] = [{ id: "p1", name: "Old", email: "old@x.com", listIds: [], storeIds: [] }];

@@ -728,13 +728,15 @@ final class CollectorCreator {
             View top = new View(a);
             top.setBackgroundColor(Ui.LINE);
             foot.addView(top, new LinearLayout.LayoutParams(-1, Math.max(1, Ui.dp(0.5f))));
-            // The review bar: three equal cells, hairlines between.
+            // The review bar: four equal cells, hairlines between (Approve → Persons › Creators, Neobux → Persons › Neobux).
             LinearLayout rb = Ui.row(a);
             rb.addView(cell(Ui.I_X, false, "Reject", Ui.RED, "reject"), new LinearLayout.LayoutParams(0, Ui.dp(56), 1));
             rb.addView(rule(), new LinearLayout.LayoutParams(Math.max(1, Ui.dp(0.5f)), -1));
             rb.addView(cell(null, true, "Skip", Ui.G700, "skip"), new LinearLayout.LayoutParams(0, Ui.dp(56), 1));
             rb.addView(rule(), new LinearLayout.LayoutParams(Math.max(1, Ui.dp(0.5f)), -1));
             rb.addView(cell(Ui.I_CHECK, false, "Approve", Ui.GREEN, "approve"), new LinearLayout.LayoutParams(0, Ui.dp(56), 1));
+            rb.addView(rule(), new LinearLayout.LayoutParams(Math.max(1, Ui.dp(0.5f)), -1));
+            rb.addView(cell(Ui.I_CHECK, false, "Neobux", Ui.BLUE, "neobux"), new LinearLayout.LayoutParams(0, Ui.dp(56), 1));
             foot.addView(rb, Ui.fill());
             root.addView(foot, Ui.fill());
             body.addView(Ds.empty(a, "Loading…"), Ui.fill());
@@ -759,7 +761,7 @@ final class CollectorCreator {
             return v;
         }
 
-        /** One third of the review bar: its icon (or Lucide's arrow-down, drawn) and label in its colour. */
+        /** One cell of the review bar: its icon (or Lucide's arrow-down, drawn) and label in its colour. */
         private View cell(String glyph, boolean down, String label, int color, String what) {
             LinearLayout c = Ui.row(a);
             c.setGravity(Gravity.CENTER);
@@ -770,8 +772,10 @@ final class CollectorCreator {
                 iv.setImageDrawable(new ArrowDown(color));
                 c.addView(iv, new LinearLayout.LayoutParams(Ui.dp(17), Ui.dp(17)));
             }
-            TextView t = Ui.bold(a, label, 15, color);
-            t.setPadding(Ui.dp(7), 0, 0, 0);
+            // four cells across a phone: 14sp on one line ("Approve" fits a 360dp screen's quarter)
+            TextView t = Ui.bold(a, label, 14, color);
+            t.setSingleLine(true);
+            t.setPadding(Ui.dp(6), 0, 0, 0);
             c.addView(t, Ui.wrap());
             c.setContentDescription(label);
             c.setOnClickListener(v -> review(what));

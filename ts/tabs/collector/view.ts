@@ -6,7 +6,7 @@ import { CONTACT_LABEL, contactHref, contactsOf, contactText } from "./lib/conta
 import { compactCount, dayAgo } from "./lib/format.ts";
 import { historyView } from "./lib/history.ts";
 import { brandOf, linkTitle, linksText, REACH_META, reachDrafts, reachHref, reachStart } from "./lib/reach.ts";
-import { GAP_CHOICES, listOf, PLATFORM_LABEL, type ApproveTo, type SortMode, type CollectorData, type CreatorPlatform, type CreatorRecord, type ReachKind } from "./lib/types.ts";
+import { GAP_CHOICES, listOf, PLATFORM_LABEL, APPROVE_PLACE, type ApproveTo, type SortMode, type CollectorData, type CreatorPlatform, type CreatorRecord, type ReachKind } from "./lib/types.ts";
 
 export { compactCount as compact } from "./lib/format.ts";
 
@@ -63,6 +63,10 @@ export interface RowView {
   sentAt: string;
   /** "Email · 27 Nov 2026", "WhatsApp · …" ("" never sent). */
   sentLine: string;
+  /** Where Approve put them: "Creators", "Neobux" (the Persons list), "" (the Approved list alone, or not approved). */
+  approvedTo: string;
+  /** Approved's line: "Neobux · 27 Nov 2026", "Creators · …", "Approved · …" (the list alone); "" not approved. */
+  approvedLine: string;
   /** "youtube", "tiktok", "instagram": the lists' platform filter. */
   platformKey: string;
   /** Followers (YouTube subscribers count as followers): the lists' Sort (null: hidden or unknown). */
@@ -104,7 +108,10 @@ export const SORT_CHOICES: { value: SortMode; label: string; group: number }[] =
 export const APPROVE_CHOICES: { value: ApproveTo; label: string; tip: string }[] = [
   { value: "list", label: "Approved list only", tip: "Out of Available, into Approved" },
   { value: "persons", label: "Persons › Creators", tip: "Also adds them there; sends nothing" },
+  { value: "neobux", label: "Persons › Neobux", tip: "Also adds them there; sends nothing" },
 ];
+
+const day = (iso: string): string => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 
 export function creatorRow(c: CreatorRecord, pic: (url: string | null) => string | null): RowView {
   const handle = c.handle ? (c.handle.startsWith("@") ? c.handle : `@${c.handle}`) : "";
@@ -130,7 +137,9 @@ export function creatorRow(c: CreatorRecord, pic: (url: string | null) => string
     approved: listOf(c) === "approved",
     sent: listOf(c) === "sent",
     sentAt: c.contacted?.at ?? "",
-    sentLine: c.contacted ? `${SENT_VIA[c.contacted.via] ?? "Sent"} · ${new Date(c.contacted.at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}` : "",
+    sentLine: c.contacted ? `${SENT_VIA[c.contacted.via] ?? "Sent"} · ${day(c.contacted.at)}` : "",
+    approvedTo: c.approved ? (APPROVE_PLACE[c.approved.to]?.label ?? "") : "",
+    approvedLine: c.approved ? `${APPROVE_PLACE[c.approved.to]?.label ?? "Approved"} · ${day(c.approved.at)}` : "",
     platformKey: c.platform,
     subs: c.subscriber_count ?? null,
     reach: c.reach?.kind ?? "",
@@ -191,7 +200,7 @@ export interface DetailView extends RowView {
   edit: { name: string; handle: string; bio: string; links: string };
   /** The Quick note (private). */
   note: string;
-  /** "Approved on 3 Nov 2026" / "… and added to Persons › Creators", "" when not approved. */
+  /** "Approved on 3 Nov 2026" / "… and added to Persons › Creators" (or Neobux), "" when not approved. */
   approvedNote: string;
 }
 
@@ -244,7 +253,7 @@ export function creatorDetail(c: CreatorRecord, pic: (url: string | null) => str
     contacted: ct ? `Sent ${SENT_WHAT[ct.via] ?? "a message"} on ${new Date(ct.at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} to ${ct.to}${ct.placeLabel && ct.place !== "creators" ? ` (Persons › ${ct.placeLabel})` : ""}` : "",
     edit: { name: c.name, handle: c.handle ?? "", bio: c.description ?? "", links: linksText(c.links) },
     note: c.note ?? "",
-    approvedNote: row.approved && c.approved ? `Approved on ${new Date(c.approved.at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}${c.approved.to === "persons" ? " and added to Persons › Creators" : ""}` : "",
+    approvedNote: row.approved && c.approved ? `Approved on ${day(c.approved.at)}${row.approvedTo ? ` and added to Persons › ${row.approvedTo}` : ""}` : "",
   };
 }
 
