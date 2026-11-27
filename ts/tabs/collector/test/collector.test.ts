@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { handleOf, ytParseCount, ytSearchParam, ytParseFeed, ytUnwrapRedirect, ytUploadersFromSearch, ytParseAbout } from "../lib/youtube.ts";
+import { YouTube, handleOf, ytParseCount, ytSearchParam, ytParseFeed, ytUnwrapRedirect, ytUploadersFromSearch, ytParseAbout } from "../lib/youtube.ts";
 import { discoveryAppetite, sweepYouTube, type SweepCtx } from "../lib/sweep.ts";
 import { exportText, migrate, defaultData, type CreatorRecord } from "../lib/types.ts";
 import { Collector, collectorRoute, type CollectorDeps } from "../engine.ts";
@@ -100,6 +100,30 @@ function fakeYt(ages: Record<string, number | null>) {
 function sweepCtx(yt: ReturnType<typeof fakeYt>, target: number, gapDays: number, out: CreatorRecord[]): SweepCtx {
   return { yt, query: "q", target, gapDays, isKnown: () => false, enrich: async (r) => r, count: () => out.length, add: (r) => (out.push(r), null), stopped: () => false, log: () => {}, progress: () => {}, sleep: async () => {}, now: () => NOW };
 }
+
+describe("youtube client", () => {
+  it("searches as Brazil (gl=BR, hl=pt, pt-BR) and reads About in English with gl=BR", async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const page = `<script>var ytcfg={"INNERTUBE_API_KEY":"K","HL":"pt","GL":"BR"};var ytInitialData = {"contents":{}};</script>`;
+    const f = async (url: string, init?: RequestInit): Promise<Response> => {
+      calls.push({ url, init });
+      return url.includes("/youtubei/") ? new Response("{}") : new Response(page);
+    };
+    const yt = new YouTube(f);
+    await yt.search("roblox", {}).catch(() => null);
+    await yt.continuation("TOKEN");
+    await yt.about("UC123").catch(() => null);
+    const search = new URL(calls[0]!.url);
+    expect(search.searchParams.get("gl")).toBe("BR");
+    expect(search.searchParams.get("hl")).toBe("pt");
+    expect((calls[0]!.init!.headers as Record<string, string>)["Accept-Language"]).toStartWith("pt-BR");
+    const ctx = JSON.parse(String(calls[1]!.init!.body)).context.client;
+    expect(ctx).toMatchObject({ hl: "pt", gl: "BR" });
+    const about = new URL(calls[2]!.url);
+    expect(about.searchParams.get("gl")).toBe("BR");
+    expect(about.searchParams.get("hl")).toBe("en");
+  });
+});
 
 describe("youtube sweep", () => {
   it("drops dead channels before reading About, and stops at the target", async () => {

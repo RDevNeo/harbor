@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { TikTok, solveWaf, ttParseEmbed, ttParseItemList, ttParseSuggest, ttParseUserDetail, ttTagOf, ttTimeFromId, xBogus, type Hit } from "../lib/tiktok.ts";
+import { TikTok, solveWaf, ttWebParams, ttParseEmbed, ttParseItemList, ttParseSuggest, ttParseUserDetail, ttTagOf, ttTimeFromId, xBogus, type Hit } from "../lib/tiktok.ts";
 import { Instagram, igCleanLink, igCollectMedia, igHashtagFromQuery, igParseChunks, igParseCrawlerHtml, igParseProfileJson, igRecentFromFeed, igTimeFromShortcode, igTopSerpCursor } from "../lib/instagram.ts";
 
 const fixture = (name: string): string => readFileSync(join(import.meta.dir, "fixtures", name), "utf8");
@@ -119,6 +119,15 @@ describe("tiktok parsing", () => {
 });
 
 describe("tiktok client", () => {
+  it("asks as a visitor in Brazil (region BR, pt-BR), signed over that query", () => {
+    const p = ttWebParams("7300000000000000001", { challengeID: "1", cursor: "0" });
+    expect(p).toMatchObject({ region: "BR", language: "pt-BR", app_language: "pt-BR", browser_language: "pt-BR", tz_name: "America/Sao_Paulo", challengeID: "1" });
+    const q = new URLSearchParams(p).toString();
+    expect(q).toContain("region=BR");
+    expect(xBogus(q, "UA", "", 1795600000)).not.toBe(xBogus(q.replace("region=BR", "region=US"), "UA", "", 1795600000));
+  });
+
+
   it("solves the challenge, keeps the cookies, reads profile and embed", async () => {
     const slept: number[] = [];
     let challenged = false;
@@ -142,7 +151,7 @@ describe("tiktok client", () => {
     expect(header(f.calls[1], "Cookie")).toContain("ttwid=t1");
     expect(header(f.calls[2], "Cookie")).toContain("msToken=m1");
     expect(header(f.calls[0], "User-Agent")).toContain("Chrome/");
-    expect(header(f.calls[0], "Accept-Language")).toStartWith("en-US");
+    expect(header(f.calls[0], "Accept-Language")).toStartWith("pt-BR");
     expect(p.followers).toBe(35_074_170);
     expect(p.recent).toHaveLength(3);
     expect(p.last_post_at).toBe("2026-11-25T17:00:19.000Z");
@@ -397,6 +406,11 @@ describe("instagram client", () => {
     expect(header(c, "User-Agent")).toStartWith("Instagram ");
     expect(header(c, "User-Agent")).toContain(" Android (");
     expect(header(c, "Cookie")).toBeUndefined();
+    // Searches run as Brazil: the app's locale is pt_BR.
+    expect(header(c, "X-IG-App-Locale")).toBe("pt_BR");
+    expect(header(c, "X-IG-Device-Locale")).toBe("pt_BR");
+    expect(header(c, "Accept-Language")).toStartWith("pt-BR");
+    expect(header(c, "User-Agent")).toContain("; pt_BR; ");
     expect(p).toMatchObject({ precision: "exact", followers: 48213, email: "parcerias@exemplo.com.br", last_post_at: new Date(1795600000 * 1000).toISOString() });
     expect(p.recent.map((v) => v.video_id)).toEqual(["REEL1abcdef", "REEL2abcdef", "PINNEDold01"]);
   });

@@ -143,7 +143,7 @@ export interface YtConfig {
 
 export function ytExtractConfig(html: string): YtConfig {
   const get = (k: string): string | null => html.match(new RegExp(`"${k}":"([^"]+)"`))?.[1] ?? null;
-  return { apiKey: get("INNERTUBE_API_KEY"), clientVersion: get("INNERTUBE_CLIENT_VERSION") ?? "2.20261125.00.00", hl: get("HL") ?? "en", gl: get("GL") ?? "US", visitorData: get("VISITOR_DATA") };
+  return { apiKey: get("INNERTUBE_API_KEY"), clientVersion: get("INNERTUBE_CLIENT_VERSION") ?? "2.20261125.00.00", hl: get("HL") ?? YT_HL, gl: get("GL") ?? YT_GL, visitorData: get("VISITOR_DATA") };
 }
 
 export interface ChannelHit {
@@ -312,7 +312,14 @@ export type Fetch = (url: string, init?: RequestInit) => Promise<Response>;
 const UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36";
 const ORIGIN = "https://www.youtube.com";
 
-/** YouTube over plain HTTPS from the engine: no cookies, English UI (counts parse the same everywhere). */
+/** Searches run as Brazil: region BR, Brazilian Portuguese (what a viewer in Brazil sees searching). */
+export const YT_GL = "BR";
+export const YT_HL = "pt";
+
+/**
+ * YouTube over plain HTTPS from the engine: no cookies. Searches run as Brazil in pt-BR; a channel's About page
+ * keeps the English UI (region still BR) so its country reads "Brazil" the same as before.
+ */
 export class YouTube {
   private cfg: YtConfig | null = null;
   constructor(
@@ -320,15 +327,16 @@ export class YouTube {
     private readonly origin = ORIGIN,
   ) {}
 
-  private headers(json = false): Record<string, string> {
+  private headers(json = false, english = false): Record<string, string> {
     // CONSENT: skips the EU cookie wall, which otherwise answers every page with a consent form.
-    const h: Record<string, string> = { "User-Agent": UA, "Accept-Language": "en-US,en;q=0.9", Cookie: "CONSENT=YES+1; SOCS=CAI" };
+    const lang = english ? "en-US,en;q=0.9" : "pt-BR,pt;q=0.9";
+    const h: Record<string, string> = { "User-Agent": UA, "Accept-Language": lang, Cookie: "CONSENT=YES+1; SOCS=CAI" };
     if (json) h["Content-Type"] = "application/json";
     return h;
   }
 
-  private async html(path: string): Promise<string> {
-    const r = await this.fetchFn(this.origin + path, { headers: this.headers(), signal: AbortSignal.timeout(25_000) });
+  private async html(path: string, english = false): Promise<string> {
+    const r = await this.fetchFn(this.origin + path, { headers: this.headers(false, english), signal: AbortSignal.timeout(25_000) });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return r.text();
   }
@@ -336,7 +344,7 @@ export class YouTube {
   /** One search page for a pass (`filter` its sp spec). */
   async search(query: string, filter: SearchFilter): Promise<unknown> {
     const sp = ytSearchParam(filter);
-    const html = await this.html(`/results?search_query=${encodeURIComponent(query)}&hl=en${sp ? `&sp=${sp}` : ""}`);
+    const html = await this.html(`/results?search_query=${encodeURIComponent(query)}&hl=${YT_HL}&gl=${YT_GL}${sp ? `&sp=${sp}` : ""}`);
     this.cfg ??= ytExtractConfig(html);
     const data = ytExtractInitialData(html);
     if (!data) throw new Error("could not read YouTube search data");
@@ -350,7 +358,7 @@ export class YouTube {
     const r = await this.fetchFn(`${this.origin}/youtubei/v1/search${c.apiKey ? `?key=${c.apiKey}&prettyPrint=false` : "?prettyPrint=false"}`, {
       method: "POST",
       headers: this.headers(true),
-      body: JSON.stringify({ context: { client: { clientName: "WEB", clientVersion: c.clientVersion, hl: "en", gl: c.gl, ...(c.visitorData ? { visitorData: c.visitorData } : {}) } }, continuation: token }),
+      body: JSON.stringify({ context: { client: { clientName: "WEB", clientVersion: c.clientVersion, hl: YT_HL, gl: YT_GL, ...(c.visitorData ? { visitorData: c.visitorData } : {}) } }, continuation: token }),
       signal: AbortSignal.timeout(25_000),
     });
     if (!r.ok) throw new Error(`continuation HTTP ${r.status}`);
@@ -364,7 +372,7 @@ export class YouTube {
   }
 
   async about(channelId: string): Promise<ChannelAbout> {
-    const data = ytExtractInitialData(await this.html(`/channel/${channelId}/about?hl=en`));
+    const data = ytExtractInitialData(await this.html(`/channel/${channelId}/about?hl=en&gl=${YT_GL}`, true));
     if (!data) throw new Error("could not read channel data");
     return ytParseAbout(data);
   }

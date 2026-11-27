@@ -314,13 +314,13 @@ export function xBogus(query: string, ua: string, body = "", now = Math.floor(Da
   return s;
 }
 
-/** The web app's usual query parameters (a Linux Chrome visitor). */
+/** The web app's usual query parameters (a Linux Chrome visitor in Brazil, pt-BR: searches run as Brazil). */
 export function ttWebParams(deviceId: string, extra: Record<string, string>): Record<string, string> {
   return {
     aid: "1988",
-    app_language: "en",
+    app_language: "pt-BR",
     app_name: "tiktok_web",
-    browser_language: "en-US",
+    browser_language: "pt-BR",
     browser_name: "Mozilla",
     browser_online: "true",
     browser_platform: "Linux x86_64",
@@ -333,13 +333,13 @@ export function ttWebParams(deviceId: string, extra: Record<string, string>): Re
     history_len: "2",
     is_fullscreen: "false",
     is_page_visible: "true",
-    language: "en",
+    language: "pt-BR",
     os: "linux",
-    region: "US",
+    region: "BR",
     screen_height: "1080",
     screen_width: "1920",
     tz_name: "America/Sao_Paulo",
-    webcast_language: "en",
+    webcast_language: "pt-BR",
     ...extra,
   };
 }
@@ -368,7 +368,7 @@ export function ttParseItemList(json: unknown): Hit[] {
   return out;
 }
 
-/** TikTok over plain HTTPS: browser UA, English, one cookie jar (WAF + ttwid) for the session. */
+/** TikTok over plain HTTPS: browser UA, Brazil (pt-BR), one cookie jar (WAF + ttwid) for the session. */
 export class TikTok {
   private readonly jar = new Map<string, string>();
   /** A visitor's device id for this session (19 digits), as the web app sends it. */
@@ -393,7 +393,7 @@ export class TikTok {
   private async once(url: string, accept: string, extra: Record<string, string> = {}): Promise<{ status: number; body: string }> {
     let target = url;
     for (let hop = 0; hop < 5; hop++) {
-      const headers: Record<string, string> = { "User-Agent": UA, "Accept-Language": "en-US,en;q=0.9", Accept: accept, ...extra };
+      const headers: Record<string, string> = { "User-Agent": UA, "Accept-Language": "pt-BR,pt;q=0.9", Accept: accept, ...extra };
       if (this.jar.size) headers.Cookie = [...this.jar].map(([k, v]) => `${k}=${v}`).join("; ");
       const r = await this.fetchFn(target, { headers, redirect: "manual", signal: AbortSignal.timeout(20_000) });
       this.absorb(r);

@@ -18,7 +18,7 @@ export const IG_ORIGIN = "https://www.instagram.com";
 export const IG_API = "https://i.instagram.com";
 /** The Android app's app id and UA. */
 export const IG_ANDROID_APP_ID = "567067343352427";
-const IG_ANDROID_UA = "Instagram 361.0.0.46.88 Android (34/14; 420dpi; 1080x2340; samsung; SM-S918B; dm3q; qcom; en_US; 674675155)";
+const IG_ANDROID_UA = "Instagram 361.0.0.46.88 Android (34/14; 420dpi; 1080x2340; samsung; SM-S918B; dm3q; qcom; pt_BR; 674675155)";
 /** The search page's GraphQL query (Android app), as instagrapi sends it. */
 export const IG_TOP_SERP_DOC = "418531681916451609839969517761";
 export const IG_RECENT_LIMIT = 3;
@@ -390,10 +390,12 @@ export class Instagram {
     const h: Record<string, string> = {
       "User-Agent": IG_ANDROID_UA,
       Accept: "*/*",
-      "Accept-Language": "en-US",
+      // Searches run as Brazil: the app's locale is pt_BR (as a phone set to Português (Brasil)).
+      "Accept-Language": "pt-BR,pt;q=0.9",
       "X-IG-App-ID": IG_ANDROID_APP_ID,
-      "X-IG-App-Locale": "en_US",
-      "X-IG-Device-Locale": "en_US",
+      "X-IG-App-Locale": "pt_BR",
+      "X-IG-Device-Locale": "pt_BR",
+      "X-IG-Mapped-Locale": "pt_BR",
       "X-IG-Capabilities": "3brTv10=",
       "X-IG-Connection-Type": "WIFI",
       "X-FB-HTTP-Engine": "Liger",

@@ -78,6 +78,14 @@ tab is opened on the PC or the phone (`GET v1/collector/unread`, `POST v1/collec
 Every run searches the term for **videos**, as the platform's own search shows them, then goes from each video to its
 creator (in the platform's order), keeps the active ones (a post inside Last upload) and reads their profile.
 
+Searches run as **Brazil, in Brazilian Portuguese (pt-BR)** on all three platforms: steering only, no creator is dropped
+for their country. YouTube: the search page and its continuations with `gl=BR&hl=pt` (`Accept-Language: pt-BR`); a
+channel's About page stays `hl=en` (with `gl=BR`) so its country reads "Brazil" as before. TikTok: the web params
+`region=BR`, `language`/`app_language`/`browser_language`/`webcast_language` `pt-BR` (inside the X-Bogus-signed query),
+`Accept-Language: pt-BR`. Instagram: the app's `X-IG-App-Locale` / `X-IG-Device-Locale` / `X-IG-Mapped-Locale` `pt_BR`,
+`pt_BR` in the app UA, `Accept-Language: pt-BR,pt;q=0.9`. Parsing reads JSON, ids and timestamps, not UI words, so it
+doesn't depend on the language.
+
 | Platform | Videos for the term | Then | Needs |
 | --- | --- | --- | --- |
 | YouTube | `lib/youtube.ts` / `lib/sweep.ts`: the search page exactly as youtube.com/results shows it (no filter: videos and Shorts, YouTube's ranking), paged with innertube continuations; then the Videos filter, this month's videos, the newest videos, while the target isn't met. Channel results are ignored: only videos lead to a creator | The channel's Atom feed (freshness gate and the 3 newest videos), its About data (links, stats) | Nothing |
