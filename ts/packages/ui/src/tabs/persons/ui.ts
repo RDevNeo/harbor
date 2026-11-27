@@ -1,7 +1,7 @@
 // Persons tab, window side: drives PersonsBus (slint/persons.slint) from the engine's v1/persons routes (in-process
 // through ctx.call — the same routes Hub for Android uses). Pictures are local files the engine cached, decoded here.
 import * as slint from "slint-ui";
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { clipboard, images, picker } from "@harbor/media";
 import { GLYPHS, type GlyphName } from "@harbor/net";
@@ -69,6 +69,92 @@ type MenuIn = { id?: string; label: string; icon?: string; sub?: string; hint?: 
 /** The picker's Recent tab before anything was picked (Discord's frequently used). */
 const RECENT_START = ["👍", "❤️", "😂", "😮", "😢", "🙏", "🔥", "🎉", "✅", "👀", "😊", "😅", "🤔", "👏", "💯", "🚀", "😎", "🥲"];
 const EMOJI_COLS = 9;
+
+/** kv: the composers' unsent text per chat and recipient, and which chats write to the AI (kept across starts). */
+export const DRAFTS_KEY = "persons_drafts";
+/** Drafts from kv as {drafts, toAi} maps; anything odd left out. */
+export function draftsFrom(text: string | null): { drafts: Map<string, string>; toAi: Map<string, boolean> } {
+  const out = { drafts: new Map<string, string>(), toAi: new Map<string, boolean>() };
+  if (!text) return out;
+  let o: unknown;
+  try {
+    o = JSON.parse(text);
+  } catch {
+    return out;
+  }
+  const rec = (v: unknown): Record<string, unknown> => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
+  for (const [k, v] of Object.entries(rec(rec(o).drafts))) if (typeof v === "string" && v.trim() !== "") out.drafts.set(k, v);
+  for (const [k, v] of Object.entries(rec(rec(o).toAi))) if (v === true) out.toAi.set(k, true);
+  return out;
+}
+/** What kv keeps of them: non-empty drafts, chats switched to the AI. */
+export function draftsJson(drafts: ReadonlyMap<string, string>, toAi: ReadonlyMap<string, boolean>): string {
+  const d: Record<string, string> = {};
+  for (const [k, v] of drafts) if (v.trim() !== "") d[k] = v;
+  const a: Record<string, boolean> = {};
+  for (const [k, v] of toAi) if (v) a[k] = true;
+  return JSON.stringify({ drafts: d, toAi: a });
+}
+
+/** Where the tab was, as TabUi.snapshot gives it (an update's restart, a crash). */
+export interface PersonsSnap {
+  open: { id: string; section: string; store: string } | null;
+  allActive: boolean;
+  sr: string | null;
+  query: string;
+  panelOpen: boolean;
+  sideHidden: boolean;
+  aiMode: boolean;
+  draft: string;
+  cursor: number;
+  subject: string;
+  replyTo: { id: string; name: string; text: string } | null;
+  forwarded: { id: string; name: string; text: string } | null;
+  files: string[];
+  aiFiles: string[];
+  srFiles: string[];
+  /** Each chat's place (PersonsTab.places: at its end, or the row at the view's top and its offset), the open
+   *  chat's as it is now: a restart reopens every chat where it was left, as within a run. */
+  places: [string, { end: boolean; id: string; off: number }][];
+}
+
+export function personsSnapFrom(v: unknown): PersonsSnap | null {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const o = v as Record<string, unknown>;
+  const str = (x: unknown): string => (typeof x === "string" ? x : "");
+  const strs = (x: unknown): string[] => (Array.isArray(x) ? x.filter((y): y is string => typeof y === "string").slice(0, 10) : []);
+  const msg = (x: unknown): { id: string; name: string; text: string } | null => {
+    const m = x && typeof x === "object" ? (x as Record<string, unknown>) : null;
+    return m && typeof m.id === "string" && m.id !== "" ? { id: m.id, name: str(m.name), text: str(m.text) } : null;
+  };
+  const op = o.open && typeof o.open === "object" ? (o.open as Record<string, unknown>) : null;
+  const places: PersonsSnap["places"] = [];
+  for (const e of Array.isArray(o.places) ? o.places : []) {
+    if (!Array.isArray(e) || typeof e[0] !== "string" || !e[1] || typeof e[1] !== "object") continue;
+    const pl = e[1] as Record<string, unknown>;
+    const id = str(pl.id);
+    const off = typeof pl.off === "number" && Number.isFinite(pl.off) ? pl.off : 0;
+    if (pl.end === true || id !== "") places.push([e[0], { end: pl.end === true, id, off }]);
+  }
+  return {
+    open: op && typeof op.id === "string" && op.id !== "" ? { id: op.id, section: str(op.section), store: str(op.store) } : null,
+    allActive: o.allActive !== false,
+    sr: typeof o.sr === "string" && o.sr !== "" ? o.sr : null,
+    query: str(o.query),
+    panelOpen: o.panelOpen !== false,
+    sideHidden: o.sideHidden === true,
+    aiMode: o.aiMode === true,
+    draft: str(o.draft),
+    cursor: typeof o.cursor === "number" && o.cursor >= 0 ? Math.round(o.cursor) : -1,
+    subject: str(o.subject),
+    replyTo: msg(o.replyTo),
+    forwarded: msg(o.forwarded),
+    files: strs(o.files),
+    aiFiles: strs(o.aiFiles),
+    srFiles: strs(o.srFiles),
+    places: places.slice(-200),
+  };
+}
 
 const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#06b6d4", "#ec4899", "#84cc16", "#f97316", "#8b5cf6", "#0ea5e9"];
 
@@ -149,10 +235,20 @@ class PersonsTab {
   private holdUnread = "";
   private qr: ((text: string) => Pixels) | null = null;
   private alive = true;
+  /** kv `persons_drafts` as last written, and the write that's due. */
+  private draftsKept = "";
+  private draftsTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The first state read (start): a restore waits for it. */
+  private started: Promise<void> = Promise.resolve();
 
   constructor(private readonly ctx: TabCtx) {
     this.bus = Reflect.get(ctx.win, "PersonsBus") as Bus;
     this.pics = new Pictures(() => this.render());
+    // What was typed before (the last run, a crash or an update's restart): every chat's draft and recipient.
+    const kept = draftsFrom(ctx.kv?.get(DRAFTS_KEY) ?? null);
+    this.drafts = kept.drafts;
+    this.toAi = kept.toAi;
+    this.draftsKept = draftsJson(this.drafts, this.toAi);
     const b = this.bus;
     b.side = this.sideModel;
     b.attach_tiles = this.tileModel;
@@ -357,9 +453,110 @@ class PersonsTab {
   // ---------- data ----------
 
   async start(): Promise<void> {
-    await this.loadFolds();
-    await this.refresh();
+    this.started = (async () => {
+      await this.loadFolds();
+      await this.refresh();
+    })();
+    await this.started;
     void this.loop();
+  }
+
+  // ---------- kept across starts ----------
+
+  /** The composer's draft went into its map, and the maps to kv half a second later (a burst of keys writes once). */
+  private draftsChanged(): void {
+    if (this.draftsTimer) return;
+    this.draftsTimer = setTimeout(() => {
+      this.draftsTimer = null;
+      this.keepDrafts();
+    }, 500);
+  }
+
+  private keepDrafts(): void {
+    const k = this.composerKey();
+    if (k) this.drafts.set(`${k}:${this.aiMode ? "ai" : "person"}`, String(this.bus.draft ?? ""));
+    for (const [key, v] of this.drafts) if (v === "") this.drafts.delete(key);
+    const json = draftsJson(this.drafts, this.toAi);
+    if (json === this.draftsKept) return;
+    this.draftsKept = json;
+    this.ctx.kv?.setLater(DRAFTS_KEY, json);
+  }
+
+  /** Where the tab is (TabUi.snapshot): the page, the open chat or request, the composer in full, the scroll. */
+  snapshot(): PersonsSnap {
+    this.keepDrafts();
+    const b = this.bus;
+    this.keepPlace();
+    return {
+      open: this.ui.open ? { ...this.ui.open } : null,
+      allActive: this.ui.allActive,
+      sr: this.sr?.ref ?? null,
+      query: this.query,
+      panelOpen: this.panelOpen,
+      sideHidden: b.side_hidden === true,
+      aiMode: this.aiMode,
+      draft: String(b.draft ?? ""),
+      cursor: Number(b.draft_cursor) || 0,
+      subject: String(b.subject ?? ""),
+      replyTo: this.replyTo ? { ...this.replyTo } : null,
+      forwarded: this.forwarded ? { ...this.forwarded } : null,
+      files: [...this.files],
+      aiFiles: [...this.aiFiles],
+      srFiles: [...this.srFiles],
+      places: [...this.places].slice(-200),
+    };
+  }
+
+  /** Back where a snapshot left it: the page before the first data is read (no flash of All people), then the chat,
+   *  its composer as it was (recipient, text, cursor, reply, files) and its place in the conversation. */
+  async restore(v: unknown): Promise<void> {
+    const s = personsSnapFrom(v);
+    if (!s) return;
+    const b = this.bus;
+    this.query = s.query;
+    b.query = s.query;
+    this.panelOpen = s.panelOpen;
+    b.side_hidden = s.sideHidden;
+    for (const [k, pl] of s.places) if (!this.places.has(k)) this.places.set(k, pl);
+    await this.started;
+    if (!this.alive) return;
+    const there = (id: string): boolean => this.state?.people.some((p) => p.id === id) ?? false;
+    if (s.sr) this.openSiteRequest(s.sr);
+    else if (s.open && there(s.open.id)) await this.openPerson(s.open.id, s.open.section, s.open.store);
+    else {
+      this.render();
+      return;
+    }
+    if (s.aiMode !== this.aiMode) this.setTo(s.aiMode);
+    const exist = (fs: string[]): string[] => fs.filter((f) => existsSync(f));
+    this.files = exist(s.files);
+    this.aiFiles = exist(s.aiFiles);
+    this.srFiles = exist(s.srFiles);
+    this.replyTo = s.replyTo;
+    this.forwarded = s.forwarded;
+    b.draft = s.draft;
+    b.subject = s.subject;
+    if (s.cursor >= 0) {
+      const at = Math.min(s.cursor, Buffer.byteLength(s.draft));
+      b.draft_cursor = at;
+      b.draft_anchor = at;
+      b.cursor_to = at;
+      b.cursor_rev = (Number(b.cursor_rev) || 0) + 1;
+    }
+    if (s.draft !== "") this.focusField();
+    this.render();
+    const k = this.chatKey();
+    const pl = this.places.get(k);
+    if (!pl || pl.end || !this.ui.open) return;
+    // The row it was at may be in an older page: those are read again, then the chat goes back to it.
+    for (let i = 0; i < 40; i++) {
+      if (!this.chat) await new Promise((r) => setTimeout(r, 50));
+      const c = this.chat;
+      if (this.chatKey() !== k) return;
+      if (!c || c.messages.length === 0 || c.messages.some((m) => m.id === pl.id) || !c.more) break;
+      await this.older();
+    }
+    if (this.chat && this.chatKey() === k) setTimeout(() => this.chat && this.chatKey() === k && this.placeOpened(this.chat), 30);
   }
 
   /** Long-poll: the engine answers when its rev moves (or after 25 s). */
@@ -431,6 +628,8 @@ class PersonsTab {
   // ---------- rendering ----------
 
   private render(): void {
+    // Every change of the composer (a send that empties it, a switch, a reply) is a render: the drafts go to kv after.
+    this.draftsChanged();
     if (this.renderQueued) return;
     this.renderQueued = true;
     queueMicrotask(() => {
@@ -617,6 +816,7 @@ class PersonsTab {
   private useDraft(text: string): void {
     this.setTo(false);
     this.bus.draft = text;
+    this.draftsChanged();
     this.render();
   }
 
@@ -639,6 +839,7 @@ class PersonsTab {
     this.aiMode = ai;
     this.toAi.set(k, ai);
     this.bus.draft = this.drafts.get(`${k}:${ai ? "ai" : "person"}`) ?? "";
+    this.draftsChanged();
     if (ai) this.typingAt = 0;
     this.focusField();
     this.render();
@@ -921,6 +1122,8 @@ class PersonsTab {
     this.bus.draft = this.drafts.get(`${k}:${this.aiMode ? "ai" : "person"}`) ?? "";
     this.bus.subject = "";
     this.render();
+    this.draftsChanged();
+    this.ctx.saveSoon?.();
     await Promise.all([this.loadChat(true), this.panelOpen ? this.loadPanel() : Promise.resolve()]);
   }
 
@@ -1091,6 +1294,7 @@ class PersonsTab {
       const paths = this.aiFiles;
       if (!text.trim() && !fwd && !paths.length) return;
       this.bus.draft = "";
+      this.draftsChanged();
       this.forwarded = null;
       this.aiFiles = [];
       this.render();
@@ -1112,6 +1316,7 @@ class PersonsTab {
       return;
     }
     this.bus.draft = "";
+    this.draftsChanged();
     const body: Record<string, unknown> = { section: open.section, account: this.chat?.account?.id, text };
     if (this.replyTo) body.replyTo = this.replyTo.id;
     if (this.files.length) {
@@ -1197,6 +1402,8 @@ class PersonsTab {
   }
 
   private typing(): void {
+    this.draftsChanged();
+    this.ctx.saveSoon?.();
     if (this.sr) return;
     const open = this.ui.open;
     if (!open || this.aiMode || Date.now() - this.typingAt < 8000) return;
@@ -2571,6 +2778,8 @@ export const personsUi: TabUi = {
   shown: (on) => {
     if (on) void tab?.["refresh"]();
   },
+  snapshot: () => tab?.snapshot() ?? null,
+  restore: (s) => tab?.restore(s),
 };
 
 /** A request's turn with the AI is on its way: a note queued, or an answer being written. */

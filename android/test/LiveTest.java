@@ -169,6 +169,48 @@ public class LiveTest {
         s.tries = Live.MAX_TRIES;
         check(!Live.fresh(s, now), "not forever");
 
+        // ---- Hub's other tabs: Persons, Routine, Collector come back with their pages, drafts and places ----
+        check(Live.keep("Persons") != null && Live.keep("Routine") != null && Live.keep("Collector") != null, "the tabs come back");
+        Live.Saved tabs = new Live.Saved();
+        tabs.from = 5; tabs.to = 5; tabs.at = 1_000;
+        Live.Screen ps = new Live.Screen("Persons");
+        ps.extras.put("hub", "pc:1");
+        ps.extras.put("person", "p9"); // a notification's: acts once, not kept
+        ps.state.put("pv", "chat");
+        ps.state.put("person", "p1");
+        ps.state.put("section", "spokpay");
+        ps.state.put("text", "Oi Fagner,\ntudo bem? = : # ! ção 🚀");
+        ps.state.put("selStart", "3");
+        ps.state.put("selEnd", "9");
+        ps.state.put("ai", "1");
+        ps.state.put("reply", "{\"id\":\"m1\",\"text\":\"a=b\\nc\",\"fromMe\":false}");
+        ps.state.put("anchor", "m42");
+        ps.state.put("off", "-37");
+        ps.state.put("panel", "2");
+        Live.Screen rs = new Live.Screen("Routine");
+        rs.state.put("section", "coach");
+        rs.state.put("text", "how was my sleep?");
+        Live.Screen cs = new Live.Screen("Collector");
+        cs.state.put("sel", "available");
+        cs.state.put("detail", "c7");
+        cs.state.put("queue", "c1\nc7\nc9");
+        cs.state.put("note", "");
+        tabs.screens.add(cs);
+        tabs.screens.add(rs);
+        tabs.screens.add(ps);
+        Live.Saved tb2 = Live.decode(Live.encode(tabs));
+        check(tb2 != null && tb2.screens.size() == 3, "the tabs decode");
+        if (tb2 != null && tb2.screens.size() == 3) {
+            same(tb2.screens.get(0).cls + ">" + tb2.screens.get(1).cls + ">" + tb2.screens.get(2).cls, "Collector>Routine>Persons", "in the task's order, the last one on top");
+            Live.Screen p2 = tb2.screens.get(2);
+            same(p2.extras.get("hub"), "pc:1", "Persons keeps its PC");
+            check(!p2.extras.containsKey("person"), "a notification's person isn't opened again");
+            for (String k : ps.state.keySet()) same(p2.state.get(k), ps.state.get(k), "Persons keeps " + k);
+            same(tb2.screens.get(1).get("text", ""), "how was my sleep?", "the Coach's draft");
+            same(tb2.screens.get(0).get("queue", ""), "c1\nc7\nc9", "an open lead's queue, lines and all");
+            same(tb2.screens.get(0).get("note", "x"), "", "an emptied note stays empty");
+        }
+
         if (failed > 0) {
             System.err.println("LiveTest: " + failed + " failed");
             System.exit(1);

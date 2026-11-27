@@ -161,6 +161,24 @@ stayed up 8 s (at most 10 minutes, 4 restores), so new code that crashes, and is
 the shell, still comes back to the same place on the old code. Settings' Update takes the same
 path. Out of sight, the restart is the quiet one below.
 
+**Back where you were, always.** Every tab comes back, not only Projects: Persons (the page: a
+person's chat with its composer text and cursor, AI or person, the reply or forward, the first
+email's subject, the channel picked, the message at the top and its offset, Details; All people
+with its search; a site request with its reply), Routine (the page, the Coach's draft, the
+scroll) and Collector (the view, its filter, the lead at the top of the list, an open lead with
+its queue and the note being typed; Send message is a form and holds the restart). The task's
+screens come back in the order they were last in front (`Base.frontSeq`: tabs reorder their
+screens). The same `Live.Saved` is also written all along (`Swap.AUTO`, `live_auto` in the
+preferences): 0.8 s after a tap, a key or text typed, whenever a screen leaves the front, once a
+minute while one is up, and before an APK install or a restart by the shell. So the first screen
+of a process that a crash, Android or an APK install ended opens the same screens too (not when
+the user backed out of the app: that forgets it; not older than 10 minutes; its restores count
+towards the 4, so a screen that crashes on the way back stops coming back). Persons drafts also
+stay per person, section and recipient (`persons` preferences, `draft\n<PC>\n<person>\n<section>\n<ai|person>`),
+and the Coach's in `routine_coach_draft`. A test build tries it with
+`scripts/boat/phoneshot --broadcast dev.harbor.app.RIG_LIVE_RESTART` (a live restart into the same
+code) or `RIG_CRASH` (the process ends as in a crash, no live state written).
+
 **Rollback.** New code starts on trial: the shell counts its starts and uncaught exceptions. It
 proves itself when a screen stays up 5 seconds (`Base.onResume` → `Shell.ok`) or a process runs
 10 minutes without a crash. 2 crashes or 6 starts before that and it's marked bad, never run again,

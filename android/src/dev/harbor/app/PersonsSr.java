@@ -898,4 +898,7 @@ final class PersonsSr {
             });
         });
     }
+
+    /** The reply composer (a live restart keeps its text). */
+    android.widget.EditText field() { return edit; }
 }

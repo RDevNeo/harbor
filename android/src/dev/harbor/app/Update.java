@@ -699,6 +699,8 @@ public class Update extends BroadcastReceiver {
     private static void restartFor(Context c, boolean reopen) {
         // From a screen: a live restart, back on that screen (Swap).
         if (reopen && Swap.now(c)) return;
+        // The screens as they are: the next start opens them again (Swap.restore).
+        Swap.saveBlocking(c);
         Ui.prefs(c).edit().putLong("resume_code", Settings.myCode(c)).putLong("update_to", Shell.staged(c)).commit();
         Shell.restart(c, reopen);
     }
@@ -864,7 +866,8 @@ public class Update extends BroadcastReceiver {
             // Someone may have come back meanwhile. Next time, then.
             if (auto && !quiet(c)) throw new Away();
             busy = true;
-            // The next start opens the chat the user had (if the version changes by then).
+            // The next start opens the screens the user had (Swap.restore; else the chat, if the version changes by then).
+            Swap.saveBlocking(c);
             Ui.prefs(c).edit().putLong("resume_code", Settings.myCode(c)).putLong("update_to", to).apply();
             int flags = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_MUTABLE : 0);
             // The result says whether it was the background's, and what to offer if it fails.

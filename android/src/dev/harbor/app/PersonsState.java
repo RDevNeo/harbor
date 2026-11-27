@@ -300,4 +300,73 @@ final class PersonsState {
     }
 
     boolean deep() { return chat != null || panel != null || sr != null; }
+
+    // ---- a live restart (Swap): the page on screen and what it holds ----
+
+    /** What's open (Persons.liveScreen): "pv" the page (list, chat, sr), the person and section, the details, a site
+     *  request's ref; each page's own text and place. */
+    void live(Map<String, String> st) {
+        if (chat != null) {
+            st.put("pv", "chat");
+            st.put("person", chat.pid);
+            st.put("section", chat.section);
+            if (panel != null) st.put("details", "1");
+            chat.live(st);
+        } else if (sr != null) {
+            st.put("pv", "sr");
+            st.put("sr", sr.ref);
+            text(st, sr.field());
+        } else if (list != null) {
+            st.put("pv", "list");
+            text(st, list.field());
+        }
+    }
+
+    private static void text(Map<String, String> st, android.widget.EditText e) {
+        if (e == null || e.length() == 0) return;
+        st.put("text", e.getText().toString());
+        st.put("selStart", Integer.toString(e.getSelectionStart()));
+        st.put("selEnd", Integer.toString(e.getSelectionEnd()));
+    }
+
+    private static void text(android.widget.EditText e, Map<String, String> st) {
+        String t = st.get("text");
+        if (e == null || t == null) return;
+        e.setText(t);
+        int a0, a1;
+        try { a0 = Integer.parseInt(st.get("selStart")); a1 = Integer.parseInt(st.get("selEnd")); } catch (Exception x) { a0 = a1 = t.length(); }
+        a0 = Math.max(0, Math.min(t.length(), a0));
+        a1 = Math.max(0, Math.min(t.length(), a1));
+        e.setSelection(Math.min(a0, a1), Math.max(a0, a1));
+    }
+
+    /** Back on the page live() wrote down (a fresh Persons screen, before its first frame). */
+    void restore(Map<String, String> st) {
+        String pv = st.get("pv");
+        Runnable nav = navigated;
+        navigated = null; // no drawer to close: it opens as it was (Base.livePanel)
+        try {
+            if ("chat".equals(pv) && st.get("person") != null) {
+                openChat(st.get("person"), st.get("section"));
+                chat.restore(st);
+                if ("1".equals(st.get("details"))) openPanel(chat.pid, chat.section);
+            } else if ("sr".equals(pv) && st.get("sr") != null) {
+                openSr(st.get("sr"));
+                text(sr.field(), st);
+            } else if ("list".equals(pv)) {
+                openList();
+                text(list.field(), st);
+            }
+        } finally {
+            navigated = nav;
+        }
+    }
+
+    /** The field whose text a live restart keeps on the page shown (Swap waits less for it). */
+    View liveField() {
+        if (chat != null) return panel == null ? chat.liveField() : null;
+        if (sr != null) return sr.field();
+        if (list != null) return list.field();
+        return null;
+    }
 }

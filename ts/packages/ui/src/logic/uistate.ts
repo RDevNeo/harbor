@@ -10,6 +10,10 @@ export const LATE_KEY = "composer_late";
 export const DRAFT_KEY = 0;
 /** A snapshot older than this is a restart that didn't happen as planned: only its drafts are taken. */
 export const SNAPSHOT_FRESH_MS = 10 * 60_000;
+/** Where the window was, written all along (a second after it changes, and once a minute): a crash comes back to it. */
+export const RESUME_KEY = "ui_resume";
+/** How often the resume state is written again unchanged (its time, so a crash a while later still counts as fresh). */
+export const RESUME_REFRESH_MS = 60_000;
 /** How long after a change the composers are written. */
 export const SAVE_MS = 300;
 
@@ -57,6 +61,52 @@ export interface TranscriptSnap {
 /** A dialog that can open again, with what its field held. */
 export type DialogSnap = { kind: "rename-chat"; id: number; input: string };
 
+/** Hub's tabs: the one on screen, each tab's own place (TabUi.snapshot, opaque here), the Agents panel, the open chat. */
+export interface HubSnap {
+  tab: string;
+  tabs: Record<string, unknown>;
+  teamPop: boolean;
+  /** Projects' open chat (null: the new-chat draft); only the crash path uses it (a restart has `view`). */
+  chat: number | null;
+}
+
+const TAB_IDS = ["projects", "persons", "routine", "collector"];
+
+export function hubSnapFrom(v: unknown): HubSnap | null {
+  const o = obj(v);
+  if (o === null) return null;
+  const tab = typeof o.tab === "string" && TAB_IDS.includes(o.tab) ? o.tab : "projects";
+  const tabs: Record<string, unknown> = {};
+  for (const [k, t] of Object.entries(obj(o.tabs) ?? {})) if (TAB_IDS.includes(k) && t !== null && t !== undefined) tabs[k] = t;
+  return { tab, tabs, teamPop: o.teamPop === true, chat: int(o.chat) };
+}
+
+/** kv `ui_resume`: the window's whole snapshot (as a restart's), written all along; `tries`: starts that took it. */
+export interface Resume {
+  at: number;
+  tries: number;
+  snap: Record<string, unknown>;
+}
+
+/** How many starts may take the same crash state (one that crashes the start itself isn't taken forever). */
+export const RESUME_TRIES = 2;
+
+/** kv `ui_resume` when it's fresh (a crash a moment ago) and wasn't taken too often already; else null. */
+export function parseResume(text: string | null, now: number): Resume | null {
+  if (text === null || text === "") return null;
+  let o: Record<string, unknown> | null;
+  try {
+    o = obj(JSON.parse(text));
+  } catch {
+    return null;
+  }
+  const at = num(o?.at, NaN);
+  const snap = obj(o?.snap);
+  const tries = Math.max(0, int(o?.tries) ?? 0);
+  if (snap === null || !Number.isFinite(at) || now - at < -60_000 || now - at >= SNAPSHOT_FRESH_MS || tries >= RESUME_TRIES) return null;
+  return { at, tries, snap };
+}
+
 export interface UiSnapshot {
   /** When it was taken (ms). */
   at: number;
@@ -80,6 +130,8 @@ export interface UiSnapshot {
   revs: [number, number][];
   /** The stored split panes (kv `split_panes`'s value, logic/splitpanes.ts `serialize`); null: an older Harbor's. */
   splits: string | null;
+  /** Hub's tabs and the Agents panel; null: an older Hub's snapshot. */
+  hub: HubSnap | null;
 }
 
 const num = (v: unknown, d = 0): number => (typeof v === "number" && Number.isFinite(v) ? v : d);
@@ -236,6 +288,7 @@ export function parseSnapshot(raw: Record<string, unknown> | null): UiSnapshot |
     dialog: dialog?.kind === "rename-chat" && dialogId !== null ? { kind: "rename-chat", id: dialogId, input: str(dialog.input) } : null,
     revs: (Array.isArray(raw.revs) ? raw.revs : []).filter((e): e is [number, number] => Array.isArray(e) && Number.isInteger(e[0]) && typeof e[1] === "number" && e[1] >= 0),
     splits: typeof raw.splits === "string" ? raw.splits : null,
+    hub: hubSnapFrom(raw.hub),
   };
 }
 
@@ -264,6 +317,7 @@ export function snapshotJson(s: UiSnapshot): Record<string, unknown> {
     dialog: s.dialog,
     revs: s.revs,
     splits: s.splits,
+    hub: s.hub,
   };
 }
 

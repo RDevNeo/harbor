@@ -1402,6 +1402,7 @@ public class Chat extends Base implements Images.Gallery {
      *  the lease runs out 6 s after. An emptied composer empties the draft everywhere. */
     private void typed() {
         Swap.input();
+        Swap.dirty();
         if (comp != null) comp.again();
         if (applying || composer == null) return;
         // Editing a queued message isn't writing a draft: nothing goes to the other devices.

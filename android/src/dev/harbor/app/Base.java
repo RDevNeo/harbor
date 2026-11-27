@@ -46,6 +46,10 @@ abstract class Base extends Activity {
     long resumedAt;
     /** Harbor's screens in this process, oldest first (Swap writes the task down from it). */
     static final java.util.List<Base> alive = new java.util.ArrayList<>();
+    /** When this screen last came to the front of the task (a counter, Swap orders the task by it: tabs bring their
+     *  screens back with REORDER_TO_FRONT, so creation order isn't the task's). */
+    long frontSeq;
+    private static long frontSeqs;
     private int gen;                 // bumped to stop the current poll loop
     private volatile Net.Http polling;
     private long rev = -1;
@@ -57,6 +61,8 @@ abstract class Base extends Activity {
     protected void onCreate(Bundle b) {
         super.onCreate(b);
         alive.add(this);
+        frontSeq = ++frontSeqs;
+        Swap.created(getIntent());
         Ui.init(this);
         if (Rig.on()) Rig.incoming(this);
         Ui.bars(this);
@@ -209,6 +215,9 @@ abstract class Base extends Activity {
      *  same surface slid out rather than a slab over the page; the page beside it fades under the scrim. */
     void installTab(String tab, View drawerView) {
         this.tab = tab;
+        // A Projects screen made under another tab (a live restart opens the task's screens at once): the Projects tab
+        // comes back to it, not to the workspace's list.
+        if (Tabs.PROJECTS.equals(tab) && !(this instanceof Hubs)) Tabs.projectsShown(this);
         shell = new FrameLayout(this);
         if (page.getParent() != null) ((ViewGroup) page.getParent()).removeView(page);
         shell.addView(Tabs.around(this, page, tab), frameFill());
@@ -453,7 +462,9 @@ abstract class Base extends Activity {
         Alive.calm(this);
         top = this;
         resumedAt = android.os.SystemClock.elapsedRealtime();
+        frontSeq = ++frontSeqs;
         Swap.resumed(this);
+        Swap.dirty();
         // A screen that stays up a few seconds proves new app code works (no rollback; Shell).
         Ui.main.postDelayed(() -> { if (front && !isFinishing()) Ui.pool.execute(dev.harbor.shell.Shell::ok); }, 5_000);
         if (myTheme != Ui.themeGen) { recreate(); return; }
@@ -469,6 +480,8 @@ abstract class Base extends Activity {
         resumed--;
         front = false;
         if (top == this) top = null;
+        // Where the user is, written now (a crash or the system ending the process comes back here; Swap).
+        Swap.saveNow(this);
         Inbox.paused(this);
         Invites.paused();
         // Left the app (not just another of its screens): listen a few minutes for answers.
@@ -483,11 +496,20 @@ abstract class Base extends Activity {
         super.onDestroy();
         alive.remove(this);
         if (top == this) top = null;
+        // Backed out of the app (its last screen closed): the next start is an ordinary one.
+        if (isFinishing() && alive.isEmpty()) Swap.left(this);
+    }
+
+    @Override
+    protected void onNewIntent(Intent i) {
+        super.onNewIntent(i);
+        frontSeq = ++frontSeqs;
     }
 
     @Override
     public boolean dispatchKeyEvent(android.view.KeyEvent e) {
         Swap.input();
+        Swap.dirty();
         return super.dispatchKeyEvent(e);
     }
 

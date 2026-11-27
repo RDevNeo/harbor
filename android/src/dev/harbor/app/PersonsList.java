@@ -93,4 +93,7 @@ final class PersonsList {
         empty.setVisibility(shown.isEmpty() && p.st != null ? View.VISIBLE : View.GONE);
         adapter.notifyDataSetChanged();
     }
+
+    /** The search field (a live restart keeps its text). */
+    android.widget.EditText field() { return search; }
 }

@@ -88,6 +88,10 @@ final class Live {
             case "Settings": return new String[] { "hub", "people" };
             case "GhList": return new String[] { "hub", "kind", "project" };
             case "GhItem": return new String[] { "hub", "kind", "row", "projects" };
+            // Hub's other tabs: their pages, drafts and places are the screen's own state (liveScreen).
+            case "Persons": return new String[] { "hub" };
+            case "Routine": return new String[0];
+            case "Collector": return new String[0];
             default: return null;
         }
     }

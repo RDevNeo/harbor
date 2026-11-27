@@ -258,6 +258,10 @@ final class Tabs {
             // The chat list under it first, so Back from the chat lands on it, as before the switch.
             reorder(a, new Intent(a, Chats.class).putExtra("hub", last.hub.id));
             reorder(a, new Intent(a, last.getClass()).putExtras(last.getIntent()));
+        } else if (h != null && Swap.projectsPending(a) != null) {
+            // A live restart's chat, still under the other tabs' screens (Android makes it when it shows).
+            reorder(a, new Intent(a, Chats.class).putExtra("hub", h.id));
+            reorder(a, Swap.projectsPending(a));
         } else if (h != null) {
             reorder(a, new Intent(a, Chats.class).putExtra("hub", h.id));
         } else {

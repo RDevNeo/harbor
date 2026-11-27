@@ -544,6 +544,7 @@ export function createCollectorUi(): TabUi {
     editOpen = false;
     queue = [];
     render();
+    ctx?.saveSoon?.();
   };
 
   /** The review bar: Reject (to Restricted), Skip (as it is), Approve (to the Approved list); then the next lead of the list
@@ -589,6 +590,7 @@ export function createCollectorUi(): TabUi {
       detailOpen = true;
       editOpen = false;
       takeDetail(d, true);
+      ctx?.saveSoon?.();
       // An older lead misses some of this: one read of its profile fills it (the engine decides if it's due).
       filling = true;
       render();
@@ -654,6 +656,7 @@ export function createCollectorUi(): TabUi {
       listMenu = "";
       emailFor = "";
       render();
+      ctx?.saveSoon?.();
     });
     on("pick_source", (v: string) => (view?.run?.running ? undefined : void post("settings", { platform: v })));
     on("pick_gap", (v: string) => (view?.run?.running ? undefined : void post("settings", { gapDays: Number(v) })));
@@ -924,6 +927,44 @@ export function createCollectorUi(): TabUi {
       else if (fast) {
         clearInterval(fast);
         fast = null;
+      }
+    },
+    // An update's restart (or a crash): the same view, its filter and each view's scroll, an open lead (with the
+    // review's queue, so "3 of 12" and the next lead are the same) and what its Reach field held.
+    snapshot: () => {
+      const b = bus;
+      if (!b) return null;
+      const y = (k: string): number => Number(b[k]) || 0;
+      return {
+        page,
+        filter: String(b.filter ?? ""),
+        y: { collector: y("y_collector"), available: y("y_available"), approved: y("y_approved"), restricted: y("y_restricted") },
+        sideHidden: b.side_hidden === true,
+        detail: detailOpen && detail ? detail.id : null,
+        queue: detailOpen ? queue.slice(0, 2000) : [],
+        reach: detailOpen && detail ? { kind: reachKind, text: String(b.d_reach_text ?? "") } : null,
+      };
+    },
+    restore: async (v) => {
+      const o = (v && typeof v === "object" ? v : {}) as Record<string, unknown>;
+      const b = bus;
+      if (!b) return;
+      const p = PAGES.find((x) => x.id === o.page)?.id;
+      if (p) page = p as Page;
+      if (typeof o.filter === "string") b.filter = o.filter;
+      const y = (o.y && typeof o.y === "object" ? o.y : {}) as Record<string, unknown>;
+      for (const k of ["collector", "available", "approved", "restricted"]) if (typeof y[k] === "number" && Number.isFinite(y[k])) b[`y_${k}`] = y[k];
+      if (typeof o.sideHidden === "boolean") b.side_hidden = o.sideHidden;
+      render();
+      if (typeof o.detail !== "string" || o.detail === "") return;
+      queue = Array.isArray(o.queue) ? o.queue.filter((x): x is string => typeof x === "string") : [];
+      await showDetail(o.detail, false);
+      const r = (o.reach && typeof o.reach === "object" ? o.reach : null) as { kind?: unknown; text?: unknown } | null;
+      if (r && detail?.id === o.detail && (REACH_KINDS as readonly string[]).includes(String(r.kind)) && typeof r.text === "string") {
+        reachKind = r.kind as ReachKind;
+        drafts[reachKind] = r.text;
+        b.d_reach_text = r.text;
+        render();
       }
     },
   };

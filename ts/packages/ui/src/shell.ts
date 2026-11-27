@@ -18,7 +18,7 @@ import { type HarborCommand, personalDir } from "./logic/slash.ts";
 import { forkable } from "./logic/fork.ts";
 import { MeshChat, type ShellMesh } from "./logic/meshchat.ts";
 import { DraftSync } from "./logic/shareddraft.ts";
-import { type ComposerEntry, type Composers, COMPOSERS_KEY, Debounce, fresh, keptJson, LATE_KEY, type PaneSnap, type PaneTab, parseKept, parseSnapshot, SAVE_MS, snapshotJson, type UiSnapshot } from "./logic/uistate.ts";
+import { type ComposerEntry, type Composers, COMPOSERS_KEY, Debounce, fresh, type HubSnap, keptJson, LATE_KEY, type PaneSnap, type PaneTab, parseKept, parseResume, parseSnapshot, RESUME_KEY, RESUME_REFRESH_MS, SAVE_MS, snapshotJson, type UiSnapshot } from "./logic/uistate.ts";
 import { updateToast } from "./logic/hubseam.ts";
 import { type Invite, inviteCard } from "./logic/invitecard.ts";
 import { initials, popRows, popStart, popStep, type PopRow as ProjRow, tint } from "./logic/projectpop.ts";
@@ -1255,6 +1255,7 @@ export class Shell {
       dialog: this.renaming !== null && this.win.dialog_id === "dialog" ? { kind: "rename-chat", id: this.renaming, input: this.win.dialog_input } : null,
       revs: this.draftSync.appliedRevs(),
       splits: this.split.snapshot(),
+      hub: this.hubSnap(),
     };
     return snapshotJson(snap);
   }
@@ -1262,6 +1263,7 @@ export class Shell {
   /** The snapshot is written and the next process starts: what the composer takes until then goes to kv `composer_late`. */
   leaving(): void {
     this.keepComposers.flush();
+    this.persistResume(true);
     this.leavingNow = true;
   }
 
@@ -1366,6 +1368,7 @@ export class Shell {
     for (const [chat, rev] of s.revs) this.draftSync.seed(chat, rev);
     for (const [k, e] of s.composers) if (k === DRAFT || this.data.chat(k)) this.putComposer(k, e);
     if (!fresh(s, Date.now())) return null;
+    this.hubResumed = true;
     // The stored splits as the previous process left them (its kv write may not have landed when this one read kv).
     if (s.splits !== null) this.split.restore(s.splits);
     if (s.sel) this.sel = { ...this.sel, ...s.sel };
@@ -1401,6 +1404,7 @@ export class Shell {
       this.win.dialog_input = s.dialog.input;
     }
     this.refreshAll();
+    if (s.hub) this.resumeHub(s.hub);
     // The sidebar lays its rows out first.
     for (const ms of [0, 60, 300]) setTimeout(() => (this.win.side_scroll = s.sideScroll), ms);
     const k = this.key();
@@ -1423,6 +1427,9 @@ export class Shell {
     else if (name === "prs") this.pages.openPrs();
     else if (name === "issues") this.pages.openIssues();
     else if (name === "tab") this.selectTab(arg); // Hub's tabs: tab:persons, tab:routine
+    else if (name === "resume") {
+      // the crash state (kv ui_resume) comes back, as after a crash (run() does it)
+    }
     else if (name !== "draft") console.error(`HARBOR_VIEW: no view ${v}`);
     // HARBOR_FAKE_ATTACH=a.png,b.txt (scripts/shot --env): files in the composer as if pasted or attached.
     for (const p of process.env.HARBOR_FAKE_ATTACH?.split(",") ?? []) {
@@ -3916,6 +3923,7 @@ export class Shell {
     this.tickMesh();
     // A cursor moved without an edit (arrows, a click) is kept too.
     if (!this.keepComposers.pending && !this.leavingNow) this.persistComposers();
+    this.persistResume();
     if (this.view === "chat") {
       this.syncDraft(this.chatId);
       this.shareDraft();
@@ -5848,6 +5856,86 @@ export class Shell {
   }
   /** Switches the top-level tab (as a click on the tab bar). */
   selectTab: (id: string) => void = () => {};
+  /** The tabs mounted so far (a tab mounts the first time it's shown). */
+  private readonly tabsMounted = new Set<string>();
+  /** A tab's place from the last run, given to it once it mounts (and carried into the next snapshot until then). */
+  private readonly tabPending = new Map<string, unknown>();
+  /** A snapshot was put back already (a restart's): the crash path leaves it. */
+  private hubResumed = false;
+  private resumeJson = "";
+  private resumeAt = 0;
+  private readonly keepResume = new Debounce(1000, () => this.persistResume());
+
+  /** Hub's tabs as they stand: the one on screen, each mounted tab's own place, the Agents panel, the open chat. */
+  hubSnap(): HubSnap {
+    const tabs: Record<string, unknown> = {};
+    for (const [id, v] of this.tabPending) tabs[id] = v;
+    for (const ui of TAB_UIS) {
+      if (!this.tabsMounted.has(ui.id) || !ui.snapshot) continue;
+      try {
+        const v = ui.snapshot();
+        if (v !== undefined && v !== null) tabs[ui.id] = v;
+      } catch {
+        // a tab that can't say where it is comes back on its first page
+      }
+    }
+    return { tab: this.tabsBus?.current ?? "projects", tabs, teamPop: this.win.team_pop, chat: this.view === "chat" ? this.chatId : null };
+  }
+
+  /**
+   * kv `ui_resume`: the whole snapshot a restart would take (the tab, chat, transcript's place, composers, panes, each
+   * tab's place), when it changed (or once a minute, for its time): a crash comes back to it too.
+   */
+  private persistResume(now = false): void {
+    if (this.leavingNow || !this.started) return;
+    let snap: Record<string, unknown>;
+    try {
+      snap = this.snapshot();
+    } catch {
+      return;
+    }
+    const { at: _at, ...rest } = snap;
+    const json = JSON.stringify(rest);
+    const t = Date.now();
+    if (!now && json === this.resumeJson && t - this.resumeAt < RESUME_REFRESH_MS) return;
+    this.resumeJson = json;
+    this.resumeAt = t;
+    try {
+      const v = JSON.stringify({ at: t, tries: 0, snap: { ...rest, at: t } });
+      if (now) this.data.store.set(RESUME_KEY, v);
+      else this.data.store.setLater(RESUME_KEY, v);
+    } catch {
+      // the store closed under it
+    }
+  }
+
+  /** Back on the tab a snapshot names, each tab's place handed to it when it mounts, the Agents panel as it was. */
+  resumeHub(h: HubSnap): void {
+    if (this.win.team_pop !== h.teamPop) this.win.team_pop = h.teamPop;
+    for (const [id, v] of Object.entries(h.tabs)) if (!this.tabsMounted.has(id)) this.tabPending.set(id, v);
+    if (h.tab !== (this.tabsBus?.current ?? "projects")) this.selectTab(h.tab);
+  }
+
+  /** A start that isn't a planned restart: when the last run ended a moment ago (a crash), back where it was. Each
+   *  start that takes the state counts (kv first): one that crashes on it gives up after RESUME_TRIES. */
+  resumeCrash(): void {
+    if (this.hubResumed) return;
+    const r = parseResume(this.data.store.get(RESUME_KEY), Date.now());
+    if (r === null) return;
+    try {
+      this.data.store.set(RESUME_KEY, JSON.stringify({ ...r, tries: r.tries + 1 }));
+    } catch {
+      return;
+    }
+    this.restore(r.snap);
+  }
+
+  /** The window is up and restored: the resume state may be written from now on (not the default screen first). */
+  private started = false;
+  markStarted(): void {
+    this.started = true;
+  }
+
   private mountTabs(): void {
     type Bus = { current: string; select: (id: string) => void; persons_unread: number; collector_unread: number; projects_unread: number; routine_unread: number };
     let found: Bus;
@@ -5858,7 +5946,7 @@ export class Shell {
     }
     const tabs: Bus = found;
     this.tabsBus = tabs;
-    const mounted = new Set<string>();
+    const mounted = this.tabsMounted;
     const ctx = (id: string): TabCtx => ({
       win: this.win,
       call: async (method, path, query, body) => {
@@ -5878,6 +5966,8 @@ export class Shell {
         tabs.select("projects");
         this.openChat(n);
       },
+      kv: { get: (k) => this.data.store.get(k), setLater: (k, v) => this.data.store.setLater(k, v) },
+      saveSoon: () => this.keepResume.poke(),
     });
     // What a phone changed shows here too: while a tab besides Projects is on screen, it re-reads every 3 s.
     const tick = setInterval(() => {
@@ -5937,11 +6027,23 @@ export class Shell {
       tabs.current = id;
       if (ui && !mounted.has(id)) {
         mounted.add(id);
-        void Promise.resolve(ui.mount(ctx(id))).catch((e) => this.toast(`${id}: ${e instanceof Error ? e.message : String(e)}`));
+        // A tab's place from the last run (an update's restart, a crash) goes in once it's mounted.
+        const back = this.tabPending.get(id);
+        this.tabPending.delete(id);
+        // Given right after mount's synchronous part (the tab's bus is bound, its first data not read yet), so the
+        // tab's first frame is already the page it was on.
+        const fail = (e: unknown): void => this.toast(`${id}: ${e instanceof Error ? e.message : String(e)}`);
+        try {
+          void Promise.resolve(ui.mount(ctx(id))).catch(fail);
+          if (back !== undefined && ui.restore) void Promise.resolve(ui.restore(back)).catch(fail);
+        } catch (e) {
+          fail(e);
+        }
       }
       TAB_UIS.find((t) => t.id === was)?.shown?.(false);
       ui?.shown?.(true);
       if (id === "collector") collectorSeen();
+      this.keepResume.poke();
       // Back on Projects: the chats on screen (the open one, its split panes) are looked at, their dots and count go.
       if (id === "projects" && this.view === "chat") {
         let read = false;
@@ -6158,6 +6260,9 @@ export async function run(data: Data, hub: ShellHub, hooks: ShellHooks = {}): Pr
   shell.newDraft(null);
   if (process.env.HARBOR_VIEW) shell.devView(process.env.HARBOR_VIEW, last);
   const restored = hooks.restore ? shell.restore(hooks.restore) : null;
+  // Not a planned restart: a crash a moment ago comes back where it was (HARBOR_VIEW=resume: a rig trying just that).
+  if (!process.env.HARBOR_VIEW || process.env.HARBOR_VIEW === "resume") shell.resumeCrash();
+  shell.markStarted();
   hooks.snapshotWith?.(() => shell.snapshot());
   hooks.leaveWith?.(() => shell.leaving());
   hooks.lateWith?.(() => shell.takeLate(restored));

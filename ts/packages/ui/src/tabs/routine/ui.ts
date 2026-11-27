@@ -307,6 +307,7 @@ export function createRoutineUi(): TabUi {
       confirmDel = "";
       render();
       if (section === "coach") void loadCoach();
+      ctx?.saveSoon?.();
     });
     on("quick", (goal: string, n: number) => void act({ act: "log", goal, amount: n }));
     on("undo", (goal: string) => void act({ act: "undo", goal }));
@@ -508,6 +509,16 @@ export function createRoutineUi(): TabUi {
         void load();
         if (section === "coach") void loadCoach();
       }
+    },
+    // An update's restart (or a crash) comes back on the same screen, with the Coach's unsent text.
+    snapshot: () => ({ section, coachText: String(bus?.coach_text ?? ""), sideHidden: bus?.side_hidden === true }),
+    restore: (v) => {
+      const o = (v && typeof v === "object" ? v : {}) as { section?: unknown; coachText?: unknown; sideHidden?: unknown };
+      if (SECTIONS.includes(o.section as Section)) section = o.section as Section;
+      if (typeof o.coachText === "string") set("coach_text", o.coachText);
+      if (typeof o.sideHidden === "boolean") set("side_hidden", o.sideHidden);
+      render();
+      if (section === "coach") void loadCoach();
     },
   };
 }

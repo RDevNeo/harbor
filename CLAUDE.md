@@ -41,8 +41,9 @@ for hours without a crash: `bun ts/scripts/soaked.ts status`, then `bun ts/scrip
 (`--dry-run`, `--minor`, `--note TEXT`); `gate [COMMIT]` is the check alone. Manual tagging still works.
 Every restart (follow-main, release, `harbor restart`) hands over: the new process builds its window first,
 the old one saves the screen (kv `reload_state`, `ui/src/logic/uistate.ts`) and leaves once the new window shows.
-New UI state that a restart should keep goes into `Shell.snapshot`/`restore`; composers are also kept through a
-crash (kv `composer_drafts` plus the hub's `shared_drafts`).
+New UI state that a restart should keep goes into `Shell.snapshot`/`restore` (Hub's tabs: `TabUi.snapshot`/`restore`,
+tabs/api.ts); composers are also kept through a crash (kv `composer_drafts` plus the hub's `shared_drafts`), and the
+whole snapshot is written all along to kv `ui_resume`, which a start within 10 minutes of a crash takes back.
 
 ## Show UI changes
 

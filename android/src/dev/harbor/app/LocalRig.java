@@ -52,6 +52,11 @@ final class LocalRig {
                             + " back to the app (Hub screens in front: " + Base.resumed + ")"), 2_500);
                     return;
                 }
+                if (in.getAction().endsWith("RIG_LIVE_RESTART") || in.getAction().endsWith("RIG_CRASH")) {
+                    // A live restart into the same code (Swap's path), or a stand-in for a crash: back on the same screens.
+                    Swap.rig(app, in.getAction().endsWith("RIG_CRASH"));
+                    return;
+                }
                 if (in.getAction().endsWith("RIG_LOCAL_BG")) {
                     new Thread(LocalRig::background, "local-rig-bg").start();
                     return;
@@ -70,6 +75,8 @@ final class LocalRig {
         f.addAction("dev.harbor.app.RIG_LOCAL_DENY");
         f.addAction("dev.harbor.app.RIG_LOCAL_CLOSE");
         f.addAction("dev.harbor.app.RIG_LOCAL_BG");
+        f.addAction("dev.harbor.app.RIG_LIVE_RESTART");
+        f.addAction("dev.harbor.app.RIG_CRASH");
         if (Build.VERSION.SDK_INT >= 33) app.registerReceiver(r, f, Context.RECEIVER_EXPORTED);
         else app.registerReceiver(r, f);
     }

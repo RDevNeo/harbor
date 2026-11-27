@@ -46,6 +46,12 @@ public class Routine extends Base {
     private ScrollView scroll;
     private String section = "today", hsel = "all", confirmReset = "", confirmDel = "", lastAlarm = "", note = "";
     private JSONObject view, coach;
+    /** The Coach's field (rebuilt with the page) and what it holds, kept across redraws and restarts (prefs). */
+    private EditText coachField;
+    private String coachDraft = "";
+    private int coachSel = -1;
+    /** A live restart's scroll position of the page, once its data is drawn (-1: none). */
+    private int liveScroll = -1;
     private boolean loading, polling;
     private final List<Runnable> clocks = new ArrayList<>();
     private final Runnable tick = new Runnable() {
@@ -73,8 +79,33 @@ public class Routine extends Base {
         ScrollView ds = new ScrollView(this);
         ds.addView(sections);
         installTab(Tabs.ROUTINE, Ds.drawer(this, "Routine", ds));
+        coachDraft = Ui.prefs(this).getString("routine_coach_draft", "");
+        // Right after a live restart (Swap) or a crash: the page, the Coach's draft and cursor, the scroll, the drawer.
+        String ls = Swap.state(this, b, "section");
+        if (ls != null && java.util.Arrays.asList(SECTIONS).contains(ls)) section = ls;
+        String lt = Swap.state(this, b, "text");
+        if (lt != null) coachDraft = lt;
+        try { coachSel = Integer.parseInt(Swap.state(this, b, "sel")); } catch (Exception e) { coachSel = -1; }
+        try { liveScroll = Integer.parseInt(Swap.state(this, b, "scroll")); } catch (Exception e) { liveScroll = -1; }
         drawSections();
+        livePanel(b);
     }
+
+    @Override
+    Live.Screen liveScreen() {
+        Live.Screen s = super.liveScreen();
+        if (s == null) return null;
+        s.state.put("section", section);
+        if (!coachDraft.isEmpty()) {
+            s.state.put("text", coachDraft);
+            if (coachField != null && coachField.isAttachedToWindow()) s.state.put("sel", Integer.toString(coachField.getSelectionStart()));
+        }
+        if (!"coach".equals(section) && scroll.getScrollY() > 0) s.state.put("scroll", Integer.toString(scroll.getScrollY()));
+        return s;
+    }
+
+    @Override
+    View liveField() { return "coach".equals(section) && coachField != null && coachField.isAttachedToWindow() ? coachField : null; }
 
     @Override
     protected void onResume() {
@@ -161,7 +192,10 @@ public class Routine extends Base {
         }
     }
 
+    private boolean coachFocused;
+
     private void draw() {
+        coachFocused = coachField != null && coachField.hasFocus();
         body.removeAllViews();
         clocks.clear();
         Ui.main.removeCallbacks(tick);
@@ -184,6 +218,11 @@ public class Routine extends Base {
         else if ("coach".equals(section)) drawCoach();
         else drawToday();
         if (!clocks.isEmpty()) Ui.main.postDelayed(tick, 1000);
+        if (liveScroll >= 0 && !"coach".equals(section)) {
+            int y = liveScroll;
+            liveScroll = -1;
+            scroll.post(() -> scroll.scrollTo(0, y));
+        }
     }
 
     private void message(String s) {
@@ -901,6 +940,24 @@ public class Routine extends Base {
         LinearLayout in = Ui.row(this);
         in.setPadding(0, Ui.dp(10), 0, 0);
         final EditText e = Ui.input(this, "Message the Coach", true);
+        boolean had = coachFocused;
+        int sel = coachField != null ? coachField.getSelectionStart() : coachSel;
+        coachField = e;
+        // What was typed stays through the page's redraws (each poll while the Coach writes) and restarts.
+        e.setText(coachDraft);
+        e.setSelection(sel < 0 ? coachDraft.length() : Math.min(sel, coachDraft.length()));
+        coachSel = -1;
+        e.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence t, int a, int b, int c) { }
+            @Override public void onTextChanged(CharSequence t, int a, int b, int c) { }
+            @Override public void afterTextChanged(android.text.Editable t) {
+                if (coachField != e) return;
+                coachDraft = t.toString();
+                Ui.prefs(Routine.this).edit().putString("routine_coach_draft", coachDraft).apply();
+                Swap.dirty();
+            }
+        });
+        if (had) e.requestFocus();
         in.addView(e, Ui.weight());
         in.addView(Ui.iconButton(this, Ui.I_SEND, Ui.FG, v -> {
             String text = e.getText().toString().trim();

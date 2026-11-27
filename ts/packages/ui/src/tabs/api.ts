@@ -22,6 +22,12 @@ export interface TabCtx {
   onChanged(f: () => void): void;
   /** Shows a Hub chat in Projects (a Person AI's, a SpokPay agent's). */
   openChat?(id: string): void;
+  /** The window's own small state (kv in harbor.db, mode 0600): what a tab keeps across starts, e.g. its drafts.
+   *  `setLater` writes a moment later (several changes write once), off the click. */
+  kv?: { get(k: string): string | null; setLater(k: string, v: string): void };
+  /** The tab's place changed (TabUi.snapshot would say something else): saved a moment later, so a crash or an
+   *  update's restart comes back to it. Optional: the window also looks every second. */
+  saveSoon?(): void;
 }
 
 export interface TabUi {
@@ -29,4 +35,9 @@ export interface TabUi {
   mount(ctx: TabCtx): void | Promise<void>;
   /** The tab came on screen (true) or left it. */
   shown?(on: boolean): void;
+  /** Where the tab is, for the next start (an update's restart, or a crash): its page, open item, drafts, scroll.
+   *  Plain JSON, no secrets. Called only once mounted. */
+  snapshot?(): unknown;
+  /** Back where a snapshot left it; called once, right after `mount` (before its first data if it can). */
+  restore?(s: unknown): void | Promise<void>;
 }

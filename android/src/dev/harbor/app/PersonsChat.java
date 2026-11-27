@@ -86,6 +86,7 @@ final class PersonsChat {
     private String loadError;
     private String rowSig = "";
     private JSONObject replyTo;
+    private final Runnable keepDraft = this::keepDraft;
     /** Pictures about to go: {name, type, data (base64)}, with their thumbnails. */
     private final List<JSONObject> files = new ArrayList<>();
     private final List<Bitmap> thumbs = new ArrayList<>();
@@ -189,7 +190,13 @@ final class PersonsChat {
         edit.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int st, int c, int af) { }
             @Override public void onTextChanged(CharSequence s, int st, int b, int c) { }
-            @Override public void afterTextChanged(Editable s) { if (s.toString().trim().length() > 0) typing(); sendState(); }
+            @Override public void afterTextChanged(Editable s) {
+                if (s.toString().trim().length() > 0) typing();
+                sendState();
+                Ui.main.removeCallbacks(keepDraft);
+                Ui.main.postDelayed(keepDraft, 500);
+                Swap.dirty();
+            }
         });
         body.addView(edit, Ui.fill());
         LinearLayout row = Ui.row(a);
@@ -225,11 +232,113 @@ final class PersonsChat {
 
         JSONObject q = p.person(pid);
         if (q != null) rowSig = sig(q);
+        // What was typed here last time (kept per person, section and recipient: draftKey).
+        edit.setText(p.prefs.getString(draftKey(false), ""));
+        edit.setSelection(edit.length());
         header();
         render();
         composer();
         load(false);
     }
+
+    // ---- drafts (kept per chat and recipient) and a live restart's place ----
+
+    /** The draft's key: the PC, the person, the section and the recipient (the person or their AI), as the PC's
+     *  Persons tab keeps its drafts. */
+    private String draftKey(boolean ai) {
+        return "draft\n" + (p.hub == null ? "" : p.hub.id) + "\n" + pid + "\n" + section + "\n" + (ai ? "ai" : "person");
+    }
+
+    /** The composer's text written down for its chat and recipient (empty: forgotten). */
+    private void keepDraft() {
+        Ui.main.removeCallbacks(keepDraft);
+        String t = edit.getText().toString();
+        String k = draftKey(toAi);
+        if (t.trim().isEmpty()) { if (p.prefs.contains(k)) p.prefs.edit().remove(k).apply(); }
+        else if (!t.equals(p.prefs.getString(k, null))) p.prefs.edit().putString(k, t).apply();
+    }
+
+    /** The composer goes to the AI (true) or the person: each keeps its own draft. */
+    private void setMode(boolean ai) {
+        if (ai == toAi) return;
+        keepDraft();
+        toAi = ai;
+        edit.setText(p.prefs.getString(draftKey(ai), ""));
+        edit.setSelection(edit.length());
+    }
+
+    /** The chat as a live restart (or a crash) keeps it (Swap): the composer (text, cursor, recipient, reply or
+     *  forward, the first email's subject, the channel picked) and the conversation's place: the end, or the message
+     *  at the top of the screen and its offset. */
+    void live(java.util.Map<String, String> st) {
+        String t = edit.getText().toString();
+        if (!t.isEmpty()) {
+            st.put("text", t);
+            st.put("selStart", Integer.toString(edit.getSelectionStart()));
+            st.put("selEnd", Integer.toString(edit.getSelectionEnd()));
+        }
+        if (toAi) st.put("ai", "1");
+        if (replyTo != null) st.put("reply", replyTo.toString());
+        if (forwarded != null) st.put("fwd", forwarded.toString());
+        String su = subject.getText().toString();
+        if (!su.isEmpty()) st.put("subject", su);
+        if (account != null) st.put("account", account);
+        boolean ime = edit.hasFocus();
+        if (ime && android.os.Build.VERSION.SDK_INT >= 30 && edit.getRootWindowInsets() != null)
+            ime = edit.getRootWindowInsets().isVisible(android.view.WindowInsets.Type.ime());
+        if (ime) st.put("focus", "1");
+        // The place is ChatFlow's (where this chat was left, per run): the message at the top and its offset.
+        if (data == null) return;
+        savePlace();
+        ChatFlow.Pos pos = ChatFlow.place(posKey());
+        if (pos == null || pos.end) return;
+        st.put("anchor", pos.anchor);
+        st.put("off", Integer.toString(pos.off));
+    }
+
+    /** Back as live() left it (right after the chat was made). */
+    void restore(java.util.Map<String, String> st) {
+        String ac = st.get("account");
+        if (ac != null && !ac.isEmpty()) account = ac;
+        if ("1".equals(st.get("ai"))) setMode(true);
+        String t = st.get("text");
+        if (t != null) {
+            edit.setText(t);
+            int len = t.length();
+            int a0 = clamp(st.get("selStart"), len), a1 = clamp(st.get("selEnd"), len);
+            edit.setSelection(Math.min(a0, a1), Math.max(a0, a1));
+        }
+        replyTo = json(st.get("reply"));
+        forwarded = json(st.get("fwd"));
+        String su = st.get("subject");
+        if (su != null) subject.setText(su);
+        // Its place goes back into ChatFlow's memory, which the first render puts the chat at (placeFirst).
+        String an = st.get("anchor");
+        if (an != null && !an.isEmpty()) {
+            int off;
+            try { off = Integer.parseInt(st.get("off")); } catch (Exception e) { off = 0; }
+            ChatFlow.place(posKey(), new ChatFlow.Pos(false, an, off, 0));
+        }
+        if ("1".equals(st.get("focus"))) {
+            // The keyboard was up on the composer: up again.
+            edit.requestFocus();
+            a.getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE
+                    | android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        }
+        composer();
+    }
+
+    private static int clamp(String v, int len) {
+        try { return Math.max(0, Math.min(len, Integer.parseInt(v))); } catch (Exception e) { return len; }
+    }
+
+    private static JSONObject json(String v) {
+        if (v == null || v.isEmpty()) return null;
+        try { return new JSONObject(v); } catch (Exception e) { return null; }
+    }
+
+    /** The text field a live restart keeps (Swap: a pause in the message is a good moment). */
+    View liveField() { return edit; }
 
     // ---- data ----
 
@@ -438,6 +547,7 @@ final class PersonsChat {
 
     void close() {
         savePlace();
+        keepDraft();
         closed = true;
         typingOff();
         PersonsAudio.stop();
@@ -1117,7 +1227,7 @@ final class PersonsChat {
 
     /** A draft into the composer, to send to the person. */
     private void useReply(String text) {
-        toAi = false;
+        setMode(false);
         composer();
         edit.setText(text);
         edit.setSelection(edit.length());
@@ -1168,14 +1278,14 @@ final class PersonsChat {
         List<Ds.Item> items = new ArrayList<>();
         if (blockedNote() == null) items.add(Ds.item(Ui.I_REPLY, "Reply", () -> {
             replyTo = m;
-            toAi = false;
+            setMode(false);
             composer();
             edit.requestFocus();
             showKeyboard();
         }));
         if (aiOn()) items.add(Ds.item(Ui.I_SPARKLES, "Forward to AI", () -> {
             forwarded = m;
-            toAi = true;
+            setMode(true);
             typingOff();
             composer();
             edit.requestFocus();
@@ -1317,7 +1427,7 @@ final class PersonsChat {
     /** The composer writes to the person or to their AI (Person Hub's switch); the field keeps the focus. */
     private void switchTo(boolean ai) {
         if (ai == toAi) return;
-        toAi = ai;
+        setMode(ai);
         if (toAi) typingOff();
         composer();
         edit.requestFocus();

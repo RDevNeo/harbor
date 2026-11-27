@@ -6,6 +6,20 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 ## [Unreleased]
 
 ### Changed
+- **Hub comes back exactly where you were after an update, on the PC and the phone (and after a crash too).**
+  PC: besides Projects (chat, transcript's place, composers, panes, splits), a restart's snapshot now keeps Hub's
+  tabs: the tab on screen; Persons' open person or site request, its composer (person or AI, text and cursor, reply,
+  forward, files, subject), search, details panel and every chat's remembered place (the chat flow's anchor message
+  and offset); Routine's screen and the Coach's unsent text; Collector's view, filter, each view's scroll and an open
+  lead (with its review queue and Reach field); and the Agents panel. The same snapshot is written all along (kv
+  `ui_resume`, a second after a change), so a crash within 10 minutes comes back to it too (a start that keeps
+  crashing on it gives up after two tries). Persons' drafts persist per chat and recipient (kv `persons_drafts`).
+  Window place and size were already kept by the handover. Phone: a live code swap now also brings back Persons
+  (the person, section, draft and cursor, AI or person, reply, forward, subject, the chat's place through ChatFlow),
+  Routine (its page) and Collector (its view, an open lead, scroll); the task's screens are written all along too
+  (prefs `live_auto`), so a crash or an APK install reopens the same screens; Persons drafts persist per chat and
+  recipient on the phone too. The first update after this one still restarts from the old code, which doesn't save
+  the new state yet.
 - **Videos in Persons chats play like WhatsApp's (phone and PC).** A video a person sent (WhatsApp, Discord, Gmail,
   Instagram) is no longer a file chip: it's a tile the size of a picture (its own ratio, 16:9 when unknown) showing
   its first frame, ▶ and its length. A click or tap downloads it once (a spinner in the ▶ meanwhile) and plays it in

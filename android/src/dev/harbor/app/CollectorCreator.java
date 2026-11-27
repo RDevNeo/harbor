@@ -473,6 +473,13 @@ final class CollectorCreator {
         private final java.util.Map<String, String> drafts = new java.util.HashMap<>();
         private EditText field, noteField;
         private boolean filling;
+        /** The note as typed (null: as saved), kept through redraws and a live restart (Collector.liveScreen). */
+        String typedNote;
+
+        String id() { return id; }
+        String title() { return title; }
+        java.util.List<String> queue() { return queue; }
+        EditText noteField() { return noteField; }
 
         Detail(Collector a, String id, String name) { this(a, id, name, new java.util.ArrayList<>()); }
 
@@ -914,7 +921,13 @@ final class CollectorCreator {
             noteField = Ui.input(a, "A quick note about them (only you see it)", true);
             noteField.setMinLines(2);
             noteField.setGravity(Gravity.TOP | Gravity.START);
-            noteField.setText(d.optString("note"));
+            noteField.setText(typedNote != null ? typedNote : d.optString("note"));
+            final EditText nf = noteField;
+            nf.addTextChangedListener(new android.text.TextWatcher() {
+                @Override public void beforeTextChanged(CharSequence t, int x, int y, int z) { }
+                @Override public void onTextChanged(CharSequence t, int x, int y, int z) { }
+                @Override public void afterTextChanged(android.text.Editable t) { if (noteField == nf) { typedNote = t.toString(); Swap.dirty(); } }
+            });
             c.addView(noteField, Ui.fill());
             LinearLayout btns = Ui.row(a);
             btns.setGravity(Gravity.END);

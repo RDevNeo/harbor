@@ -57,6 +57,11 @@ public class Collector extends Base {
     /** The view on screen: "collector", "available", "approved" or "restricted". */
     private String sel = "collector";
     private long typed;
+    /** A live restart's place in the list: the lead at its top and its offset (null: none, or reached). */
+    private String liveLead;
+    private int liveOff;
+    private boolean keepShown;
+    private int livePos = -1, livePosOff;
     /** The screens open over the tab (Send message), the top one last. */
     private final List<Screen> stack = new ArrayList<>();
     private final Runnable poll = new Runnable() {
@@ -119,7 +124,26 @@ public class Collector extends Base {
         ScrollView ds = new ScrollView(this);
         ds.addView(segs);
         installTab(Tabs.COLLECTOR, Ds.drawer(this, "Collector", ds));
+        // Right after a live restart (Swap) or a crash: the view, its filter, the list's place, an open lead.
+        String ls = Swap.state(this, b, "sel");
+        if ("collector".equals(ls) || "available".equals(ls) || "approved".equals(ls) || "restricted".equals(ls)) sel = ls;
+        String lf = Swap.state(this, b, "filter");
+        if (lf != null) filter.setText(lf);
+        liveLead = Swap.state(this, b, "lead");
+        try { livePos = Integer.parseInt(Swap.state(this, b, "pos")); livePosOff = Integer.parseInt(Swap.state(this, b, "poff")); } catch (Exception e) { livePos = -1; }
+        try { liveOff = Integer.parseInt(Swap.state(this, b, "off")); } catch (Exception e) { liveOff = 0; }
+        try { shown = Math.max(PAGE, Integer.parseInt(Swap.state(this, b, "shown"))); keepShown = true; } catch (Exception ignored) { }
         draw();
+        livePanel(b);
+        String ld = Swap.state(this, b, "detail");
+        if (ld != null && !ld.isEmpty()) {
+            String lq = Swap.state(this, b, "queue");
+            List<String> queue = new ArrayList<>();
+            if (lq != null) for (String q : lq.split("\n")) if (!q.isEmpty()) queue.add(q);
+            CollectorCreator.Detail d = new CollectorCreator.Detail(this, ld, Swap.state(this, b, "dname"), queue);
+            d.typedNote = Swap.state(this, b, "note");
+            push(d);
+        }
         // Send message or a lead's detail opened straight away: the phone screenshot rig (screen:collector-send, collector-detail).
         String c = getIntent().getStringExtra("creator");
         if (c != null && !c.isEmpty() && getIntent().getBooleanExtra("send", false)) push(new CollectorCreator.Compose(this, c, getIntent().getStringExtra("name")));
@@ -757,7 +781,7 @@ public class Collector extends Base {
         String empty;
         String f = filter.getText().toString().trim().toLowerCase(Locale.ROOT);
         String key = sel + "|" + f + "|" + settings().optString("sort") + "|" + platforms();
-        if (!key.equals(shownFor)) { shownFor = key; shown = PAGE; }
+        if (!key.equals(shownFor)) { shownFor = key; if (!keepShown) shown = PAGE; keepShown = false; }
         if ("collector".equals(sel)) {
             JSONObject r = view.optJSONObject("run");
             leads = rowsFor("collector", "");
@@ -784,6 +808,72 @@ public class Collector extends Base {
             if (left > 0) rows.add(new Item(MORE, "Show " + Math.min(PAGE, left) + " more · " + left + " left", null));
         }
         adapter.notifyDataSetChanged();
+        // Back at the lead a live restart left at the top, once the leads are in.
+        if (liveLead != null || livePos >= 0) {
+            String want = liveLead;
+            int pos = livePos;
+            liveLead = null;
+            livePos = -1;
+            int at = -1;
+            for (int i = 0; want != null && i < rows.size(); i++) {
+                JSONObject l = rows.get(i).lead;
+                if (l != null && want.equals(l.optString("id"))) { at = i + list.getHeaderViewsCount(); break; }
+            }
+            int off = liveOff;
+            if (at < 0 && pos >= 0 && pos < list.getHeaderViewsCount() + rows.size()) { at = pos; off = livePosOff; }
+            if (at >= 0) {
+                int fat = at, foff = off;
+                // Once the form above has its height.
+                list.post(() -> list.setSelectionFromTop(fat, foff));
+            }
+        }
+    }
+
+    // ---------- a live restart (Swap) ----------
+
+    /** The view, its filter, the list's place (the lead at the top and its offset), an open lead's detail (its queue
+     *  and the note being typed). Null while Send message is open: that form doesn't come back (Swap waits). */
+    @Override
+    Live.Screen liveScreen() {
+        Screen top = stack.isEmpty() ? null : stack.get(stack.size() - 1);
+        if (top != null && !(top instanceof CollectorCreator.Detail)) return null;
+        Live.Screen s = super.liveScreen();
+        if (s == null) return null;
+        s.state.put("sel", sel);
+        if (filter.length() > 0) s.state.put("filter", filter.getText().toString());
+        if (shown > PAGE) s.state.put("shown", Integer.toString(shown));
+        int fp = list.getFirstVisiblePosition(), heads = list.getHeaderViewsCount();
+        if (list.getChildCount() > 0 && (fp > 0 || list.getChildAt(0).getTop() < 0)) {
+            // The form part-way up (or a row): its position; a lead at the top is found by its id instead.
+            s.state.put("pos", Integer.toString(fp));
+            s.state.put("poff", Integer.toString(list.getChildAt(0).getTop()));
+        }
+        if (fp >= heads) {
+            for (int i = 0; i < list.getChildCount(); i++) {
+                int idx = fp + i - heads;
+                if (idx < 0 || idx >= rows.size() || rows.get(idx).lead == null) continue;
+                s.state.put("lead", rows.get(idx).lead.optString("id"));
+                s.state.put("off", Integer.toString(list.getChildAt(i).getTop()));
+                break;
+            }
+        }
+        if (top != null) {
+            CollectorCreator.Detail d = (CollectorCreator.Detail) top;
+            s.state.put("detail", d.id());
+            if (d.title() != null) s.state.put("dname", d.title());
+            if (!d.queue().isEmpty()) s.state.put("queue", String.join("\n", d.queue()));
+            if (d.typedNote != null) s.state.put("note", d.typedNote);
+        }
+        return s;
+    }
+
+    @Override
+    View liveField() {
+        View f = getCurrentFocus();
+        if (f == null) return null;
+        if (stack.isEmpty()) return f == filter ? f : null;
+        Screen top = stack.get(stack.size() - 1);
+        return top instanceof CollectorCreator.Detail && f == ((CollectorCreator.Detail) top).noteField() ? f : null;
     }
 
     /** One lead's card, made once and filled again for whichever lead its row shows: picture, name and platform,

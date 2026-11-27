@@ -26,7 +26,32 @@ public class Persons extends Base {
         PersonsState ps = PersonsState.cur;
         installTab(Tabs.PERSONS, ps.drawer());
         ps.navigated = this::closeDrawer;
+        // Right after a live restart (Swap) or a crash: the page, its draft and place, an open side panel.
+        if (b == null && getIntent().hasExtra("live.pv")) ps.restore(liveState(getIntent()));
+        livePanel(b);
         openPerson(getIntent());
+    }
+
+    /** The "live." extras a restart opened this screen with, by their own names. */
+    static java.util.Map<String, String> liveState(android.content.Intent i) {
+        java.util.Map<String, String> st = new java.util.HashMap<>();
+        android.os.Bundle x = i.getExtras();
+        if (x != null) for (String k : x.keySet()) if (k.startsWith("live.") && x.get(k) instanceof String) st.put(k.substring(5), x.getString(k));
+        return st;
+    }
+
+    @Override
+    Live.Screen liveScreen() {
+        Live.Screen s = super.liveScreen();
+        PersonsState ps = PersonsState.cur;
+        if (s != null && ps != null && ps.a == this) ps.live(s.state);
+        return s;
+    }
+
+    @Override
+    View liveField() {
+        PersonsState ps = PersonsState.cur;
+        return ps != null && ps.a == this ? ps.liveField() : null;
     }
 
     /** Opened from a person's notification: their conversation (Hub was already on Persons, or not). */

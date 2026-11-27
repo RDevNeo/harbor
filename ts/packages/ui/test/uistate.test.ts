@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { Debounce, fresh, keptJson, parseKept, parseSnapshot, snapshotJson, SNAPSHOT_FRESH_MS, type UiSnapshot } from "../src/logic/uistate.ts";
+import { Debounce, fresh, keptJson, parseKept, parseResume, parseSnapshot, snapshotJson, SNAPSHOT_FRESH_MS, type UiSnapshot } from "../src/logic/uistate.ts";
 import { filledBlocks } from "../src/pages/settings.ts";
 import { field, row, type Block } from "../src/logic/settings-blocks.ts";
 
@@ -42,6 +42,7 @@ test("a snapshot goes through JSON and back whole", () => {
     dialog: { kind: "rename-chat", id: 7, input: "A better tit" },
     revs: [[7, 1234]],
     splits: JSON.stringify({ v: 3, splits: [{ chats: [7, 3], focus: 0, tree: { dir: "h", ratio: 0.5, a: { pane: 0 }, b: { pane: 1 } }, max: null }] }),
+    hub: { tab: "persons", tabs: { persons: { open: { id: "p1", section: "stores", store: "" }, draft: "olá" }, routine: { section: "coach" } }, teamPop: true, chat: 7 },
   };
   const back = parseSnapshot(JSON.parse(JSON.stringify(snapshotJson(snap))) as Record<string, unknown>);
   expect(back).toEqual(snap);
@@ -130,4 +131,24 @@ test("Settings fields get back what was typed in them, never into a password fie
   expect(r?.rows[1]?.edit[0]?.fields[0]?.text).toBe("my label");
   expect(r?.rows[1]?.edit[1]?.fields[0]?.text).toBe("");
   expect(filledBlocks([form], new Map())[0]).toBe(form);
+});
+
+test("Hub's tabs come back from a restart's snapshot: the tab, each tab's place, the Agents panel; junk dropped", () => {
+  const s = parseSnapshot({ at: 5, view: { t: "draft" }, hub: { tab: "collector", tabs: { collector: { page: "available" }, nope: { x: 1 }, persons: null }, teamPop: true, chat: "3" } });
+  expect(s?.hub).toEqual({ tab: "collector", tabs: { collector: { page: "available" } }, teamPop: true, chat: null });
+  expect(parseSnapshot({ at: 5, view: { t: "draft" }, hub: { tab: "elsewhere" } })?.hub).toEqual({ tab: "projects", tabs: {}, teamPop: false, chat: null });
+  // An older Hub's snapshot has none.
+  expect(parseSnapshot({ at: 5, view: { t: "draft" } })?.hub).toBeNull();
+});
+
+test("the crash state (kv ui_resume) comes back only while fresh, and not to a start that keeps crashing on it", () => {
+  const snap = { at: 1_000_000, view: { t: "chat", id: 4 }, hub: { tab: "routine", tabs: { routine: { section: "sleep" } }, teamPop: false, chat: 4 } };
+  const text = JSON.stringify({ at: 1_000_000, tries: 0, snap });
+  expect(parseResume(text, 1_000_000 + 30_000)).toEqual({ at: 1_000_000, tries: 0, snap });
+  expect(parseSnapshot(parseResume(text, 1_000_030)!.snap)?.hub?.tabs).toEqual({ routine: { section: "sleep" } });
+  expect(parseResume(text, 1_000_000 + SNAPSHOT_FRESH_MS + 1)).toBeNull();
+  expect(parseResume(JSON.stringify({ at: 1_000_000, tries: 2, snap }), 1_000_030)).toBeNull();
+  expect(parseResume("not json", 1)).toBeNull();
+  expect(parseResume(null, 1)).toBeNull();
+  expect(parseResume(JSON.stringify({ snap }), 1)).toBeNull();
 });
