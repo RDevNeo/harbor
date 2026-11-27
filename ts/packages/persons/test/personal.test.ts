@@ -60,10 +60,10 @@ describe("a Personal person's chats", () => {
 describe("data.json", () => {
   test("Personal is added once, after the other lists; Instagram ids are kept", () => {
     const d = normalizeData({ version: 7, lists: [{ id: "creators", name: "Creators", accountId: "gmail" }, { id: "spokpay", name: "SpokPay", accountId: "spokpay" }], people: [{ id: "p1", name: "", discordId: "", instagram: "4242", instagramUsername: "@ana.s", listIds: ["personal"], storeIds: [] }] });
-    expect(d.lists.map((l) => l.id)).toEqual(["creators", "spokpay", "personal"]);
-    expect(d.lists[2]!.accountId).toBe("personal");
+    expect(d.lists.map((l) => l.id)).toEqual(["creators", "spokpay", "neobux", "personal"]);
+    expect(d.lists[3]!.accountId).toBe("personal");
     expect(d.people[0]).toMatchObject({ instagram: "4242", instagramUsername: "ana.s", listIds: ["personal"] });
-    expect(normalizeData(d).lists.map((l) => l.id)).toEqual(["creators", "spokpay", "personal"]);
+    expect(normalizeData(d).lists.map((l) => l.id)).toEqual(["creators", "spokpay", "neobux", "personal"]);
   });
   test("settled in Personal and identities there survive a reload", () => {
     const d = normalizeData({ version: 7, people: [{ id: "p1", name: "Ana", discordId: "", listIds: ["personal"], storeIds: [], settled: { personal: at }, identities: [{ kind: "instagram", value: "4242", section: "personal" }] }] });

@@ -1,6 +1,6 @@
 # Persons phone API (Hub's phone API, port 47950, same TLS + auth as every /v1 call)
 
-All JSON. Times are ISO strings. `section` is `stores` | `creators` | `spokpay` | `personal` | `` (All people).
+All JSON. Times are ISO strings. `section` is `stores` | `creators` | `spokpay` | `neobux` | `personal` | `` (All people).
 Pictures are URLs on this same API (`/v1/persons/img/...`), fetched with the same client as JSON.
 
 ## GET /v1/persons/state?rev=N
@@ -10,10 +10,10 @@ Long-poll: with `rev` equal to the current one, waits up to 25 s for a change, t
   connections: [{ id, kind: "discord"|"gmail"|"whatsapp"|"instagram", section, also: [sections it serves too], status: "connected"|"connecting"|"signed-out"|"signing-in"|"starting",
                   label: "Discord · igor", error: null, qr: null|"<raw QR payload>", qrRows: null|["0101…", …] }],
   stores: [{ id, name, color: "#3b82f6", image: "/v1/persons/img/store/ID"|null, ownerId|null, count }],
-  lists:  [{ id: "creators"|"spokpay"|"personal", name, accountId }],
+  lists:  [{ id: "creators"|"spokpay"|"neobux"|"personal", name, accountId }],
   people: [{ id, name, avatar: "/v1/persons/img/person/ID?v=HASH"|null, initials: "AB", color: "#hex",
              storeIds: [], listIds: [], settled: { stores?: true, ... },
-             rows: { "": RowInfo, stores?: RowInfo, creators?: RowInfo, spokpay?: RowInfo, personal?: RowInfo } }],
+             rows: { "": RowInfo, stores?: RowInfo, creators?: RowInfo, spokpay?: RowInfo, neobux?: RowInfo, personal?: RowInfo } }],
   siteRequests: null | { waits: bool, notices: [{ title, text }],
                          rows: [{ ref: "SR-121", subject, store, storeSlug|null, initials, line, waiting, unread, at: <ms>,
                                   side: { text: "Store replied"|"Store waiting", tone: "info"|"warning" }|null,
@@ -158,6 +158,14 @@ connection (Instagram's app API on a pasted session: the inbox read every 30 s w
   WhatsApp; Discord and Instagram: that exact username). → `{ ok: true, person, existed }` (someone already in Persons
   with that id joins Personal: `existed`), or `{ ok: false, error }` with the reason, and nothing saved. Their chat is
   `GET chat/{id}?section=personal` as any other.
+
+## Neobux
+The user's own Robux store (it sells on SpokPay): creators reached for it, a section like Creators (list `neobux`, added
+once to data.json before Personal; Collector's Send message can put a lead there, and a run never collects anyone in
+it). It has no logins of its own at first: every Creators connection lists `neobux` in `also` (per kind, when no
+connection of that kind serves Neobux; a share set by hand in connections.json is kept). Connecting one in Neobux
+(`POST connections { section: "neobux", kind }`) takes that kind over: the other connections of that kind stop serving
+Neobux; removing it gives the kind back to Creators' (`model/neobux.ts`, run at start and on every add or remove).
 
 ## Linked people (Link with… / Unlink)
 A person may hold others linked into them (`links` in data.json: each one kept whole, with what the link added), so one

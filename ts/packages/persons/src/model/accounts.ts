@@ -2,19 +2,19 @@ import type { Person } from './types.ts'
 import { isDiscordId, isEmail, type Scope } from './data.ts'
 
 /**
- * Channels: every section (Stores, Creators, SpokPay) can connect any number of integrations —
+ * Channels: every section (Stores, Creators, SpokPay, Neobux, Personal) can connect any number of integrations —
  * Discord, Gmail, WhatsApp — each its own account (a "connection", id from the shell). A person has
  * an identifier per kind (Discord id, email, WhatsApp number); their chat uses one connection.
  */
 export type ChannelKind = 'discord' | 'gmail' | 'whatsapp' | 'instagram'
-export type SectionId = 'stores' | 'creators' | 'spokpay' | 'personal'
+export type SectionId = 'stores' | 'creators' | 'spokpay' | 'neobux' | 'personal'
 /** A connection's id (the shell's: "stores", "spokpay", "gmail" for the original three, else generated). */
 export type AccountId = string
 
 export const KINDS: ChannelKind[] = ['discord', 'gmail', 'whatsapp', 'instagram']
 export const KIND_LABEL: Record<ChannelKind, string> = { discord: 'Discord', gmail: 'Gmail', whatsapp: 'WhatsApp', instagram: 'Instagram' }
-export const SECTIONS: SectionId[] = ['stores', 'creators', 'spokpay', 'personal']
-export const SECTION_LABEL: Record<SectionId, string> = { stores: 'Stores', creators: 'Creators', spokpay: 'SpokPay', personal: 'Personal' }
+export const SECTIONS: SectionId[] = ['stores', 'creators', 'spokpay', 'neobux', 'personal']
+export const SECTION_LABEL: Record<SectionId, string> = { stores: 'Stores', creators: 'Creators', spokpay: 'SpokPay', neobux: 'Neobux', personal: 'Personal' }
 export const isSection = (s: string): s is SectionId => (SECTIONS as string[]).includes(s)
 
 export interface ConnMeta {

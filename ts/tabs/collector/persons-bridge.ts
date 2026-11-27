@@ -6,8 +6,8 @@
 import type { PersonsService } from "../../packages/persons/src/index.ts";
 import { allPeers, isInstagramId, normWhatsApp, phoneVariants, SECTION_LABEL, serves } from "../../packages/persons/src/model/accounts.ts";
 import { DEFAULT_LISTS, joinScope, socialPhotoKey } from "../../packages/persons/src/model/data.ts";
-import { parsePlace, type Place } from "../../packages/persons/src/model/move.ts";
-import type { Message, Person } from "../../packages/persons/src/model/types.ts";
+import { LIST_SECTIONS, parsePlace, type Place } from "../../packages/persons/src/model/move.ts";
+import type { Message, Person, SectionId } from "../../packages/persons/src/model/types.ts";
 import { resolveContact } from "../../packages/persons/src/model/personal.ts";
 import { normalizeSocials } from "../../packages/persons/src/socials.ts";
 import { personKeys } from "./lib/identity.ts";
@@ -35,12 +35,12 @@ export interface Channel {
   conn?: string;
 }
 
-/** Where Send puts the person in Persons: a store, or the Creators / SpokPay / Personal list ("store:<id>",
+/** Where Send puts the person in Persons: a store, or the Creators / SpokPay / Neobux / Personal list ("store:<id>",
  *  "creators"…, Persons' parsePlace words), with its section (whose connections send). */
 export interface PersonsPlace {
   value: string;
   label: string;
-  section: "stores" | "creators" | "spokpay" | "personal";
+  section: SectionId;
 }
 
 /** "creators" when the place is unknown (Send's place before it could be picked). */
@@ -79,9 +79,10 @@ export interface SendOutcome {
 
 export interface PersonsBridge {
   up(): boolean;
-  /** Everyone in Persons › Creators and in the other places given (where Collector has sent leads): never collected. */
+  /** Everyone in Persons › Creators and Neobux (creators too) and in the other places given (where Collector has sent
+   *  leads): never collected. */
   creatorKeys(places?: string[]): string[];
-  /** Persons' places, as its sidebar has them: each store, then Creators, SpokPay, Personal. */
+  /** Persons' places, as its sidebar has them: each store, then Creators, SpokPay, Neobux, Personal. */
   places(): PersonsPlace[];
   /** The connections that send for a section (its own, and those shared with it); none given: every one. */
   channels(section?: string): Channel[];
@@ -193,6 +194,9 @@ function peerKey(kind: string, to: string, people: Person[]): string {
   return people.find((p) => (p.instagramUsername ?? "").toLowerCase() === h)?.instagram ?? "";
 }
 
+/** The lists whose people a run never collects, whether or not Collector sent there: creators already being talked to. */
+export const ALWAYS_KNOWN: readonly string[] = ["creators", "neobux"];
+
 export function livePersons(svc: () => PersonsService | null): PersonsBridge {
   const people = (): Person[] => svc()?.data?.people ?? [];
   return {
@@ -201,7 +205,7 @@ export function livePersons(svc: () => PersonsService | null): PersonsBridge {
       const d = svc()?.data;
       if (!d) return [{ value: "creators", label: "Creators", section: "creators" }];
       const stores = d.stores.map((x): PersonsPlace => ({ value: `store:${x.id}`, label: x.name, section: "stores" }));
-      const lists = (["creators", "spokpay", "personal"] as const).map((id): PersonsPlace => ({ value: id, label: d.lists.find((l) => l.id === id)?.name || SECTION_LABEL[id], section: id }));
+      const lists = LIST_SECTIONS.map((id): PersonsPlace => ({ value: id, label: d.lists.find((l) => l.id === id)?.name || SECTION_LABEL[id], section: id }));
       return [...stores, ...lists];
     },
     onSent: (cb) => {
@@ -215,8 +219,12 @@ export function livePersons(svc: () => PersonsService | null): PersonsBridge {
           if (!(SEND_KINDS as readonly string[]).includes(e.kind)) return;
           const same = (v: string): boolean => v === e.peer || (e.kind === "whatsapp" && (phoneVariants(v).includes(e.peer) || phoneVariants(e.peer).includes(v)));
           const p = (s.data?.people ?? []).find((x) => allPeers(x, e.kind).some(same)) ?? null;
-          const place = e.section === "stores" ? (p?.storeIds[0] ? `store:${p.storeIds[0]}` : DEFAULT_PLACE) : e.section;
-          const label = e.section === "stores" ? (s.data?.stores.find((x) => `store:${x.id}` === place)?.name ?? SECTION_LABEL.stores) : (s.data?.lists.find((l) => l.id === e.section)?.name ?? SECTION_LABEL[e.section]);
+          // the section it went from: the connection's own, or one it is shared with (Neobux writes through Creators'
+          // logins, Personal through the Stores ones) when that's where the person is
+          const served: SectionId[] = [e.section, ...(s.view(e.connId)?.also ?? [])];
+          const sec = (p && served.find((x) => (x === "stores" ? p.storeIds.length > 0 : p.listIds.includes(x)))) || e.section;
+          const place = sec === "stores" ? (p?.storeIds[0] ? `store:${p.storeIds[0]}` : DEFAULT_PLACE) : sec;
+          const label = sec === "stores" ? (s.data?.stores.find((x) => `store:${x.id}` === place)?.name ?? SECTION_LABEL.stores) : (s.data?.lists.find((l) => l.id === sec)?.name ?? SECTION_LABEL[sec]);
           cb({ kind: e.kind as SendKind, peer: e.peer, at: e.at, person: p?.id ?? null, socials: p?.socials ?? [], emails: p ? allPeers(p, "gmail") : [], place, placeLabel: label });
         });
       };
@@ -234,7 +242,7 @@ export function livePersons(svc: () => PersonsService | null): PersonsBridge {
     },
     creatorKeys: (places = []) =>
       people()
-        .filter((p) => p.listIds.includes("creators") || places.some((w) => { const x = parsePlace(w); return !!x && (x.section === "stores" ? p.storeIds.includes(x.store) : p.listIds.includes(x.section)); }))
+        .filter((p) => ALWAYS_KNOWN.some((l) => p.listIds.includes(l)) || places.some((w) => { const x = parsePlace(w); return !!x && (x.section === "stores" ? p.storeIds.includes(x.store) : p.listIds.includes(x.section)); }))
         .flatMap((p) =>
         personKeys({
           emails: [...allPeers(p, "gmail")],
@@ -317,7 +325,7 @@ export function fakePersons(o: { channels?: Channel[]; keys?: string[]; sent?: S
   return {
     up: () => true,
     creatorKeys: () => o.keys ?? [],
-    places: () => o.places ?? [{ value: "store:robux", label: "Robux Paradise", section: "stores" }, { value: "creators", label: "Creators", section: "creators" }, { value: "spokpay", label: "SpokPay", section: "spokpay" }, { value: "personal", label: "Personal", section: "personal" }],
+    places: () => o.places ?? [{ value: "store:robux", label: "Robux Paradise", section: "stores" }, { value: "creators", label: "Creators", section: "creators" }, { value: "spokpay", label: "SpokPay", section: "spokpay" }, { value: "neobux", label: "Neobux", section: "neobux" }, { value: "personal", label: "Personal", section: "personal" }],
     channels: (section) =>
       o.channels ??
       (section === "stores" || section === "personal"

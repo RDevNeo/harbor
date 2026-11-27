@@ -182,6 +182,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
   their whole conversation, not only what arrives after.
 
 ### Added
+- **Persons: Neobux, a section of its own (PC and phone), and Collector sends leads there.** Neobux (the user's own
+  Robux store) sits between SpokPay and Personal: sidebar section, Move to…, Settle, the person's places, Add to
+  Neobux. data.json gets the list once (`{ id: "neobux", name: "Neobux", accountId: "gmail" }`, before Personal).
+  It talks through Creators' connections (each Creators Gmail, WhatsApp and Discord lists `neobux` in `also`) until
+  Neobux connects one of its own in its + menu, which takes that kind over (persons `model/neobux.ts`). Collector:
+  Send message's "Add to Persons" lists Neobux (To shows the connections serving it), and a run never collects anyone
+  already in Persons › Neobux; a message typed in Persons to a Neobux person shows "Neobux" in Collector's Sent.
 - **Persons: Forward to Projects** in a message's menu (right under Forward to AI, in person chats and in a site
   request's pane, for any message with words or files): a dialog quotes the message (author · time · section), takes a
   prompt (Ctrl+Enter sends, Esc closes) and a project, picked from Hub's projects (search by name or path, Recent: the

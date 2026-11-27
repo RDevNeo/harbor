@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { type Rows, sameRow, syncRows } from "../src/modelsync.ts";
-import { aiFolds, aiPreview, chatRows, srTimeline, FLAT_BARS, fitImage, imageTiles, listRows, moveSection, nextSpeed, sectionOrder, shortAgo, sideRows, srImageSize, type ChatJson, type PersonJson, type SrListJson, type SrRowJson, type StateJson, type UiState } from "../src/tabs/persons/view.ts";
+import { aiFolds, aiPreview, chatRows, srTimeline, FLAT_BARS, fitImage, imageTiles, listRows, moveSection, nextSpeed, personSections, sectionOrder, shortAgo, sideRows, srImageSize, type ChatJson, type PersonJson, type SrListJson, type SrRowJson, type StateJson, type UiState } from "../src/tabs/persons/view.ts";
 
 const row = (lastAt: string | null, unread = 0) => ({ lastAt, unread, presence: null, status: null, channel: "discord", typing: null });
 const person = (id: string, name: string, o: Partial<PersonJson> = {}, lastAt: string | null = null): PersonJson => ({
@@ -46,6 +46,19 @@ describe("Persons sidebar", () => {
     const open = sideRows(state(), ui({ stores: new Set(["s2"]) }));
     const shark = open.findIndex((r) => r.kind === "store" && r.id === "s2");
     expect(open.slice(shark + 1, shark + 3).map((r) => [r.name, r.owner, r.depth])).toEqual([["Owner", true, 1], ["Member", false, 1]]);
+  });
+
+  test("Neobux is a section between SpokPay and Personal, its head showing the shared Creators Gmail's sign-in", () => {
+    const s = state();
+    s.lists = [...s.lists, { id: "neobux", name: "Neobux", accountId: "gmail" }, { id: "personal", name: "Personal", accountId: "personal" }];
+    s.connections = [...s.connections, { id: "cg", kind: "gmail", section: "creators", also: ["neobux"], status: "signed-out", gateway: "down", label: "Gmail", who: "", error: null, qr: null, contacts: null }];
+    s.people = [...s.people, person("n", "Neo", { listIds: ["neobux"] })];
+    const rows = sideRows(s, ui());
+    expect(rows.filter((r) => r.kind === "section").map((r) => r.name)).toEqual(["STORES", "CREATORS", "SPOKPAY", "NEOBUX", "PERSONAL"]);
+    const i = rows.findIndex((r) => r.kind === "section" && r.section === "neobux");
+    expect(rows[i]).toMatchObject({ tone: "red" });
+    expect(rows[i + 1]).toMatchObject({ kind: "person", name: "Neo", section: "neobux" });
+    expect(personSections({ storeIds: ["s1"], listIds: ["creators", "neobux", "personal", "x"] })).toEqual(["stores", "creators", "neobux", "personal"]);
   });
 
   test("a list's people by newest message, the settled ones in a folded Settled (N)", () => {

@@ -3,7 +3,7 @@
 
 import { plainEmoji } from "./emoji.ts";
 
-export type SectionId = "stores" | "creators" | "spokpay" | "personal";
+export type SectionId = "stores" | "creators" | "spokpay" | "neobux" | "personal";
 
 export interface RowJson {
   lastAt: string | null;
@@ -191,7 +191,10 @@ export function byRecent(a: PersonJson, b: PersonJson): number {
   return a.name.localeCompare(b.name);
 }
 
-const SECTION_NAMES: Record<string, string> = { stores: "STORES", creators: "CREATORS", spokpay: "SPOKPAY", personal: "PERSONAL" };
+/** The sections that are lists (a person joins them, not a store), in sidebar order. */
+export const LIST_SECTIONS: readonly string[] = ["creators", "spokpay", "neobux", "personal"];
+
+const SECTION_NAMES: Record<string, string> = { stores: "STORES", creators: "CREATORS", spokpay: "SPOKPAY", neobux: "NEOBUX", personal: "PERSONAL" };
 
 function base(kind: Row["kind"]): Row {
   return { kind, id: "", section: "", store: "", name: "", initials: "", color: "#64748b", avatarPath: "", presence: "", status: "", tone: "", channel: "", time: "", unread: 0, typing: "", owner: false, active: false, expanded: false, count: 0, depth: 0, dim: false, tip: "" };
@@ -251,7 +254,8 @@ export function personRow(p: PersonJson, section: string, store = "", depth = 0,
   };
 }
 
-/** Whether a connection serves a section: its own, or one it's shared with (Personal uses the Stores Discord and WhatsApp). */
+/** Whether a connection serves a section: its own, or one it's shared with (Personal uses the Stores Discord and WhatsApp,
+ *  Neobux the Creators ones until it has its own). */
 export const servesSection = (c: Pick<ConnJson, "section" | "also">, section: string): boolean => c.section === section || !!c.also?.includes(section);
 
 /** A section's connections as one status dot: red when one is signed out, yellow while one connects. */
@@ -740,5 +744,5 @@ export function proposalCard(p: ProposalJson): MsgRow["card"] {
 
 /** The sections a person is in (for Settle in the All people menu): Stores when in a store, and their lists that are sections. */
 export function personSections(p: Pick<PersonJson, "storeIds" | "listIds">): string[] {
-  return [...(p.storeIds.length ? ["stores"] : []), ...p.listIds.filter((x) => x === "creators" || x === "spokpay")];
+  return [...(p.storeIds.length ? ["stores"] : []), ...p.listIds.filter((x) => LIST_SECTIONS.includes(x))];
 }

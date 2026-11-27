@@ -202,13 +202,16 @@ final class PersonsUi {
     static int aiFill() { return Ui.dark ? 0xff302c3d : 0xfff3f0fb; }
     static int aiLine() { return Ui.dark ? 0xff5d5674 : 0xffcbc2e6; }
 
-    static final String[] SECTIONS = {"stores", "creators", "spokpay", "personal"};
+    static final String[] SECTIONS = {"stores", "creators", "spokpay", "neobux", "personal"};
+    /** The sections that are lists (a person joins them, not a store), in sidebar order. */
+    static final String[] LISTS = {"creators", "spokpay", "neobux", "personal"};
 
     static String sectionLabel(String s) {
         switch (s == null ? "" : s) {
             case "stores": return "Stores";
             case "creators": return "Creators";
             case "spokpay": return "SpokPay";
+            case "neobux": return "Neobux";
             case "personal": return "Personal";
             default: return "All people";
         }

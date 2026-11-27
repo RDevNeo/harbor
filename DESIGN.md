@@ -83,7 +83,7 @@ Per tab:
 
 - **Projects**: sidebar = projects (head rows with chevron and letter square) and their chats (two-line rows on a
   guide line), Threads, Settled; page = the chat; team = the corner badge's floating card.
-- **Persons**: sidebar = All people, then STORES / CREATORS / SPOKPAY sections (stores as head rows with their
+- **Persons**: sidebar = All people, then STORES / CREATORS / SPOKPAY / NEOBUX / PERSONAL sections (stores as head rows with their
   picture or colour square, people as avatar rows with channel mark, status line, time and unread), Settled folds;
   page = All people (PageHead, search, rows) or a person's chat (PageBar); panel = the person's details.
 - **Routine**: sidebar = Today (with its %), History, Sleep, Goals, Coach as glyph rows, then PLAN (the current plan,
@@ -180,7 +180,7 @@ the model: a slim top bar with the sidebar button, a sheet from the left, the ta
   tab (18dp glyph, 15sp label, quiet count; G200 on the page shown). Projects: "Projects" (workspaces, Add project,
   Search), then Projects, Settings, Workspaces & PCs and the chat list (Sidebar), New session at the bottom (no
   avatar, no theme button: the phone is always black). Persons: "Persons" (its magnifier opens All people), then
-  Stores, Creators, SpokPay, Personal (PersonsHome; no All people row, no connection chips: only a sign-in waiting
+  Stores, Creators, SpokPay, Neobux, Personal (PersonsHome; no All people row, no connection chips: only a sign-in waiting
   for its QR code shows). Routine: Today, History, Sleep, Goals, Coach. Collector: Collector, Available, Approved,
   Restricted with their counts, History.
 - **Tab bar** (`Tabs.around`): Projects, Persons, Routine, Collector, on every page including chats; it steps aside

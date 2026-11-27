@@ -538,7 +538,7 @@ describe("collector", () => {
     type M = { place: string; placeLabel: string; places: { value: string; label: string }[]; channel: string; channels: { id: string; conn: string; why: string }[] };
     const open = async (q: [string, string][] = []): Promise<M> => (await call("GET", "compose", null, [["id", "youtube:UC1"], ...q]))!.body as M;
     const m = await open();
-    expect([m.place, m.places.map((x) => x.label), m.channel]).toEqual(["creators", ["Robux Paradise", "Creators", "SpokPay", "Personal"], "creators-gmail"]);
+    expect([m.place, m.places.map((x) => x.label), m.channel]).toEqual(["creators", ["Robux Paradise", "Creators", "SpokPay", "Neobux", "Personal"], "creators-gmail"]);
     expect(m.channels[0]!.conn).toBe("Creators Gmail");
     const st = await open([["place", "store:robux"], ["remember", "1"]]);
     expect([st.place, st.placeLabel, st.channel, st.channels.map((x) => x.id)]).toEqual(["store:robux", "Robux Paradise", "stores-gmail", ["stores-gmail", "stores-whatsapp", "stores-discord", "none-instagram"]]);
@@ -743,7 +743,7 @@ describe("collector", () => {
       send: async () => ({ ok: true }),
     };
     const bridge = livePersons(() => svc as never);
-    expect(bridge.places().map((x) => [x.value, x.label])).toEqual([["store:s1", "Robux Paradise"], ["creators", "Creators"], ["spokpay", "SpokPay"], ["personal", "Personal"]]);
+    expect(bridge.places().map((x) => [x.value, x.label])).toEqual([["store:s1", "Robux Paradise"], ["creators", "Creators"], ["spokpay", "SpokPay"], ["neobux", "Neobux"], ["personal", "Personal"]]);
     expect(bridge.channels("stores").map((c) => c.id)).toEqual(["sg", "sw"]);
     expect(bridge.channels("personal").map((c) => c.id)).toEqual(["sw"]);
     expect(bridge.channels("creators").map((c) => c.id)).toEqual(["cg"]);
@@ -755,6 +755,45 @@ describe("collector", () => {
     expect(data.lists.map((l) => l.id)).toEqual(["creators", "personal"]);
     expect(bridge.creatorKeys()).toEqual([]);
     expect(bridge.creatorKeys(["store:s1"])).toContain("email:shop@x.com");
+  });
+  it("Neobux: a place of its own, sent through Creators' shared Gmail; its people are never collected; Persons' sends say Neobux", async () => {
+    type P = { id: string; name: string; discordId: string; email?: string; listIds: string[]; storeIds: string[]; socials?: string[] };
+    let data = { people: [{ id: "p0", name: "Old", discordId: "", email: "old@x.com", listIds: ["neobux"], storeIds: [], socials: ["https://www.youtube.com/@old"] }] as P[], stores: [], lists: [{ id: "creators", name: "Creators", accountId: "gmail" }, { id: "personal", name: "Personal", accountId: "personal" }] };
+    let n = 0;
+    let hear: ((e: { connId: string; kind: string; section: string; peer: string; at: string }) => void) | null = null;
+    const views = [
+      { id: "cg", kind: "gmail", section: "creators", also: ["neobux"], connected: true, state: { me: null }, convos: {}, label: "Creators Gmail" },
+      { id: "sw", kind: "whatsapp", section: "stores", also: ["personal"], connected: true, state: { me: null }, convos: {}, label: "Stores WhatsApp" },
+    ];
+    const svc = {
+      get data() {
+        return data;
+      },
+      newId: () => `p_new${++n}`,
+      update: (f: (d: typeof data) => typeof data) => void (data = f(data)),
+      updatePerson: (id: string, f: (p: P) => P) => void (data = { ...data, people: data.people.map((p) => (p.id === id ? f(p) : p)) }),
+      deletePerson: () => {},
+      views: () => views,
+      view: (id: string) => views.find((v) => v.id === id),
+      lookup: async () => ({ matches: [] }),
+      send: async () => ({ ok: true }),
+      onSent: (cb: typeof hear) => ((hear = cb), () => {}),
+    };
+    const bridge = livePersons(() => svc as never);
+    expect(bridge.places().find((x) => x.value === "neobux")).toEqual({ value: "neobux", label: "Neobux", section: "neobux" });
+    expect(bridge.channels("neobux").map((c) => [c.id, c.conn])).toEqual([["cg", "Creators Gmail"]]);
+    // in Neobux: never collected again, whether or not Collector sent there
+    expect(bridge.creatorKeys()).toContain("email:old@x.com");
+    expect((await bridge.send({ rec: rec({ platform: "youtube", platform_id: "UC1", name: "Ana" }), channel: "sw", to: "+55 21 97570-9440", subject: "", text: "t", place: "neobux" })).ok).toBe(false);
+    expect((await bridge.send({ rec: rec({ platform: "youtube", platform_id: "UC1", name: "Ana" }), channel: "cg", to: "ana@x.com", subject: "s", text: "t", place: "neobux" })).ok).toBe(true);
+    expect(data.people[1]).toMatchObject({ name: "Ana", email: "ana@x.com", listIds: ["neobux"], storeIds: [] });
+    expect(data.lists.map((l) => l.id)).toEqual(["creators", "personal", "neobux"]);
+    expect(bridge.creatorKeys()).toContain("email:ana@x.com");
+    // a message typed in Persons to a Neobux person through the shared Creators Gmail: Sent says Neobux
+    const got: SentEvent[] = [];
+    bridge.onSent!((e) => got.push(e));
+    hear!({ connId: "cg", kind: "gmail", section: "creators", peer: "ana@x.com", at: "2026-11-27T10:00:00.000Z" });
+    expect(got[0]).toMatchObject({ place: "neobux", placeLabel: "Neobux", person: data.people[1]!.id });
   });
   it("remembers the lists' Sort and platforms; bad ones fall back", async () => {
     const dir = mkdtempSync(join(tmpdir(), "collector-"));

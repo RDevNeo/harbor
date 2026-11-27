@@ -5,8 +5,10 @@ import { normalizeSocials, parseSocialUrl, type SocialTarget } from '../socials.
 export const STORE_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899', '#84cc16', '#f97316', '#8b5cf6', '#0ea5e9']
 
 /** Lists every dataset starts with (version 3 added them). */
-/** In sidebar order (after Stores). Version 3 had only SpokPay; version 4 added Creators. */
-export const DEFAULT_LISTS: PersonList[] = [{ id: 'creators', name: 'Creators', accountId: 'gmail' }, { id: 'spokpay', name: 'SpokPay', accountId: 'spokpay' }, { id: 'personal', name: 'Personal', accountId: 'personal' }]
+/** In sidebar order (after Stores). Version 3 had only SpokPay; version 4 added Creators. Neobux (the user's own store)
+ *  talks through Creators' accounts until it connects its own (neobux.ts neobuxShares): its `accountId` says so. */
+export const DEFAULT_LISTS: PersonList[] = [{ id: 'creators', name: 'Creators', accountId: 'gmail' }, { id: 'spokpay', name: 'SpokPay', accountId: 'spokpay' }, { id: 'neobux', name: 'Neobux', accountId: 'gmail' }, { id: 'personal', name: 'Personal', accountId: 'personal' }]
+const defList = (id: string): PersonList => ({ ...DEFAULT_LISTS.find((l) => l.id === id)! })
 const ACCOUNT_IDS = ['stores', 'spokpay', 'gmail', 'personal'] as const
 
 export function emptyData(now = new Date().toISOString()): AppData {
@@ -55,12 +57,17 @@ export function normalizeData(raw: unknown): AppData {
     }).filter((l) => l.id && l.name)
     : DEFAULT_LISTS.map((l) => ({ ...l }))
   // version 4 adds the Creators list (once: a later removal is kept)
-  if (version < 4 && !lists.some((l) => l.id === 'creators')) lists = [{ ...DEFAULT_LISTS[0]! }, ...lists]
+  if (version < 4 && !lists.some((l) => l.id === 'creators')) lists = [defList('creators'), ...lists]
   // version 5: Creators talks through its own Discord login
   // version 5 gave Creators its own Discord login; version 6 moved Creators to Gmail
   if (version < 6) lists = lists.map((l) => (l.id === 'creators' && l.accountId === 'stores' ? { ...l, accountId: 'gmail' } : l))
   // Personal (the user's own contacts on Discord, WhatsApp and Instagram) came later, without a version: added once, at the end
-  if (!lists.some((l) => l.id === 'personal')) lists = [...lists, { ...DEFAULT_LISTS[2]! }]
+  if (!lists.some((l) => l.id === 'personal')) lists = [...lists, defList('personal')]
+  // Neobux (the user's own Robux store) came later too, without a version: added once, before Personal
+  if (!lists.some((l) => l.id === 'neobux')) {
+    const at = lists.findIndex((l) => l.id === 'personal')
+    lists = at < 0 ? [...lists, defList('neobux')] : [...lists.slice(0, at), defList('neobux'), ...lists.slice(at)]
+  }
   const listIds = new Set(lists.map((l) => l.id))
 
   const people: Person[] = (Array.isArray(r.people) ? r.people : [])
@@ -173,7 +180,7 @@ function normLinks(v: unknown, storeIds: Set<string>, listIds: Set<string>, now:
 /** The fields Link may copy into the person they join (link.ts). */
 export const LINK_FIELDS = ['name', 'discordId', 'discordUsername', 'displayName', 'avatar', 'profileAt', 'email', 'photo', 'photoAt', 'photoFull', 'whatsapp', 'instagram', 'instagramUsername']
 
-const SETTLE_SECTIONS = ['stores', 'creators', 'spokpay', 'personal']
+const SETTLE_SECTIONS = ['stores', 'creators', 'spokpay', 'neobux', 'personal']
 const ms = (iso: string | undefined) => { const t = iso ? Date.parse(iso) : NaN; return Number.isFinite(t) ? t : NaN }
 
 /**

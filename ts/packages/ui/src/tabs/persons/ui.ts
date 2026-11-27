@@ -19,7 +19,7 @@ import { AttachPreviews } from "./attachprev.ts";
 import { customEmojiUrl, emojiCategories, emojiRows, inlineLayout, insertAt, jumboEmoji, plainEmoji, searchEmoji, type EmojiEntry } from "./emoji.ts";
 import { aiMenu, blockedNote, composerHint, CONTACT_FIELD, failedMenu, messageMenu, moveEntries, placeOfRow, quoteInto, type MenuEntry, type MoveEntry } from "./menus.ts";
 import { fwdSubtitle, pickable, pickerRows, quoteMeta, stepPick, type FwdProject } from "./fwdproject.ts";
-import { aiFolds, audioRow, blankRow, byRecent, CHAT_PAGE, chatRows, shownFor, discordLinks, friendButton, hhmm, shortAgo, listRows, matches, moveSection, nextSpeed, personSections, sectionOrder, servesSection, sideRows, srImageSize, srTimeline, type AiJson, type AudioRow, type AudioStateJson, type ChatJson, type ImgTile, type MsgRow, type PersonJson, type Row, type SrFileJson, type SrPaneJson, type StateJson, type UiState } from "./view.ts";
+import { aiFolds, LIST_SECTIONS, audioRow, blankRow, byRecent, CHAT_PAGE, chatRows, shownFor, discordLinks, friendButton, hhmm, shortAgo, listRows, matches, moveSection, nextSpeed, personSections, sectionOrder, servesSection, sideRows, srImageSize, srTimeline, type AiJson, type AudioRow, type AudioStateJson, type ChatJson, type ImgTile, type MsgRow, type PersonJson, type Row, type SrFileJson, type SrPaneJson, type StateJson, type UiState } from "./view.ts";
 
 interface Pixels {
   width: number;
@@ -66,7 +66,7 @@ const hash = (id: string): number => {
   return h;
 };
 const shortAgoText = (iso: string): string => shortAgo(iso);
-const SECTION_LABEL: Record<string, string> = { stores: "Stores", creators: "Creators", spokpay: "SpokPay", personal: "Personal" };
+const SECTION_LABEL: Record<string, string> = { stores: "Stores", creators: "Creators", spokpay: "SpokPay", neobux: "Neobux", personal: "Personal" };
 const KIND_LABEL: Record<string, string> = { discord: "Discord", gmail: "Gmail", whatsapp: "WhatsApp", instagram: "Instagram" };
 /** One entry of a Persons menu (showMenu): `children` makes it open a submenu. */
 type MenuIn = { id?: string; label: string; icon?: string; sub?: string; hint?: string; danger?: boolean; sep?: boolean; header?: boolean; disabled?: boolean; checked?: boolean; children?: MenuIn[]; run?: () => void };
@@ -1864,7 +1864,8 @@ class PersonsTab {
     const personal = sec === "personal";
     const connKinds = personal ? ["discord", "whatsapp", "instagram"].filter((k) => !mine.some((c) => c.kind === k)) : ["discord", "gmail", "whatsapp"];
     const run = (c: (typeof mine)[number]): void => {
-      if (c.section !== sec) return this.setToast(`Shared with ${SECTION_LABEL[c.section] ?? c.section}: connect or disconnect it there`);
+      // Neobux writes through Creators' logins until it has its own: connecting one here takes that kind over
+      if (c.section !== sec) return this.setToast(sec === "neobux" ? `${SECTION_LABEL[c.section] ?? c.section}'s ${KIND_LABEL[c.kind] ?? c.kind}: connect Neobux's own below to use it instead` : `Shared with ${SECTION_LABEL[c.section] ?? c.section}: connect or disconnect it there`);
       if (c.status === "connected") return this.confirm(`Disconnect ${KIND_LABEL[c.kind]}${c.who ? ` (${c.who})` : ""}?`, "It leaves this section and signs out. Connect it again to use it.", "Disconnect", async () => void (await this.api(c.kind === "instagram" ? "POST" : "DELETE", c.kind === "instagram" ? `connections/${encodeURIComponent(c.id)}/disconnect` : `connections/${encodeURIComponent(c.id)}`)));
       if (c.kind === "instagram") return this.sessionDialog(c.id);
       void this.api("POST", `connections/${encodeURIComponent(c.id)}/connect`);
@@ -1994,7 +1995,7 @@ class PersonsTab {
     const p = this.person(id);
     if (!p) return [];
     const owned = (this.state?.stores ?? []).filter((s) => s.ownerId === id).map((s) => s.id);
-    return [...new Set([...p.storeIds, ...owned])].map((s) => `store:${s}`).concat(p.listIds.filter((l) => l === "creators" || l === "spokpay" || l === "personal"));
+    return [...new Set([...p.storeIds, ...owned])].map((s) => `store:${s}`).concat(p.listIds.filter((l) => LIST_SECTIONS.includes(l)));
   }
 
   /** Move to…'s entries (menus.ts), with their actions. */

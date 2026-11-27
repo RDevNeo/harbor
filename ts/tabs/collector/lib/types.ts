@@ -30,7 +30,7 @@ export interface Contacted {
   to: string;
   /** The person it made (or joined) in Persons. */
   person: string | null;
-  /** Where in Persons: "creators" (also when absent), "spokpay", "personal" or "store:<id>"; and its name then. */
+  /** Where in Persons: "creators" (also when absent), "spokpay", "neobux", "personal" or "store:<id>"; and its name then. */
   place?: string;
   placeLabel?: string;
 }

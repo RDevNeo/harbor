@@ -54,7 +54,7 @@ final class CollectorCreator {
      *  composer card: To (the destination: every channel of the Persons place picked, Email, WhatsApp, Discord,
      *  Instagram, each with who they are there, in a list over the screen; one that can't send says why) and the
      *  address, the Subject (email), the message; under it "Add to Persons" (Persons' places: each store, Creators,
-     *  SpokPay, Personal; the place's connections are To's), the template it starts from (a list over the screen),
+     *  SpokPay, Neobux, Personal; the place's connections are To's), the template it starts from (a list over the screen),
      *  Save as template and Edit template; the CRM's guards. At the bottom, always in sight (over the keyboard too),
      *  the account it goes from and Send: it asks first, then POST /v1/collector/send, a real send, only on that tap.
      *  The template, channel and place picked are remembered (the PC's too). */

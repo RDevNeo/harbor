@@ -6,20 +6,23 @@
 import { DEFAULT_LISTS } from './data.ts'
 import type { AppData, Person, SectionId } from './types.ts'
 
-/** A place a person can be in: a store (in Stores), or the Creators / SpokPay list. */
-export type Place = { section: 'stores'; store: string } | { section: 'creators' | 'spokpay' | 'personal' }
+/** A place a person can be in: a store (in Stores), or the Creators / SpokPay / Neobux / Personal list. */
+export type ListSection = 'creators' | 'spokpay' | 'neobux' | 'personal'
+export const LIST_SECTIONS: readonly ListSection[] = ['creators', 'spokpay', 'neobux', 'personal']
+export const isListSection = (s: string): s is ListSection => (LIST_SECTIONS as readonly string[]).includes(s)
+export type Place = { section: 'stores'; store: string } | { section: ListSection }
 
 export const samePlace = (a: Place, b: Place): boolean => a.section === b.section && (a.section !== 'stores' || a.store === (b as { store: string }).store)
 
 /** Every place a person is in: their stores (and the ones they own), then their lists that are sections. */
 export function placesOf(p: Person, d: Pick<AppData, 'stores'>): Place[] {
   const stores = [...p.storeIds, ...d.stores.filter((s) => s.ownerId === p.id && !p.storeIds.includes(s.id)).map((s) => s.id)]
-  return [...stores.map((store): Place => ({ section: 'stores', store })), ...p.listIds.filter((l): l is 'creators' | 'spokpay' | 'personal' => l === 'creators' || l === 'spokpay' || l === 'personal').map((section): Place => ({ section }))]
+  return [...stores.map((store): Place => ({ section: 'stores', store })), ...p.listIds.filter(isListSection).map((section): Place => ({ section }))]
 }
 
-/** A place from the UI's words: "creators", "spokpay", "personal" or "store:<id>". */
+/** A place from the UI's words: "creators", "spokpay", "neobux", "personal" or "store:<id>". */
 export function parsePlace(s: string): Place | null {
-  if (s === 'creators' || s === 'spokpay' || s === 'personal') return { section: s }
+  if (isListSection(s)) return { section: s }
   if (s.startsWith('store:') && s.length > 6) return { section: 'stores', store: s.slice(6) }
   return null
 }

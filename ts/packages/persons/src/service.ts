@@ -9,6 +9,7 @@ import { allPeers, chatKey, chatsFor, KIND_LABEL, peerOf, personSections, phoneV
 import { freshIncoming, type IncomingLine } from "./incoming.ts";
 import { contactConflict, personalShares, resolveContact, whatsAppContactToSave, type AddKind } from "./model/personal.ts";
 import { linkPeople, unlinkPerson } from "./model/link.ts";
+import { neobuxShares } from "./model/neobux.ts";
 import { lastMessage, mergeMessages } from "./model/conversation.ts";
 import { movePerson, type Place } from "./model/move.ts";
 import { DEFAULT_LISTS } from "./model/data.ts";
@@ -156,7 +157,8 @@ export class PersonsService {
     this.data = this.file.load();
     this.metas = loadConnections(this.dir);
     // Personal talks through the Stores Discord and WhatsApp (the user's own logins) and its own Instagram
-    const shared = personalShares(this.metas, `personal-instagram-${randomBytes(3).toString("hex")}`);
+    // Neobux talks through Creators' logins until it connects its own (model/neobux.ts)
+    const shared = neobuxShares(personalShares(this.metas, `personal-instagram-${randomBytes(3).toString("hex")}`));
     if (shared !== this.metas) {
       this.metas = shared;
       if (!this.o.offline) saveConnections(this.dir, this.metas);
@@ -524,7 +526,7 @@ export class PersonsService {
 
   async addConnection(section: SectionId, kind: ChannelKind): Promise<ConnMeta> {
     const m: ConnMeta = { id: `${section}-${kind}-${randomBytes(3).toString("hex")}`, kind, section };
-    this.metas = [...this.metas, m];
+    this.metas = neobuxShares([...this.metas, m]);
     saveConnections(this.dir, this.metas);
     this.slices.set(m.id, emptySlice());
     this.open(m);
@@ -660,7 +662,7 @@ export class PersonsService {
   async removeConnection(id: string): Promise<void> {
     const c = this.conns.get(id);
     this.conns.delete(id);
-    this.metas = this.metas.filter((m) => m.id !== id);
+    this.metas = neobuxShares(this.metas.filter((m) => m.id !== id));
     this.slices.delete(id);
     saveConnections(this.dir, this.metas);
     this.changed(false);

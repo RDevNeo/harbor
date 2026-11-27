@@ -3,8 +3,8 @@
 // active ones (an upload inside the window), and stores each lead once: picture, profile link, handle, an email when
 // one can be found (bio, link-in-bio pages, their site; a typed one is never replaced), the 3 newest videos. YouTube:
 // lib/sweep.ts; TikTok and Instagram: lib/social.ts. Never collected twice (any platform, nor anyone already in Persons ›
-// Creators). The user can Restrict a lead (kept out of Available, still never collected again). Send message
-// (persons-bridge.ts) writes to one through Persons › Creators' Gmail or WhatsApp and adds them there.
+// Creators or Neobux). The user can Restrict a lead (kept out of Available, still never collected again). Send message
+// (persons-bridge.ts) writes to one through the Persons place picked (Creators by default) and adds them there.
 // Data in <data dir>/collector/: state.json, templates.json, sessions.json (0600: the Instagram session, never shown or
 // logged), avatars/<key>.img (pictures and video thumbnails). The PC window (packages/ui/src/tabs/collector) and Hub for
 // Android call the same routes:
@@ -131,7 +131,7 @@ export class Collector {
   private readonly have = new Set<string>();
   /** Every key ever collected (data.seen, plus the current records' own). */
   private seen = new Set<string>();
-  /** People in Persons › Creators (and the other places Collector sent to), as keys (read when a run starts). */
+  /** People in Persons › Creators and Neobux (and the other places Collector sent to), as keys (read when a run starts). */
   private personsKeys = new Set<string>();
   private yt: CollectorDeps["youtube"] | null = null;
   private tt: SocialClient | null = null;
@@ -505,7 +505,7 @@ export class Collector {
         return `same person as ${other.name} (${PLATFORM_LABEL[other.platform as CreatorPlatform] ?? other.platform}) - linked there.`;
       }
       for (const k of ownKeys(rec)) this.seen.add(k);
-      return this.personsKeys.has(hit) ? "already in Persons › Creators." : "collected before.";
+      return this.personsKeys.has(hit) ? "already in Persons." : "collected before.";
     }
     this.data.creators.push(rec);
     for (const k of allKeys(rec)) this.seen.add(k);
@@ -564,7 +564,7 @@ export class Collector {
     const sleep = async (ms: number): Promise<void> => {
       for (let left = ms; left > 0 && !this.stopFlag; left -= 200) await (this.o.sleep ?? Bun.sleep)(Math.min(200, left));
     };
-    // everyone in Persons › Creators, and in every other place Collector has sent leads to
+    // everyone in Persons › Creators and Neobux, and in every other place Collector has sent leads to
     const sentPlaces = [...new Set(this.data.creators.map((c) => c.contacted?.place ?? "").filter((x) => x && x !== DEFAULT_PLACE))];
     this.personsKeys = new Set(this.o.persons.creatorKeys(sentPlaces));
     const before = this.data.creators.length;

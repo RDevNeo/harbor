@@ -56,7 +56,7 @@ describe("Personal over the API", () => {
   it("is a section with the shared Stores Discord and its own Instagram (connections.json keeps both)", async () => {
     const { dir, call } = await setup();
     const st = (await call("GET", "state")).body as Record<string, any>;
-    expect(st.lists.map((l: { id: string }) => l.id)).toEqual(["creators", "spokpay", "personal"]);
+    expect(st.lists.map((l: { id: string }) => l.id)).toEqual(["creators", "spokpay", "neobux", "personal"]);
     const conns = st.connections.map((c: Record<string, unknown>) => [c.id, c.section, c.also]);
     expect(conns[0]).toEqual(["stores", "stores", ["personal"]]);
     expect(conns[1]).toEqual(["spokpay", "spokpay", []]);

@@ -106,7 +106,7 @@ export function blockedNote(o: { hasAccount: boolean; hasPeer: boolean; connecte
 
 /** Move to…'s entries in a person's menu (the phone's PersonsUi.moveMenu keeps the same rules). */
 export interface MoveEntry {
-  /** "spokpay", "creators", "stores" (opens the stores), "store:<id>", "new-store". */
+  /** "spokpay", "creators", "neobux", "personal", "stores" (opens the stores), "store:<id>", "new-store". */
   to: string;
   label: string;
   /** Where they are now: a check, and it can't be picked. */
@@ -117,7 +117,7 @@ export interface MoveEntry {
 }
 
 /**
- * SpokPay · Creators · Stores › (every store, then New store…) · Personal. `places` = where the person is ("spokpay", "creators",
+ * SpokPay · Creators · Stores › (every store, then New store…) · Neobux · Personal. `places` = where the person is ("spokpay", "creators",
  * "store:<id>"); `from` = the place the menu was opened in ("" = All people: every place they're in counts as here).
  */
 export function moveEntries(o: { places: string[]; from: string; stores: { id: string; name: string }[] }): MoveEntry[] {
@@ -127,12 +127,13 @@ export function moveEntries(o: { places: string[]; from: string; stores: { id: s
     { to: "spokpay", label: "SpokPay", ...(here("spokpay") ? { here: true } : {}) },
     { to: "creators", label: "Creators", ...(here("creators") ? { here: true } : {}) },
     { to: "stores", label: "Stores", sub: [...stores, ...(stores.length ? [{ to: "", label: "", sep: true }] : []), { to: "new-store", label: "New store…" }] },
+    { to: "neobux", label: "Neobux", ...(here("neobux") ? { here: true } : {}) },
     { to: "personal", label: "Personal", ...(here("personal") ? { here: true } : {}) },
   ];
 }
 
 /** The place a sidebar row stands for: "store:<id>" in a store, its section's list, "" in All people. */
-export const placeOfRow = (section: string, store: string): string => (store ? `store:${store}` : section === "creators" || section === "spokpay" || section === "personal" ? section : "");
+export const placeOfRow = (section: string, store: string): string => (store ? `store:${store}` : ["creators", "spokpay", "neobux", "personal"].includes(section) ? section : "");
 
 /** Quote: the message's words as "> " lines, then an empty line, ahead of what the composer already holds. */
 export function quoteInto(draft: string, text: string): string {

@@ -223,7 +223,8 @@ final class PersonsHome {
         }
     }
 
-    static boolean isSection(String s) { return "stores".equals(s) || "creators".equals(s) || "spokpay".equals(s) || "personal".equals(s); }
+    static boolean isSection(String s) { return "stores".equals(s) || isList(s); }
+    static boolean isList(String s) { return java.util.Arrays.asList(PersonsUi.LISTS).contains(s); }
 
     /** Whether a connection serves a section: its own, or one it's shared with (Personal uses the Stores Discord and WhatsApp). */
     static boolean serves(JSONObject c, String section) {
@@ -525,7 +526,7 @@ final class PersonsHome {
         for (JSONObject l : linked) opts.add("Unlink " + PersonsUi.s(l, "name") + "…");
         int moveAt = opts.size();
         opts.add("Move to…");
-        String from = !store.isEmpty() ? "store:" + store : "creators".equals(section) || "spokpay".equals(section) || "personal".equals(section) ? section : "";
+        String from = !store.isEmpty() ? "store:" + store : isList(section) ? section : "";
         Ui.dialog(p.a).setTitle(name).setItems(opts.toArray(new String[0]), (d, w) -> {
             if (w == 0) rename(p, id, name);
             else if (w == moveAt) moveTo(p, person, from);
@@ -539,7 +540,7 @@ final class PersonsHome {
 
     // ---- Move to… (the desktop's MOVE TO: menus.ts moveEntries) ----
 
-    /** Where a person is: "store:<id>" for each store of theirs (owned too), "creators", "spokpay". */
+    /** Where a person is: "store:<id>" for each store of theirs (owned too), "creators", "spokpay", "neobux", "personal". */
     static List<String> placesOf(PersonsState p, JSONObject person) {
         List<String> out = new ArrayList<>();
         String id = PersonsUi.s(person, "id");
@@ -548,11 +549,11 @@ final class PersonsHome {
         if (p.st != null) for (JSONObject s : objs(PersonsUi.arr(p.st, "stores")))
             if (id.equals(PersonsUi.s(s, "ownerId")) && !out.contains("store:" + PersonsUi.s(s, "id"))) out.add("store:" + PersonsUi.s(s, "id"));
         JSONArray li = PersonsUi.arr(person, "listIds");
-        for (String s : new String[]{"creators", "spokpay", "personal"}) if (PersonsUi.has(li, s)) out.add(s);
+        for (String s : PersonsUi.LISTS) if (PersonsUi.has(li, s)) out.add(s);
         return out;
     }
 
-    /** SpokPay · Creators · Stores ›, the place they're in checked and greyed; `from` = the row's place ("" = everywhere). */
+    /** SpokPay · Creators · Stores › · Neobux · Personal, the place they're in checked and greyed; `from` = the row's place ("" = everywhere). */
     static void moveTo(PersonsState p, JSONObject person, String from) {
         String name = PersonsUi.s(person, "name");
         List<String> places = placesOf(p, person);
@@ -566,9 +567,11 @@ final class PersonsHome {
         int n = 0;
         for (String s : places) if (s.startsWith("store:")) n++;
         o.add(new Sheet.Option("stores", "Stores  ›", n == 0 ? "Pick a store, or a new one" : from.startsWith("store:") ? "In " + storeName(p, from.substring(6)) : "In " + n + (n == 1 ? " store" : " stores"), true));
-        boolean inPersonal = from.isEmpty() ? places.contains("personal") : from.equals("personal");
-        if (inPersonal) here = "personal";
-        o.add(new Sheet.Option("personal", "Personal", inPersonal ? "Here now" : "", !inPersonal));
+        for (String s : new String[]{"neobux", "personal"}) {
+            boolean in = from.isEmpty() ? places.contains(s) : from.equals(s);
+            if (in) here = s;
+            o.add(new Sheet.Option(s, PersonsUi.sectionLabel(s), in ? "Here now" : "", !in));
+        }
         Sheet.pick(p.a, "Move " + name + " to", "Their chats, notes, picture and AI chat come along. Nothing is sent.", o, here, to -> {
             if ("stores".equals(to)) moveToStore(p, person, from, places);
             else move(p, PersonsUi.s(person, "id"), name, from, to);
@@ -642,7 +645,7 @@ final class PersonsHome {
             if (id.equals(PersonsUi.s(s, "ownerId"))) inStore = true;
         if (inStore) out.add("stores");
         JSONArray li = PersonsUi.arr(person, "listIds");
-        for (String s : new String[]{"creators", "spokpay", "personal"}) if (PersonsUi.has(li, s)) out.add(s);
+        for (String s : PersonsUi.LISTS) if (PersonsUi.has(li, s)) out.add(s);
         return out;
     }
 
@@ -742,7 +745,7 @@ final class PersonsHome {
         JSONObject s = PersonsUi.put(new JSONObject(), "section", section);
         PersonsUi.put(s, "on", on);
         patch(p, id, PersonsUi.put(new JSONObject(), "settle", s), () ->
-                Ui.toast(p.a, (on ? "Settled in " : "Back in ") + PersonsUi.sectionLabel(section).toLowerCase(Locale.ROOT).replace("spokpay", "SpokPay")));
+                Ui.toast(p.a, (on ? "Settled in " : "Back in ") + PersonsUi.sectionLabel(section).toLowerCase(Locale.ROOT).replace("spokpay", "SpokPay").replace("neobux", "Neobux")));
     }
 
     /** PATCH /v1/persons/person/{id}; `then` on success; the state follows. */

@@ -20,7 +20,7 @@ export function writeAtomic(file: string, text: string): void {
 }
 
 const KINDS: ChannelKind[] = ["discord", "gmail", "whatsapp", "instagram"];
-const SECTIONS: SectionId[] = ["stores", "creators", "spokpay", "personal"];
+const SECTIONS: SectionId[] = ["stores", "creators", "spokpay", "neobux", "personal"];
 
 export function loadConnections(dir: string): ConnMeta[] {
   try {

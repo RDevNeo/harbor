@@ -106,10 +106,11 @@ describe("site request cards", () => {
 
 describe("moveEntries", () => {
   const stores = [{ id: "b", name: "Beta" }, { id: "a", name: "Alfa" }];
-  test("SpokPay, Creators, Stores › stores then New store…, Personal; the current place checked", () => {
+  test("SpokPay, Creators, Stores › stores then New store…, Neobux, Personal; the current place checked", () => {
     const m = moveEntries({ places: ["store:a"], from: "store:a", stores });
-    expect(m.map((e) => [e.to, !!e.here])).toEqual([["spokpay", false], ["creators", false], ["stores", false], ["personal", false]]);
-    expect(moveEntries({ places: ["personal"], from: "personal", stores: [] })[3]!.here).toBe(true);
+    expect(m.map((e) => [e.to, !!e.here])).toEqual([["spokpay", false], ["creators", false], ["stores", false], ["neobux", false], ["personal", false]]);
+    expect(moveEntries({ places: ["neobux"], from: "neobux", stores: [] })[3]!.here).toBe(true);
+    expect(moveEntries({ places: ["personal"], from: "personal", stores: [] })[4]!.here).toBe(true);
     expect(m[2]!.sub!.map((e) => (e.sep ? "-" : `${e.label}${e.here ? " ✓" : ""}`))).toEqual(["Alfa ✓", "Beta", "-", "New store…"]);
     expect(moveEntries({ places: ["spokpay"], from: "spokpay", stores: [] })[0]!.here).toBe(true);
     expect(moveEntries({ places: [], from: "", stores: [] })[2]!.sub!.map((e) => e.to)).toEqual(["new-store"]);
@@ -120,5 +121,6 @@ describe("moveEntries", () => {
     expect(m[2]!.sub!.find((e) => e.to === "store:b")!.here).toBe(true);
     expect(placeOfRow("stores", "b")).toBe("store:b");
     expect(placeOfRow("", "")).toBe("");
+    expect(placeOfRow("neobux", "")).toBe("neobux");
   });
 });

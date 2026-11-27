@@ -4,7 +4,7 @@
 /** data.json: version 7 (see data.ts normalizeData for the history). */
 export const DATA_VERSION = 7;
 
-export type SectionId = "stores" | "creators" | "spokpay" | "personal";
+export type SectionId = "stores" | "creators" | "spokpay" | "neobux" | "personal";
 export type ChannelKind = "discord" | "gmail" | "whatsapp" | "instagram";
 
 export interface Person {
