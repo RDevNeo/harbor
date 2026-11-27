@@ -24,6 +24,8 @@ export struct ClNav { id: string, label: string, count: int, on: bool }
 export struct ClTpl { id: string, name: string, description: string, on: bool }
 /** Where Send message can go: a Persons › Creators connection ("value": its id), the brand ("kind": email, whatsapp,
  *  discord, instagram) and its colour, "Email", who they are there, the account it goes from or why it can't. */
+/** A place in Persons Send can put them in (a store, Creators, SpokPay, Personal; "store": a store's). */
+export struct ClPlace { value: string, label: string, store: bool, on: bool }
 export struct ClDest { value: string, kind: string, color: color, label: string, to: string, via: string, on: bool, available: bool }
 /** The lists' Sort menu ("sep": a separator above it) and platform menu (brand colour, count on the list). */
 export struct ClSort { value: string, label: string, on: bool, sep: bool }
@@ -102,6 +104,9 @@ export global CollectorBus {
     in property <color> s-dest-color;
     in property <string> s-dest-label;
     in property <string> s-to-hint;
+    /** Where in Persons they go (Persons' places) and the one picked. */
+    in property <[ClPlace]> s-places;
+    in property <string> s-place-label;
     /** "From igor@spokpay.com · Creators Gmail", or why it can't send. */
     in property <string> s-from;
     in property <string> s-channel-why;
@@ -187,6 +192,7 @@ export global CollectorBus {
     callback send-close();
     callback pick-template(string);
     callback pick-channel(string);
+    callback pick-place(string);
     /** To, Subject or the message typed in: Send… follows. */
     callback to-edited(string);
     callback send-ask();
@@ -1186,9 +1192,11 @@ component SendDialog inherits DialogFrame {
     box-w: CollectorBus.s-confirm ? 448px : 760px;
     scrim-dismisses: false;
     property <bool> menu-open;
+    property <bool> place-open;
     dismiss => {
-        if root.menu-open {
+        if root.menu-open || root.place-open {
             root.menu-open = false;
+            root.place-open = false;
             return;
         }
         CollectorBus.send-close();
@@ -1304,6 +1312,7 @@ component SendDialog inherits DialogFrame {
                                 dta := TipArea {
                                     tip: root.menu-open ? "" : "Where it goes: their email, WhatsApp, Discord or Instagram, through Persons › Creators";
                                     clicked => {
+                                        root.place-open = false;
                                         root.menu-open = !root.menu-open;
                                     }
                                 }
@@ -1369,9 +1378,10 @@ component SendDialog inherits DialogFrame {
                     }
                 }
                 // The To menu, over the card under its button (a click elsewhere on the card closes it; so do Esc and ×).
-                if root.menu-open: TouchArea {
+                if root.menu-open || root.place-open: TouchArea {
                     clicked => {
                         root.menu-open = false;
+                        root.place-open = false;
                     }
                 }
                 if root.menu-open: PopoverFrame {
@@ -1390,6 +1400,78 @@ component SendDialog inherits DialogFrame {
                             pick => {
                                 root.menu-open = false;
                                 CollectorBus.pick-channel(d.value);
+                            }
+                        }
+                    }
+                }
+            }
+            // Where in Persons they go (a store, Creators, SpokPay, Personal): its connections are the ones in To.
+            Rectangle {
+                height: 30px;
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+                    Text {
+                        text: "Add to Persons ›";
+                        font-size: 13px;
+                        color: Theme.subtle;
+                        vertical-alignment: center;
+                    }
+                    place-btn := Rectangle {
+                        height: 30px;
+                        width: pl.preferred-width;
+                        border-radius: 15px;
+                        background: root.place-open || pta.has-hover ? Theme.gray-300 : Theme.gray-200;
+                        pl := HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 9px;
+                            spacing: 7px;
+                            Glyph {
+                                icon: Icons.users;
+                                size: 13px;
+                                color: Theme.fg.with-alpha(0.75);
+                            }
+                            Text {
+                                text: CollectorBus.s-place-label;
+                                font-size: 13px;
+                                font-weight: 500;
+                                color: Theme.fg;
+                                vertical-alignment: center;
+                            }
+                            Glyph {
+                                icon: Icons.down;
+                                size: 12px;
+                                color: Theme.fg.with-alpha(0.6);
+                            }
+                        }
+                        pta := TipArea {
+                            tip: root.place-open ? "" : "Where they go in Persons when it's sent (the To channels are that place's)";
+                            clicked => {
+                                root.menu-open = false;
+                                root.place-open = !root.place-open;
+                            }
+                        }
+                    }
+                }
+                // its menu opens upward, over the card
+                if root.place-open: PopoverFrame {
+                    x: 120px;
+                    y: -self.height - 4px;
+                    width: 260px;
+                    height: pmenu.preferred-height;
+                    pmenu := VerticalLayout {
+                        padding: 4px;
+                        spacing: 1px;
+                        MenuLabel {
+                            text: "Add them to";
+                        }
+                        for p in CollectorBus.s-places: MenuItem {
+                            label: p.label;
+                            checked: p.on;
+                            icon: p.store ? Icons.tag : Icons.users;
+                            clicked => {
+                                root.place-open = false;
+                                CollectorBus.pick-place(p.value);
                             }
                         }
                     }

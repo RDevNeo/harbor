@@ -72,7 +72,11 @@ export interface Compose {
   name: string;
   templates: { id: string; name: string; description: string; builtin: boolean }[];
   template: string;
-  channels: { id: string; kind: string; label: string; account: string | null; connected: boolean; to: string; why: string }[];
+  channels: { id: string; kind: string; label: string; account: string | null; connected: boolean; to: string; why: string; conn?: string }[];
+  /** Where in Persons they go: Persons' places ("store:<id>", "creators"…) and the one picked. */
+  places?: { value: string; label: string; section: string }[];
+  place?: string;
+  placeLabel?: string;
   channel: string;
   kind: string;
   to: string;
@@ -163,7 +167,7 @@ export const DEST_META: Record<string, { glyph: string; color: string; app: stri
 export function destRows(c: Compose): { value: string; kind: string; color: string; label: string; to: string; via: string; on: boolean; available: boolean }[] {
   return c.channels.map((x) => {
     const m = DEST_META[x.kind] ?? DEST_META.gmail!;
-    const from = `Creators ${m.app}${x.account ? ` · ${x.account}` : ""}`;
+    const from = `${x.conn ?? `Creators ${m.app}`}${x.account ? ` · ${x.account}` : ""}`;
     return { value: x.id, kind: m.glyph, color: m.color, label: x.label, to: x.to, via: x.connected ? (x.to ? from : `${from} · none yet: type it in To`) : x.why, on: x.id === c.channel, available: x.connected };
   });
 }
@@ -450,7 +454,13 @@ export function createCollectorUi(): TabUi {
     // the account it goes from; a channel that can't send says why (an empty To only until something is typed)
     const why = !ch ? "Persons › Creators has no Gmail, WhatsApp, Discord or Instagram: add one there (Creators › Connections)." : !ch.connected ? ch.why : "";
     set("s_channel_why", why);
-    set("s_from", why || `From ${ch?.account ? `${ch.account} · ` : ""}Creators ${meta.app}`);
+    set("s_from", why || `From ${ch?.account ? `${ch.account} · ` : ""}${ch?.conn ?? `Creators ${meta.app}`}`);
+    const placeSig = JSON.stringify([c.places, c.place]);
+    if (sigs.s_places !== placeSig) {
+      set("s_places", new slint.ArrayModel((c.places ?? []).map((x) => ({ value: x.value, label: x.label, store: x.section === "stores", on: x.value === c.place }))));
+      sigs.s_places = placeSig;
+    }
+    set("s_place_label", c.placeLabel ?? "Creators");
     set("s_is_email", kind === "gmail");
     const g = c.guard;
     // The daily limit shows only once it's reached (the user doesn't want the running count).
@@ -461,7 +471,7 @@ export function createCollectorUi(): TabUi {
     set("s_confirm", sendConfirm);
     const isEmail = kind === "gmail";
     const what = isEmail ? "email" : `${meta.app} message`;
-    set("s_confirm_text", `A real ${what} goes to ${bus.s_to.trim()}${ch?.account ? ` from ${ch.account}` : ""}. ${c.name} becomes a person in Persons › Creators, and the message shows in that chat.`);
+    set("s_confirm_text", `A real ${what} goes to ${bus.s_to.trim()}${ch?.account ? ` from ${ch.account}` : ""}. ${c.name} becomes a person in Persons › ${c.placeLabel ?? "Creators"}, and the message shows in that chat.`);
     set("s_can_send", !!ch?.connected && bus.s_to.trim() !== "" && bus.s_text.trim() !== "" && (!isEmail || bus.s_subject.trim() !== ""));
     set("s_saved", saved);
   }
@@ -712,13 +722,13 @@ export function createCollectorUi(): TabUi {
     }
   }
 
-  const openCompose = async (template = "", channel = "", kind = "", to = "", remember = false): Promise<void> => {
+  const openCompose = async (template = "", channel = "", kind = "", to = "", remember = false, place = ""): Promise<void> => {
     if (!sendId || !bus) return;
     try {
-      const c = (await call("GET", `v1/collector/compose?id=${encodeURIComponent(sendId)}&template=${encodeURIComponent(template)}&channel=${encodeURIComponent(channel)}&kind=${encodeURIComponent(kind)}${remember ? "&remember=1" : ""}`)) as Compose;
+      const c = (await call("GET", `v1/collector/compose?id=${encodeURIComponent(sendId)}&template=${encodeURIComponent(template)}&channel=${encodeURIComponent(channel)}&kind=${encodeURIComponent(kind)}&place=${encodeURIComponent(place || compose?.place || "")}${remember ? "&remember=1" : ""}`)) as Compose;
       const keepTo = compose && compose.id === c.id && compose.channel === c.channel ? bus.s_to : null;
       // another destination keeps what was written (the same template); another template fills it again
-      const keep = !!compose && compose.id === c.id && compose.template === c.template && compose.channel !== c.channel;
+      const keep = !!compose && compose.id === c.id && compose.template === c.template && (compose.channel !== c.channel || compose.place !== c.place);
       const keepSubject = keep && bus.s_subject.trim() ? bus.s_subject : null;
       const keepText = keep ? bus.s_text : null;
       compose = c;
@@ -839,6 +849,11 @@ export function createCollectorUi(): TabUi {
     // what the user picks is remembered (the next composer opens on that template and channel)
     on("pick_template", (id: string) => void openCompose(id, compose?.channel ?? "", "", "", true));
     on("pick_channel", (id: string) => void openCompose(compose?.template ?? "", id, "", "", true));
+    // another place in Persons: its connections (the same kind of channel when it has one), what's written stays
+    on("pick_place", (v: string) => {
+      const cur = compose?.channels.find((x) => x.id === compose?.channel);
+      void openCompose(compose?.template ?? "", "", cur?.kind === "gmail" ? "email" : (cur?.kind ?? ""), cur ? b.s_to : "", true, v);
+    });
     on("send_ask", () => {
       sendError = "";
       sendConfirm = true;
@@ -854,11 +869,11 @@ export function createCollectorUi(): TabUi {
       sendBusy = true;
       sendError = "";
       render();
-      void call("POST", "v1/collector/send", { id: c.id, channel: c.channel, to: b.s_to.trim(), subject: b.s_subject.trim(), text: b.s_text, template: c.template })
+      void call("POST", "v1/collector/send", { id: c.id, channel: c.channel, to: b.s_to.trim(), subject: b.s_subject.trim(), text: b.s_text, template: c.template, place: c.place ?? "creators" })
         .then(() => {
           sendOpen = false;
           sendConfirm = false;
-          ctx?.toast(`Sent to ${c.name}. They're in Persons › Creators.`);
+          ctx?.toast(`Sent to ${c.name}. They're in Persons › ${c.placeLabel ?? "Creators"}.`);
           void load();
           if (detailOpen && detail?.id === c.id) void call("GET", `v1/collector/creator?id=${encodeURIComponent(c.id)}`).then((d) => takeDetail(d as DetailView, false), () => {});
         })

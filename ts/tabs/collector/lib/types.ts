@@ -27,8 +27,11 @@ export interface Contacted {
   /** "gmail", "whatsapp", "discord", "instagram". */
   via: string;
   to: string;
-  /** The person it made in Persons › Creators. */
+  /** The person it made (or joined) in Persons. */
   person: string | null;
+  /** Where in Persons: "creators" (also when absent), "spokpay", "personal" or "store:<id>"; and its name then. */
+  place?: string;
+  placeLabel?: string;
 }
 
 export interface CreatorRecord {
@@ -116,6 +119,8 @@ export interface Settings {
   /** …and on the channel picked last (a Persons › Creators connection id: its kind and its account), when the lead
    *  has someone there. */
   lastChannel?: string;
+  /** …and in the Persons place picked last ("creators", "store:<id>"…): where Send puts them. */
+  lastPlace?: string;
   /** The review bar's "Approve to", the last one picked. */
   approveTo: ApproveTo;
   /** The lists' Sort: followers high → low (the default) or low → high. */
@@ -219,6 +224,7 @@ export function migrate(raw: unknown): CollectorData {
     target: t === undefined ? d.settings.target : normalizeTarget(t),
     lastTemplate: typeof s.lastTemplate === "string" ? s.lastTemplate : "",
     ...(typeof s.lastChannel === "string" && s.lastChannel ? { lastChannel: s.lastChannel } : {}),
+    ...(typeof s.lastPlace === "string" && s.lastPlace ? { lastPlace: s.lastPlace } : {}),
     approveTo: APPROVE_TO.includes(s.approveTo as ApproveTo) ? (s.approveTo as ApproveTo) : "list",
     sort: SORT_MODES.includes(s.sort as SortMode) ? (s.sort as SortMode) : "followers-desc",
     platforms: normalizePlatforms(s.platforms),

@@ -109,9 +109,10 @@ Example, "dress to impress", Last upload 30 days (Nov 2026): YouTube @callmehhal
 
 ## What every lead gets
 
-- **Never twice**: each lead's keys (`<platform>:<id>`, `<platform>:@handle`, the profiles their links point at on the
+- **Never twice** (also: everyone in Persons › Creators and in every other Persons place Collector has sent a lead to,
+  `contacted.place`): each lead's keys (`<platform>:<id>`, `<platform>:@handle`, the profiles their links point at on the
   other platforms, their email) go into a ledger (`seen` in state.json) that Restrict and Remove keep. A run skips anyone
-  in it, and anyone already in Persons › Creators (their emails and profile links). A creator found on a second
+  in it, and anyone already in Persons › Creators or in a place Collector sent to (their emails and profile links). A creator found on a second
   platform whose links point at one already collected is linked to them instead of kept twice.
 - **Links** (`lib/links.ts`, `lib/enrich.ts`): every URL of the bio and the platform's own link list, then every
   link-in-bio page they use (Linktree's JSON; any other page's outbound links). Kept in the record (and the export),
@@ -129,13 +130,20 @@ Example, "dress to impress", Last upload 30 days (Nov 2026): YouTube @callmehhal
   Discord, Instagram, each with who they are there — their email, number, the Reach's Discord ID or Instagram handle —
   and the account it goes from, or why it can't: not signed in, or "Persons › Creators has no Discord: add one there")
   and the address beside it (editable), then the Subject (email only), the message, and "From igor@… · Creators Gmail"
-  with Send… at the bottom; a second step asks "Send it?" (Back / Send now). Another destination keeps what was
+  with Send… at the bottom; under the card **Add to Persons ›** and a menu of Persons' places, read from Persons' data
+  as its sidebar has them (each store, e.g. Robux Paradise, then Creators, SpokPay, Personal; the phone: chips under
+  the message). The place decides the To channels: Persons ties connections to sections (Stores Gmail, Creators
+  Gmail…; Personal also talks through the Stores Discord and WhatsApp), so To lists that place's section's connections
+  and "From …" names it ("From lojas@… · Stores Gmail"); another place keeps the kind of channel, To and the text. A
+  second step asks "Send it?" (Back / Send now). Another destination keeps what was
   written; another template fills it again. It **remembers** the template and the channel (the connection, so its
   account too) picked last, in state.json's settings (`lastTemplate`, `lastChannel`: the PC and the phone share them;
   `compose?…&remember=1` when the user picked, and every send): it opens on that template (while it exists) and that
-  channel when the lead has a valid address there. A Reach icon clicked in the detail (or the card's Reach icon) wins:
+  channel when the lead has a valid address there (another place's connection: the same kind there), and the Persons
+  place picked last (`lastPlace`; Creators when it's gone or never picked). A Reach icon clicked in the detail (or the card's Reach icon) wins:
   its channel, To filled with its value. Otherwise the saved Reach's channel, else the first that can send to someone. Sends go through Persons (`persons-bridge.ts`): the lead becomes
-  (or joins) a person in Persons › Creators with that identifier (email, WhatsApp number, Discord ID, Instagram id: an
+  (or joins) a person in the place picked (a store's people, or the Creators / SpokPay / Personal list, made when
+  missing) with that identifier (email, WhatsApp number, Discord ID, Instagram id: an
   Instagram lead's own id, else the handle looked up through Persons' Instagram) and the message is in that chat; a
   Discord ID or Instagram handle sent to becomes their Reach when they have none. The CRM's guards: 30 new emails a
   rolling 24 h (shown only once reached), no second send to the same person within 2 minutes.

@@ -30,11 +30,12 @@
 //   GET  v1/collector/avatar?id=      a cached picture or thumbnail (the phone)
 //   GET  v1/collector/templates       the Send menu's templates; POST template {id?, name, description, subject, body};
 //                                     POST template-delete {id} (a built-in one is reset)
-//   GET  v1/collector/compose?id=&template=&channel=&kind=&remember=1   the message for that lead (remember=1: the
+//   GET  v1/collector/compose?id=&template=&channel=&kind=&place=&remember=1   the message for that lead (remember=1: the
 //                                     template / channel was picked by the user, the next composer opens on it): channels (every Persons ›
 //                                     Creators connection: Gmail, WhatsApp, Discord, Instagram, with who they are
 //                                     there), to, subject (email), text, guard
-//   POST v1/collector/send            {id, channel, to, subject, text}: a real send (only on the user's click)
+//   POST v1/collector/send            {id, channel, to, subject, text, place}: a real send (only on the user's click);
+//                                     place: where in Persons they go (compose's `places`, "creators" when absent)
 //   POST v1/collector/session         {platform: "instagram", cookie}; POST session-clear {platform}
 //   GET  v1/collector/unread          {rev, unread}: finished runs not looked at yet (the tab's count, as Persons'
 //                                     v1/persons/unread); POST v1/collector/seen clears it (the tab was opened)
@@ -63,7 +64,8 @@ import { TikTok, TT_NOTE } from "./lib/tiktok.ts";
 import { APPROVE_TO, normalizePlatforms, SORT_MODES, type SortMode, defaultData, exportText, GAP_CHOICES, listOf, type ApproveTo, migrate, normalizeTarget, PLATFORM_LABEL, PLATFORMS, type CollectorData, type CreatorPlatform, type CreatorRecord, type LogLine, type RecentVideo } from "./lib/types.ts";
 import { YouTube } from "./lib/youtube.ts";
 import { keepRun, runRecord, type RunOutcome } from "./lib/history.ts";
-import { fakePersons, livePersons, SEND_APP, SEND_KINDS, SEND_LABEL, type PersonsBridge, type SendKind } from "./persons-bridge.ts";
+import { SECTION_LABEL } from "../../packages/persons/src/model/accounts.ts";
+import { DEFAULT_PLACE, fakePersons, livePersons, SEND_APP, SEND_KINDS, SEND_LABEL, type PersonsBridge, type SendKind } from "./persons-bridge.ts";
 
 /** Send message: why a channel has nobody to write to yet, and what Send asks for when To is empty. */
 const NO_TO: Record<SendKind, string> = {
@@ -124,7 +126,7 @@ export class Collector {
   private readonly have = new Set<string>();
   /** Every key ever collected (data.seen, plus the current records' own). */
   private seen = new Set<string>();
-  /** People in Persons › Creators, as keys (read when a run starts). */
+  /** People in Persons › Creators (and the other places Collector sent to), as keys (read when a run starts). */
   private personsKeys = new Set<string>();
   private yt: CollectorDeps["youtube"] | null = null;
   private tt: SocialClient | null = null;
@@ -523,7 +525,9 @@ export class Collector {
     const sleep = async (ms: number): Promise<void> => {
       for (let left = ms; left > 0 && !this.stopFlag; left -= 200) await (this.o.sleep ?? Bun.sleep)(Math.min(200, left));
     };
-    this.personsKeys = new Set(this.o.persons.creatorKeys());
+    // everyone in Persons › Creators, and in every other place Collector has sent leads to
+    const sentPlaces = [...new Set(this.data.creators.map((c) => c.contacted?.place ?? "").filter((x) => x && x !== DEFAULT_PLACE))];
+    this.personsKeys = new Set(this.o.persons.creatorKeys(sentPlaces));
     const before = this.data.creators.length;
     this.runBefore = before;
     const common = {
@@ -873,9 +877,13 @@ export class Collector {
   }
 
   /** The message for a creator: the channels it can go on (and to whom), the template filled, the CRM's guards. */
-  compose(id: string, templateId: string, channelId: string, kind = "", remember = false): unknown | null {
+  compose(id: string, templateId: string, channelId: string, kind = "", remember = false, placeWord = ""): unknown | null {
     const c = this.find(id);
     if (!c) return null;
+    // where in Persons they go: the place asked for, else the one picked last, else Creators
+    const places = this.o.persons.places();
+    const place = places.find((x) => x.value === placeWord) ?? places.find((x) => x.value === this.data.settings.lastPlace) ?? places.find((x) => x.value === DEFAULT_PLACE) ?? places[0] ?? { value: DEFAULT_PLACE, label: "Creators", section: "creators" as const };
+    const sectionName = SECTION_LABEL[place.section];
     // a template or channel the user picked in the composer is where the next one opens (kept in state.json: PC and phone)
     if (remember) {
       let moved = false;
@@ -883,8 +891,12 @@ export class Collector {
         this.data.settings.lastTemplate = templateId;
         moved = true;
       }
-      if (channelId && this.o.persons.channels().some((x) => x.id === channelId) && this.data.settings.lastChannel !== channelId) {
+      if (channelId && this.o.persons.channels(place.section).some((x) => x.id === channelId) && this.data.settings.lastChannel !== channelId) {
         this.data.settings.lastChannel = channelId;
+        moved = true;
+      }
+      if (placeWord && place.value === placeWord && this.data.settings.lastPlace !== placeWord) {
+        this.data.settings.lastPlace = placeWord;
         moved = true;
       }
       if (moved) this.save();
@@ -895,7 +907,7 @@ export class Collector {
     // connection for is still listed, with why it can't send.
     const drafts = reachDrafts(c);
     const toOf = (k: SendKind): string => (k === "gmail" ? (c.email ?? "") : k === "whatsapp" ? (c.whatsapp ?? "") : k === "discord" ? drafts.discord : drafts.instagram);
-    const live = this.o.persons.channels();
+    const live = this.o.persons.channels(place.section);
     const chans = [
       ...live,
       ...SEND_KINDS.filter((k) => !live.some((x) => x.kind === k)).map((k) => ({ id: `none-${k}`, kind: k, label: SEND_LABEL[k], account: null, connected: false, missing: true })),
@@ -905,13 +917,13 @@ export class Collector {
         const to = toOf(ch.kind);
         const why =
           "missing" in ch
-            ? `Persons › Creators has no ${SEND_APP[ch.kind]}: add one there (Creators › Connections).`
+            ? `Persons › ${sectionName} has no ${SEND_APP[ch.kind]}: add one there (${sectionName} › Connections).`
             : !ch.connected
-              ? `The Creators ${SEND_APP[ch.kind]} isn't signed in (Persons › Creators).`
+              ? `The ${"conn" in ch && ch.conn ? ch.conn : `${sectionName} ${SEND_APP[ch.kind]}`} isn't signed in (Persons › ${sectionName}).`
               : !to
                 ? NO_TO[ch.kind]
                 : "";
-        return { id: ch.id, kind: ch.kind, label: ch.label, account: ch.account, connected: ch.connected, to, why };
+        return { id: ch.id, kind: ch.kind, label: ch.label, account: ch.account, connected: ch.connected, to, why, conn: ("conn" in ch && ch.conn) || `${sectionName} ${SEND_APP[ch.kind]}` };
       });
     const want: SendKind | "" = kind === "email" || kind === "gmail" ? "gmail" : (SEND_KINDS as readonly string[]).includes(kind) ? (kind as SendKind) : "";
     const reachKind: SendKind | "" = c.reach ? (c.reach.kind === "email" ? "gmail" : c.reach.kind) : "";
@@ -919,7 +931,9 @@ export class Collector {
     // the channel picked last, when it can send and the lead has someone valid there (an email, a number…)
     const lastCh = this.data.settings.lastChannel;
     const valid = (x: (typeof chans)[number]): boolean => x.connected && !!x.to && !reachError(x.kind === "gmail" ? "email" : x.kind, x.to);
-    const last = lastCh ? (chans.find((x) => x.id === lastCh && valid(x)) ?? chans.find((x) => x.kind === chans.find((y) => y.id === lastCh)?.kind && valid(x))) : undefined;
+    // that connection, else (another place's connections) one of the same kind here
+    const lastKind = lastCh ? this.o.persons.channels().find((y) => y.id === lastCh)?.kind : undefined;
+    const last = lastCh ? (chans.find((x) => x.id === lastCh && valid(x)) ?? (lastKind ? chans.find((x) => x.kind === lastKind && valid(x)) : undefined)) : undefined;
     const pick = chans.find((x) => x.id === channelId) ?? byKind(want) ?? last ?? (reachKind ? chans.find((x) => x.kind === reachKind && x.connected && x.to) : undefined) ?? chans.find((x) => x.connected && x.to) ?? chans.find((x) => x.connected) ?? chans[0] ?? null;
     const who = { name: c.name, handle: (c.handle ?? "").replace(/^@/, "") };
     return {
@@ -928,6 +942,9 @@ export class Collector {
       templates: this.templates.map((x) => ({ id: x.id, name: x.name, description: x.description, builtin: !!x.builtin })),
       template: t.id,
       channels: chans,
+      places: places.map((x) => ({ value: x.value, label: x.label, section: x.section })),
+      place: place.value,
+      placeLabel: place.label,
       channel: pick?.id ?? "",
       kind: pick?.kind ?? "gmail",
       to: pick?.to ?? "",
@@ -943,10 +960,15 @@ export class Collector {
     const c = this.find(String(b.id ?? ""));
     if (!c) return { ok: false, error: "No such creator." };
     const channel = String(b.channel ?? "");
-    const ch = this.o.persons.channels().find((x) => x.id === channel);
+    const places = this.o.persons.places();
+    const placeWord = typeof b.place === "string" && b.place ? b.place : DEFAULT_PLACE;
+    const place = places.find((x) => x.value === placeWord);
+    if (!place) return { ok: false, error: "That place isn't in Persons any more: pick where they go." };
+    const sectionName = SECTION_LABEL[place.section];
+    const ch = this.o.persons.channels(place.section).find((x) => x.id === channel);
     if (!ch) {
       const k = channel.replace(/^none-/, "");
-      return { ok: false, error: (SEND_KINDS as readonly string[]).includes(k) ? `Persons › Creators has no ${SEND_APP[k as SendKind]}: add one there (Creators › Connections).` : "Pick where it goes." };
+      return { ok: false, error: (SEND_KINDS as readonly string[]).includes(k) ? `Persons › ${sectionName} has no ${SEND_APP[k as SendKind]}: add one there (${sectionName} › Connections).` : "Pick where it goes." };
     }
     const to = String(b.to ?? "").trim();
     const text = String(b.text ?? "").trim();
@@ -959,11 +981,11 @@ export class Collector {
     const g = this.o.persons.guard(ch.id, to);
     if (g.justSent) return { ok: false, error: "Just sent to them: wait a couple of minutes before another." };
     if (g.limit && g.sentToday >= g.limit) return { ok: false, error: `${g.limit} new emails in the last 24 h already (Gmail flags bursts of cold mail). Try again later.` };
-    const r = await this.o.persons.send({ rec: c, channel: ch.id, to, subject, text });
+    const r = await this.o.persons.send({ rec: c, channel: ch.id, to, subject, text, place: place.value });
     if (!r.ok) return { ok: false, error: r.error ?? "Not sent." };
     const cur = this.find(String(b.id));
     if (cur) {
-      cur.contacted = { at: new Date().toISOString(), via: ch.kind, to, person: r.person ?? null };
+      cur.contacted = { at: new Date().toISOString(), via: ch.kind, to, person: r.person ?? null, place: place.value, placeLabel: place.label };
       if (ch.kind === "gmail" && !cur.email) {
         cur.email = to.toLowerCase();
         cur.email_source = "typed";
@@ -978,7 +1000,8 @@ export class Collector {
     }
     if (typeof b.template === "string" && b.template) this.data.settings.lastTemplate = b.template;
     this.data.settings.lastChannel = ch.id;
-    this.logLine(`SENT ${ch.kind === "gmail" ? "email" : SEND_APP[ch.kind]} to ${c.name} (${to}); they're in Persons › Creators.`, "ok");
+    this.data.settings.lastPlace = place.value;
+    this.logLine(`SENT ${ch.kind === "gmail" ? "email" : SEND_APP[ch.kind]} to ${c.name} (${to}); they're in Persons › ${place.label}.`, "ok");
     return { ok: true, ...(r.person ? { person: r.person } : {}) };
   }
 
@@ -1144,7 +1167,7 @@ export async function collectorRoute(c: Collector, call: Call): Promise<Reply | 
       c.deleteTemplate(String(bodyOf(call).id ?? ""));
       return ok({ templates: c.templates } as never);
     case "GET compose": {
-      const d = c.compose(queryOf(call, "id"), queryOf(call, "template"), queryOf(call, "channel"), queryOf(call, "kind"), queryOf(call, "remember") === "1");
+      const d = c.compose(queryOf(call, "id"), queryOf(call, "template"), queryOf(call, "channel"), queryOf(call, "kind"), queryOf(call, "remember") === "1", queryOf(call, "place"));
       return d ? ok(d as never) : err(404, "No such creator");
     }
     case "POST send": {

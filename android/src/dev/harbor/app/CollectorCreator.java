@@ -54,7 +54,8 @@ final class CollectorCreator {
      *  WhatsApp, Discord, Instagram, each with who they are there; one that can't send says why) and the address, the
      *  Subject (email), the message, the template it starts from, the CRM's guards (30 new emails a day, already
      *  written to). Send asks first, then POST /v1/collector/send: a real send, only on that tap. The creator then
-     *  is a person in Persons › Creators. */
+     *  is a person in the Persons place picked under the message (a store, Creators, SpokPay, Personal; the one
+     *  picked last, else Creators), whose connections are To's. */
     static final class Compose implements Collector.Screen {
         private final Collector a;
         private final Hub h;
@@ -65,6 +66,8 @@ final class CollectorCreator {
         private boolean sending;
         /** "email", "whatsapp", "discord" or "instagram": the channel it opens on (the Reach picked), else the usual pick. */
         private final String kind;
+        /** A place switch: the channel kind it was on (its connections differ), and To as typed. */
+        private String switchKind = "", switchTo = "";
         /** What the Reach field held for that kind: To starts with it. */
         private String typedTo;
 
@@ -103,17 +106,28 @@ final class CollectorCreator {
             return "whatsapp".equals(k) ? "WhatsApp" : "discord".equals(k) ? "Discord" : "instagram".equals(k) ? "Instagram" : "Email";
         }
 
-        private void load(String template, String channel, boolean keep) { load(template, channel, keep, false); }
+        private void load(String template, String channel, boolean keep) { load(template, channel, keep, false, ""); }
+
+        private void load(String template, String channel, boolean keep, boolean remember) { load(template, channel, keep, remember, ""); }
+
+        private String place() { return c == null ? "" : c.optString("place", ""); }
+        private String placeLabel() { return c == null ? "Creators" : c.optString("placeLabel", "Creators"); }
 
         /** GET compose: the message for this template and channel; keep = the typed message stays (a channel switch);
          *  remember = the user picked it, so the next composer (PC or phone) opens on that template and channel. */
-        private void load(String template, String channel, boolean keep, boolean remember) {
+        /** place: where in Persons they go ("" the one picked last, else Creators); its connections are To's. */
+        private void load(String template, String channel, boolean keep, boolean remember, String place) {
             if (h == null) return;
+            final String pl = place.isEmpty() ? place() : place;
+            final String want = !switchKind.isEmpty() ? switchKind : kind;
             final String keepText = keep && text != null ? text.getText().toString() : null;
             final String keepSubject = keep && subject != null ? subject.getText().toString() : null;
-            Ui.bg(a, () -> h.get("/v1/collector/compose?id=" + Collector.q(id) + "&template=" + Collector.q(template) + "&channel=" + Collector.q(channel) + (channel.isEmpty() ? "&kind=" + Collector.q(kind) : "") + (remember ? "&remember=1" : "")), r -> {
+            Ui.bg(a, () -> h.get("/v1/collector/compose?id=" + Collector.q(id) + "&template=" + Collector.q(template) + "&channel=" + Collector.q(channel) + (channel.isEmpty() ? "&kind=" + Collector.q(want) : "") + "&place=" + Collector.q(pl) + (remember ? "&remember=1" : "")), r -> {
                 c = r;
                 draw();
+                if (!switchTo.isEmpty() && to != null && sendKind().equals(switchKind)) to.setText(switchTo);
+                switchKind = "";
+                switchTo = "";
                 // the Reach field's value goes into To once, when the composer opens on its channel
                 String k = sendKind();
                 if (!typedTo.isEmpty() && to != null && (k.equals(kind) || ("email".equals(kind) && "gmail".equals(k)))) to.setText(typedTo);
@@ -127,7 +141,7 @@ final class CollectorCreator {
             body.removeAllViews();
             to = subject = text = null;
             if (c == null) return;
-            // To: where it goes (every Persons › Creators channel; one that can't send says why) and the address.
+            // To: where it goes (every channel of the Persons place picked below; one that can't send says why) and the address.
             body.addView(head("TO"), Ui.fill());
             HorizontalScrollView hs = new HorizontalScrollView(a);
             hs.setHorizontalScrollBarEnabled(false);
@@ -148,12 +162,12 @@ final class CollectorCreator {
             hs.addView(chips);
             body.addView(hs, Ui.fill());
             if (chs == null || chs.length() == 0)
-                body.addView(Collector.pad(Ui.text(a, "Nothing to send on: connect Gmail, WhatsApp, Discord or Instagram in Persons › Creators.", 12.5f, Ui.AMBER), 2), Ui.fill());
+                body.addView(Collector.pad(Ui.text(a, "Nothing to send on: connect Gmail, WhatsApp, Discord or Instagram in Persons › " + placeLabel() + ".", 12.5f, Ui.AMBER), 2), Ui.fill());
             if (picked != null) {
                 String acc = picked.optString("account", "");
                 boolean ok = picked.optBoolean("connected");
                 String app = "gmail".equals(picked.optString("kind")) ? "Gmail" : kindLabel(picked.optString("kind"));
-                if (ok) body.addView(Collector.pad(Ui.text(a, "From " + (!acc.isEmpty() && !"null".equals(acc) ? acc + " · " : "") + "Creators " + app, 12.5f, Ui.G700), 6), Ui.fill());
+                if (ok) body.addView(Collector.pad(Ui.text(a, "From " + (!acc.isEmpty() && !"null".equals(acc) ? acc + " · " : "") + picked.optString("conn", "Creators " + app), 12.5f, Ui.G700), 6), Ui.fill());
                 if (!picked.optString("why").isEmpty())
                     body.addView(Collector.pad(Ui.text(a, picked.optString("why"), 12.5f, ok ? Ui.G600 : Ui.AMBER), 2), Ui.fill());
             }
@@ -213,6 +227,26 @@ final class CollectorCreator {
                     body.addView(Collector.pad(Ui.text(a, "Just sent to them: wait a couple of minutes before another.", 12.5f, Ui.RED), 2), Ui.fill());
                 }
             }
+            // Where in Persons they go (a store, Creators, SpokPay, Personal): To's channels are that place's.
+            body.addView(head("ADD TO PERSONS"), Ui.fill());
+            HorizontalScrollView ps = new HorizontalScrollView(a);
+            ps.setHorizontalScrollBarEnabled(false);
+            LinearLayout pchips = Ui.row(a);
+            JSONArray pls = c.optJSONArray("places");
+            for (int i = 0; pls != null && i < pls.length(); i++) {
+                JSONObject p = pls.optJSONObject(i);
+                if (p == null) continue;
+                final String pv = p.optString("value");
+                boolean on = pv.equals(place());
+                pchips.addView(Ds.chip(a, p.optString("label"), on, on ? null : v -> {
+                    // the same kind of channel there when it has one, and what's written stays
+                    switchKind = sendKind();
+                    switchTo = to == null ? "" : to.getText().toString();
+                    load(template(), "", true, true, pv);
+                }), Ui.margins(Ui.wrap(), 0, 0, 6, 0));
+            }
+            ps.addView(pchips);
+            body.addView(ps, Ui.fill());
             // Edit template, Send.
             LinearLayout btns = Ui.row(a);
             btns.addView(Ui.button(a, "Edit template", false, v -> editTemplate()), Ui.wrap());
@@ -262,14 +296,14 @@ final class CollectorCreator {
             restore(keepTo, keepSubject, keepText);
             JSONObject b = new JSONObject();
             try {
-                b.put("id", id).put("channel", channel()).put("to", dest).put("subject", subj).put("text", msg).put("template", template());
+                b.put("id", id).put("channel", channel()).put("to", dest).put("subject", subj).put("text", msg).put("template", template()).put("place", place().isEmpty() ? "creators" : place());
             } catch (Exception ignored) { }
             Ui.pool.execute(() -> {
                 try {
                     h.call("POST", "/v1/collector/send", b, 90_000);
                     Ui.main.post(() -> {
                         sending = false;
-                        Ui.toast(a, "Sent. They're in Persons › Creators.");
+                        Ui.toast(a, "Sent. They're in Persons › " + placeLabel() + ".");
                         if (!a.isDestroyed()) a.pop();
                     });
                 } catch (Exception e) {

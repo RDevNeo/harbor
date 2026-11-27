@@ -514,6 +514,37 @@ describe("collector", () => {
     const again = new Collector(dir, deps({ persons }));
     expect(again.data.settings).toMatchObject({ lastTemplate: "loja-parceira", lastChannel: "creators-whatsapp" });
   });
+  it("Send message picks where in Persons they go (its places); the channels follow that place's section; remembered", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "collector-"));
+    const sent: SendInput[] = [];
+    let keysAsked: string[] | undefined;
+    const base = fakePersons({ sent });
+    const persons = { ...base, creatorKeys: (places?: string[]) => ((keysAsked = places), []) };
+    const c = new Collector(dir, deps({ persons }));
+    c.data.creators.push(rec({ platform: "youtube", platform_id: "UC1", name: "Ana", email: "ana@x.com" }));
+    const call = caller(c);
+    type M = { place: string; placeLabel: string; places: { value: string; label: string }[]; channel: string; channels: { id: string; conn: string; why: string }[] };
+    const open = async (q: [string, string][] = []): Promise<M> => (await call("GET", "compose", null, [["id", "youtube:UC1"], ...q]))!.body as M;
+    const m = await open();
+    expect([m.place, m.places.map((x) => x.label), m.channel]).toEqual(["creators", ["Robux Paradise", "Creators", "SpokPay", "Personal"], "creators-gmail"]);
+    expect(m.channels[0]!.conn).toBe("Creators Gmail");
+    const st = await open([["place", "store:robux"], ["remember", "1"]]);
+    expect([st.place, st.placeLabel, st.channel, st.channels.map((x) => x.id)]).toEqual(["store:robux", "Robux Paradise", "stores-gmail", ["stores-gmail", "stores-whatsapp", "stores-discord", "none-instagram"]]);
+    expect(st.channels[3]!.why).toContain("Persons › Stores has no Instagram");
+    expect(c.data.settings.lastPlace).toBe("store:robux");
+    expect((await open()).place).toBe("store:robux");
+    // a channel of another place's section doesn't send for this one
+    expect((await call("POST", "send", { id: "youtube:UC1", channel: "creators-gmail", to: "ana@x.com", subject: "Oi", text: "Oi", place: "store:robux" }))!.status).toBe(409);
+    expect((await call("POST", "send", { id: "youtube:UC1", channel: "stores-gmail", to: "ana@x.com", subject: "Oi", text: "Oi", place: "store:gone" }))!.status).toBe(409);
+    expect((await call("POST", "send", { id: "youtube:UC1", channel: "stores-gmail", to: "ana@x.com", subject: "Oi", text: "Oi", place: "store:robux" }))!.status).toBe(200);
+    expect(sent.map((x) => [x.channel, x.place])).toEqual([["stores-gmail", "store:robux"]]);
+    expect(c.data.creators[0]!.contacted).toMatchObject({ place: "store:robux", placeLabel: "Robux Paradise" });
+    expect(((await call("GET", "creator", null, [["id", "youtube:UC1"]]))!.body as DetailView).contacted).toContain("(Persons › Robux Paradise)");
+    // the next run never collects anyone in the places sent to
+    await call("POST", "start", { platform: "youtube", query: "q", target: 1, gapDays: 0 });
+    await c.settled();
+    expect(keysAsked).toEqual(["store:robux"]);
+  });
   it("Restrict keeps a lead out of Available and the export; Unrestrict brings it back", async () => {
     const dir = mkdtempSync(join(tmpdir(), "collector-"));
     const c = new Collector(dir, deps({}));
@@ -635,6 +666,42 @@ describe("collector", () => {
     const miss = await bridge.send({ rec: rec({ platform: "youtube", platform_id: "UC2", name: "Cy" }), channel: "ci", to: "@cy", subject: "", text: "Oi" });
     expect(miss.ok).toBe(false);
     expect([people.length, sends.map((x) => x[2])]).toEqual([2, ["123456789012345678", "4455"]]);
+  });
+  it("Send to a store or SpokPay puts the person there (the list made when missing); never-twice covers those places", async () => {
+    type P = { id: string; name: string; discordId: string; email?: string; listIds: string[]; storeIds: string[]; socials?: string[] };
+    let data = { people: [{ id: "p0", name: "Shop", discordId: "", email: "shop@x.com", listIds: [], storeIds: ["s1"], socials: ["https://www.youtube.com/@shop"] }] as P[], stores: [{ id: "s1", name: "Robux Paradise" }], lists: [{ id: "creators", name: "Creators", accountId: "gmail" }] };
+    let n = 0;
+    const views = [
+      { id: "sg", kind: "gmail", section: "stores", connected: true, state: { me: null }, convos: {}, label: "Stores Gmail" },
+      { id: "sw", kind: "whatsapp", section: "stores", also: ["personal"], connected: true, state: { me: null }, convos: {}, label: "Stores WhatsApp" },
+      { id: "cg", kind: "gmail", section: "creators", connected: true, state: { me: null }, convos: {}, label: "Creators Gmail" },
+    ];
+    const svc = {
+      get data() {
+        return data;
+      },
+      newId: () => `p_new${++n}`,
+      update: (f: (d: typeof data) => typeof data) => void (data = f(data)),
+      updatePerson: (id: string, f: (p: P) => P) => void (data = { ...data, people: data.people.map((p) => (p.id === id ? f(p) : p)) }),
+      deletePerson: () => {},
+      views: () => views,
+      view: (id: string) => views.find((v) => v.id === id),
+      lookup: async () => ({ matches: [] }),
+      send: async () => ({ ok: true }),
+    };
+    const bridge = livePersons(() => svc as never);
+    expect(bridge.places().map((x) => [x.value, x.label])).toEqual([["store:s1", "Robux Paradise"], ["creators", "Creators"], ["spokpay", "SpokPay"], ["personal", "Personal"]]);
+    expect(bridge.channels("stores").map((c) => c.id)).toEqual(["sg", "sw"]);
+    expect(bridge.channels("personal").map((c) => c.id)).toEqual(["sw"]);
+    expect(bridge.channels("creators").map((c) => c.id)).toEqual(["cg"]);
+    expect((await bridge.send({ rec: rec({ platform: "youtube", platform_id: "UC1", name: "Ana" }), channel: "cg", to: "ana@x.com", subject: "s", text: "t", place: "store:s1" })).ok).toBe(false);
+    expect((await bridge.send({ rec: rec({ platform: "youtube", platform_id: "UC1", name: "Ana" }), channel: "sg", to: "ana@x.com", subject: "s", text: "t", place: "store:s1" })).ok).toBe(true);
+    expect(data.people[1]).toMatchObject({ name: "Ana", email: "ana@x.com", storeIds: ["s1"], listIds: [] });
+    expect((await bridge.send({ rec: rec({ platform: "youtube", platform_id: "UC2", name: "Bo" }), channel: "sw", to: "+55 21 97570-9440", subject: "", text: "t", place: "personal" })).ok).toBe(true);
+    expect(data.people[2]).toMatchObject({ listIds: ["personal"] });
+    expect(data.lists.map((l) => l.id)).toEqual(["creators", "personal"]);
+    expect(bridge.creatorKeys()).toEqual([]);
+    expect(bridge.creatorKeys(["store:s1"])).toContain("email:shop@x.com");
   });
   it("remembers the lists' Sort and platforms; bad ones fall back", async () => {
     const dir = mkdtempSync(join(tmpdir(), "collector-"));

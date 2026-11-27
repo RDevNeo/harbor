@@ -116,7 +116,8 @@ Per tab:
   Persons' composer frame (radius 12, hairline): a 48px To row (the destination pill, brand mark + name + chevron, whose
   PopoverFrame lists Email / WhatsApp / Discord / Instagram as 46px rows: tinted brand mark, who they are there, the
   account or why not in amber, a tick on the one picked; then the address Input), a hairline, Subject (email), a
-  TextBox, and "From …" with a primary sm Send…; Send… turns it into a 448 confirm ("Send it?") with Back / Send now. Phone: the title,
+  TextBox, and "From …" with a primary sm Send…; under the card "Add to Persons ›" and a 30px pill (users glyph,
+  the place, chevron) whose PopoverFrame opens upward with MenuItems (Persons' places, tag glyph for a store, the tick); Send… turns it into a 448 confirm ("Send it?") with Back / Send now. Phone: the title,
   three Chips (Collector, Available n, Restricted n), the same cards in one scrolling column (an email dialog), Send
   message as a screen over the tab.
 

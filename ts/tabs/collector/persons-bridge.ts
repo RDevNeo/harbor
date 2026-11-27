@@ -4,8 +4,9 @@
 // Creators, with their picture, profiles, links and the address it went to, and the message goes out through Persons,
 // so it's in that chat. Persons is the only sender: nothing here talks to Gmail, WhatsApp, Discord or Instagram itself.
 import type { PersonsService } from "../../packages/persons/src/index.ts";
-import { allPeers, isInstagramId, normWhatsApp, serves } from "../../packages/persons/src/model/accounts.ts";
-import { joinScope, socialPhotoKey } from "../../packages/persons/src/model/data.ts";
+import { allPeers, isInstagramId, normWhatsApp, SECTION_LABEL, serves } from "../../packages/persons/src/model/accounts.ts";
+import { DEFAULT_LISTS, joinScope, socialPhotoKey } from "../../packages/persons/src/model/data.ts";
+import { parsePlace, type Place } from "../../packages/persons/src/model/move.ts";
 import type { Message, Person } from "../../packages/persons/src/model/types.ts";
 import { resolveContact } from "../../packages/persons/src/model/personal.ts";
 import { normalizeSocials } from "../../packages/persons/src/socials.ts";
@@ -30,7 +31,23 @@ export interface Channel {
   /** The signed-in address/number, when known. */
   account: string | null;
   connected: boolean;
+  /** Persons' name for the connection: "Creators Gmail", "Stores WhatsApp". */
+  conn?: string;
 }
+
+/** Where Send puts the person in Persons: a store, or the Creators / SpokPay / Personal list ("store:<id>",
+ *  "creators"…, Persons' parsePlace words), with its section (whose connections send). */
+export interface PersonsPlace {
+  value: string;
+  label: string;
+  section: "stores" | "creators" | "spokpay" | "personal";
+}
+
+/** "creators" when the place is unknown (Send's place before it could be picked). */
+export const DEFAULT_PLACE = "creators";
+
+/** A place's section ("store:x" → "stores"). */
+export const placeSection = (place: string): PersonsPlace["section"] => parsePlace(place)?.section ?? "creators";
 
 export interface Guard {
   sentToday: number;
@@ -46,6 +63,8 @@ export interface SendInput {
   channel: string;
   /** Email address, WhatsApp number, Discord user ID or Instagram handle. */
   to: string;
+  /** Where in Persons they go ("creators" when absent). */
+  place?: string;
   subject: string;
   text: string;
 }
@@ -53,15 +72,19 @@ export interface SendInput {
 export interface SendOutcome {
   ok: boolean;
   error?: string;
-  /** The person in Persons › Creators. */
+  /** The person in Persons (the place sent to). */
   person?: string;
   created?: boolean;
 }
 
 export interface PersonsBridge {
   up(): boolean;
-  creatorKeys(): string[];
-  channels(): Channel[];
+  /** Everyone in Persons › Creators and in the other places given (where Collector has sent leads): never collected. */
+  creatorKeys(places?: string[]): string[];
+  /** Persons' places, as its sidebar has them: each store, then Creators, SpokPay, Personal. */
+  places(): PersonsPlace[];
+  /** The connections that send for a section (its own, and those shared with it); none given: every one. */
+  channels(section?: string): Channel[];
   guard(channel: string, to: string, now?: number): Guard;
   send(i: SendInput): Promise<SendOutcome>;
   /** The review bar's Approve to Persons › Creators: the creator becomes (or joins) a person there, as Send makes them,
@@ -94,7 +117,14 @@ export function notesOf(rec: CreatorRecord): string {
 
 /** The person in Persons for this creator (by their email or number, else their profiles), joined to Creators with
  *  what Collector knows filled in; or a new one in Creators. Send's way, used by Approve too. */
-function ensure(s: PersonsService, rec: CreatorRecord, kind: SendKind | null, to: string, username = ""): { person: Person; created: boolean } {
+function ensure(s: PersonsService, rec: CreatorRecord, kind: SendKind | null, to: string, username = "", placeWord = DEFAULT_PLACE): { person: Person; created: boolean } {
+  const place: Place = parsePlace(placeWord) ?? { section: "creators" };
+  const scope = place.section === "stores" ? ({ kind: "store", id: place.store } as const) : ({ kind: "list", id: place.section } as const);
+  // the list joined is there (as Persons' Move to / Add contact make it)
+  if (place.section !== "stores" && !(s.data?.lists ?? []).some((l) => l.id === place.section)) {
+    const def = DEFAULT_LISTS.find((l) => l.id === place.section);
+    if (def && s.data) s.update((d) => ({ ...d, lists: [...(d.lists ?? []), { ...def }] }));
+  }
   const people = s.data?.people ?? [];
   const socials = socialsOf(rec);
   const set = new Set(socials);
@@ -111,8 +141,8 @@ function ensure(s: PersonsService, rec: CreatorRecord, kind: SendKind | null, to
       ...(email ? { email } : {}),
       ...(wa ? { whatsapp: wa } : {}),
       ...(kind === "instagram" && to ? { instagram: to, ...(username ? { instagramUsername: username } : {}) } : {}),
-      storeIds: [],
-      listIds: ["creators"],
+      storeIds: place.section === "stores" ? [place.store] : [],
+      listIds: place.section === "stores" ? [] : [place.section],
       socials,
       notes: notesOf(rec),
       createdAt: now,
@@ -123,7 +153,7 @@ function ensure(s: PersonsService, rec: CreatorRecord, kind: SendKind | null, to
     return { person: fresh, created: true };
   }
   s.updatePerson(found.id, (x) => {
-    let n = joinScope(x, { kind: "list", id: "creators" }, now);
+    let n = joinScope(x, scope, now);
     if (kind === "gmail" && to && !n.email) n = { ...n, email: to, updatedAt: now };
     if (kind === "whatsapp" && to && !n.whatsapp) n = { ...n, whatsapp: to, updatedAt: now };
     if (kind === "discord" && to && !n.discordId) n = { ...n, discordId: to, updatedAt: now };
@@ -147,24 +177,33 @@ function peerKey(kind: string, to: string, people: Person[]): string {
 
 export function livePersons(svc: () => PersonsService | null): PersonsBridge {
   const people = (): Person[] => svc()?.data?.people ?? [];
-  const creators = (): Person[] => people().filter((p) => p.listIds.includes("creators"));
   return {
     up: () => !!svc(),
-    creatorKeys: () =>
-      creators().flatMap((p) =>
+    places: () => {
+      const d = svc()?.data;
+      if (!d) return [{ value: "creators", label: "Creators", section: "creators" }];
+      const stores = d.stores.map((x): PersonsPlace => ({ value: `store:${x.id}`, label: x.name, section: "stores" }));
+      const lists = (["creators", "spokpay", "personal"] as const).map((id): PersonsPlace => ({ value: id, label: d.lists.find((l) => l.id === id)?.name || SECTION_LABEL[id], section: id }));
+      return [...stores, ...lists];
+    },
+    creatorKeys: (places = []) =>
+      people()
+        .filter((p) => p.listIds.includes("creators") || places.some((w) => { const x = parsePlace(w); return !!x && (x.section === "stores" ? p.storeIds.includes(x.store) : p.listIds.includes(x.section)); }))
+        .flatMap((p) =>
         personKeys({
           emails: [...allPeers(p, "gmail")],
           links: p.socials ?? [],
         }),
       ),
-    channels: () => {
+    channels: (section) => {
       const s = svc();
       if (!s) return [];
       return s
         .views()
-        .filter((v) => serves(v, "creators") && (SEND_KINDS as readonly string[]).includes(v.kind))
-        .map((v) => ({ id: v.id, kind: v.kind as SendKind, label: SEND_LABEL[v.kind as SendKind], account: v.state.me?.username || v.state.me?.globalName || null, connected: v.connected }))
-        .sort((a, b) => SEND_KINDS.indexOf(a.kind) - SEND_KINDS.indexOf(b.kind) || (a.id === b.id ? 0 : a.id.startsWith("creators") ? -1 : 1));
+        .filter((v) => (!section || serves(v, section as PersonsPlace["section"])) && (SEND_KINDS as readonly string[]).includes(v.kind))
+        .map((v) => ({ id: v.id, kind: v.kind as SendKind, label: SEND_LABEL[v.kind as SendKind], account: v.state.me?.username || v.state.me?.globalName || null, connected: v.connected, conn: v.label, own: v.section === section }))
+        .sort((a, b) => SEND_KINDS.indexOf(a.kind) - SEND_KINDS.indexOf(b.kind) || Number(b.own) - Number(a.own))
+        .map(({ own: _, ...c }) => c);
     },
     guard: (channel, to, now = Date.now()) => {
       const v = svc()?.view(channel);
@@ -182,9 +221,12 @@ export function livePersons(svc: () => PersonsService | null): PersonsBridge {
       const s = svc();
       if (!s) return { ok: false, error: "Persons isn't up." };
       const v = s.view(i.channel);
-      if (!v || !serves(v, "creators") || !(SEND_KINDS as readonly string[]).includes(v.kind)) return { ok: false, error: "That channel isn't one of Persons › Creators'." };
+      const placeWord = i.place && parsePlace(i.place) ? i.place : DEFAULT_PLACE;
+      const section = placeSection(placeWord);
+      if (!v || !serves(v, section) || !(SEND_KINDS as readonly string[]).includes(v.kind)) return { ok: false, error: `That channel doesn't send for Persons › ${SECTION_LABEL[section]}.` };
       const kind = v.kind as SendKind;
-      if (!v.connected) return { ok: false, error: `The Creators ${SEND_APP[kind]} isn't signed in (Persons › Creators › Connections).` };
+      if (!v.connected) return { ok: false, error: `The ${v.label} isn't signed in (Persons › ${SECTION_LABEL[v.section]} › Connections).` };
+      if (placeWord.startsWith("store:") && !(s.data?.stores ?? []).some((x) => `store:${x.id}` === placeWord)) return { ok: false, error: "That store isn't in Persons any more." };
       // who they are on that channel: the address or number as typed; an Instagram handle is looked up for its id
       let to = "";
       let username = "";
@@ -201,7 +243,7 @@ export function livePersons(svc: () => PersonsService | null): PersonsBridge {
         }
       }
       if (!to) return { ok: false, error: kind === "gmail" ? "No email address." : kind === "whatsapp" ? "No WhatsApp number." : kind === "discord" ? "A Discord user ID has 17-20 digits." : "No Instagram account." };
-      const { person: p, created } = ensure(s, i.rec, kind, to, username);
+      const { person: p, created } = ensure(s, i.rec, kind, to, username, placeWord);
       const r = await s.send(p.id, v.id, i.text, { ...(kind === "gmail" && i.subject ? { subject: i.subject } : {}), peer: to });
       if (!r.ok) {
         // Persons Hub's rule: a person is only made by a send that went out.
@@ -223,19 +265,27 @@ export function livePersons(svc: () => PersonsService | null): PersonsBridge {
 }
 
 /** For tests and the screenshot rig: records what would have been sent, sends nothing. */
-export function fakePersons(o: { channels?: Channel[]; keys?: string[]; sent?: SendInput[]; added?: CreatorRecord[] } = {}): PersonsBridge {
+export function fakePersons(o: { channels?: Channel[]; keys?: string[]; sent?: SendInput[]; added?: CreatorRecord[]; places?: PersonsPlace[] } = {}): PersonsBridge {
   const sent = o.sent ?? [];
   const added = o.added ?? [];
   return {
     up: () => true,
     creatorKeys: () => o.keys ?? [],
-    channels: () =>
-      o.channels ?? [
-        { id: "creators-gmail", kind: "gmail", label: "Email", account: "igor@spokpay.com", connected: true },
-        { id: "creators-whatsapp", kind: "whatsapp", label: "WhatsApp", account: null, connected: true },
-        { id: "creators-discord", kind: "discord", label: "Discord", account: "spokpay", connected: true },
-        { id: "creators-instagram", kind: "instagram", label: "Instagram", account: "spokpay", connected: false },
-      ],
+    places: () => o.places ?? [{ value: "store:robux", label: "Robux Paradise", section: "stores" }, { value: "creators", label: "Creators", section: "creators" }, { value: "spokpay", label: "SpokPay", section: "spokpay" }, { value: "personal", label: "Personal", section: "personal" }],
+    channels: (section) =>
+      o.channels ??
+      (section === "stores" || section === "personal"
+        ? [
+            { id: "stores-gmail", kind: "gmail", label: "Email", account: "lojas@spokpay.com", connected: true, conn: "Stores Gmail" },
+            { id: "stores-whatsapp", kind: "whatsapp", label: "WhatsApp", account: null, connected: true, conn: "Stores WhatsApp" },
+            { id: "stores-discord", kind: "discord", label: "Discord", account: "spokpay", connected: true, conn: "Stores Discord" },
+          ]
+        : [
+            { id: "creators-gmail", kind: "gmail", label: "Email", account: "igor@spokpay.com", connected: true, conn: "Creators Gmail" },
+            { id: "creators-whatsapp", kind: "whatsapp", label: "WhatsApp", account: null, connected: true, conn: "Creators WhatsApp" },
+            { id: "creators-discord", kind: "discord", label: "Discord", account: "spokpay", connected: true, conn: "Creators Discord" },
+            { id: "creators-instagram", kind: "instagram", label: "Instagram", account: "spokpay", connected: false, conn: "Creators Instagram" },
+          ]),
     guard: () => ({ sentToday: sent.length, limit: DAILY_LIMIT, already: null, justSent: false }),
     send: async (i) => {
       sent.push(i);

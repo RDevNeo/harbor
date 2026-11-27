@@ -207,7 +207,7 @@ export function creatorDetail(c: CreatorRecord, pic: (url: string | null) => str
       return { title: linkTitle(l), url: l.url, brand: b.key, color: b.color };
     }),
     openLabel: c.platform === "youtube" ? "Open channel" : "Open profile",
-    contacted: ct ? `Sent ${SENT_WHAT[ct.via] ?? "a message"} on ${new Date(ct.at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} to ${ct.to}` : "",
+    contacted: ct ? `Sent ${SENT_WHAT[ct.via] ?? "a message"} on ${new Date(ct.at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} to ${ct.to}${ct.placeLabel && ct.place !== "creators" ? ` (Persons › ${ct.placeLabel})` : ""}` : "",
     edit: { name: c.name, handle: c.handle ?? "", bio: c.description ?? "", links: linksText(c.links) },
     note: c.note ?? "",
     approvedNote: row.approved && c.approved ? `Approved on ${new Date(c.approved.at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}${c.approved.to === "persons" ? " and added to Persons › Creators" : ""}` : "",
