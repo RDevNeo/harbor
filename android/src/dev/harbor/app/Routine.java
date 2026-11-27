@@ -65,6 +65,9 @@ public class Routine extends Base {
     protected void onCreate(Bundle b) {
         super.onCreate(b);
         section = Ui.prefs(this).getString("routine_section", "today");
+        // A page asked for by name (scripts/boat/phoneshot --screen routine:sleep, or another screen).
+        String asked = getIntent().getStringExtra("section");
+        if (asked != null && java.util.Arrays.asList(SECTIONS).contains(asked)) section = asked;
         hub = Tabs.hub(this);
         // The shared frame: the top bar (the side-panel button, the page's name), the page, the tab bar; the
         // pages (Today, History, Sleep, Goals, Coach) are the drawer's rows.
@@ -617,11 +620,11 @@ public class Routine extends Base {
         }).show();
     }
 
-    // Shell 6's manifest has no com.android.alarm.permission.SET_ALARM, and the Clock apps
+    // Shell 7+ declares com.android.alarm.permission.SET_ALARM; shell 6 didn't, and the Clock apps
     // (Samsung's, Google's, AOSP's) take ACTION_SET_ALARM and ACTION_SHOW_ALARMS only from apps
     // that hold it ("Permission Denial"). Nor does it hold an exact-alarm or full-screen
-    // permission for a ringing alarm of its own. So: set the alarm when the permission is there
-    // (the next shell declares it), else open the Clock app and say which time to set.
+    // permission for a ringing alarm of its own. So: set the alarm when the permission is there,
+    // else open the Clock app and say which time to set.
     private static final String SET_ALARM = "com.android.alarm.permission.SET_ALARM";
     private static final String[] CLOCKS = {
         "com.sec.android.app.clockpackage", "com.google.android.deskclock", "com.android.deskclock",

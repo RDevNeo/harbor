@@ -112,11 +112,8 @@ older component, resource and `Shell` method, so older code keeps running on it.
 `minShell` to the new version, so phones on the old shell get no more code until they install the APK). Whoever
 bumps the shell next adds these to `AndroidManifest.xml` in the same change, then removes them from this list:
 
-- `<uses-permission android:name="com.android.alarm.permission.SET_ALARM" />` (a normal permission, granted at
-  install): Routine › Sleep's "Going to sleep now" then sets the wake-up alarm in the Clock app by itself.
-  Without it the Clock apps refuse `ACTION_SET_ALARM` and `ACTION_SHOW_ALARMS` ("Permission Denial"), so on
-  shell 6 Routine says which time to set and opens Clock (`Routine.setAlarm`, `setInClock`, `openClock`; they
-  check the permission, so no code change is needed when it arrives).
+Nothing is waiting (shell 7, 2026-11-27, took `SET_ALARM`: Routine › Sleep sets the wake-up alarm in the Clock
+app itself).
 
 **Versions.** `android/shell/shell.lock` holds the shell's version and a hash of its inputs
 (manifest, `res/`, `shell/src`, `build.sh`'s native pins). `build.sh` refuses to build when the

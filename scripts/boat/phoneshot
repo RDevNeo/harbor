@@ -17,10 +17,13 @@ text. The sandbox is always deleted, also on error, Ctrl+C or kill.
 Screens and steps run in the order given; each --screen opens a screen and shoots it:
   --screen NAME    chats (the chat list), chat (the chat with every card kind), chat:lead (a lead
                    with its team), chat:composer (two images in its shared draft), chat:GID,
-                   settings, new (new chat), palette, collector, persons, routine (those tabs), persons:ana (Ana's
+                   settings, new (new chat), palette, collector, persons, routine (those tabs), routine:sleep (a Routine page), persons:ana (Ana's
                    chat in Persons › Stores), home (the app's first screen). Several:
                    --screen chats,chat,settings. Default: chats.
   --tap X,Y        a tap, in the PNG's pixels (1080x2400)
+  --tap-text TEXT  a tap on the middle of the first view on screen whose text matches TEXT
+                   (a Python regex, from the text's start: --tap-text Going, --tap-text '[0-9]+:')
+                   (uiautomator's dump; fails when there is none)
   --press X,Y      a long press there (a message's sheet, a text box's Paste)
   --swipe X1,Y1,X2,Y2
   --text WORDS     types into the focused field
@@ -45,6 +48,9 @@ Screens and steps run in the order given; each --screen opens a screen and shoot
                    startActivity, as a Capacitor WebView app does; shared = with Android 14's
                    ActivityOptions.setShareIdentityEnabled(true)
   --front          prints the activity in front now (did Harbor step back to the app?)
+  --alarms         prints the alarm clocks Android knows (dumpsys alarm: the Clock app's next alarm) and the
+                   Clock app's own alarms (its provider, when readable), and keeps a PNG of the screen as it
+                   is, whichever app is in front (Routine › Sleep's alarm landed in the Clock app?)
   --cold           Harbor's process ends, the test caller comes in front, then Harbor's notification
                    service (Listen) alone starts it again: no Harbor screen in that process, as on a
                    phone where Android restarted it in the background (--broadcast
@@ -90,7 +96,9 @@ while [ $# -gt 0 ]; do
     --view) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }
       steps+=("${via:+via-}${via:-view}:$2${extra:+~$(printf %s "$extra" | base64 -w0)}"); extra="" via=""; shift ;;
     --front) steps+=("front:now") ;;
+    --alarms) steps+=("alarms:now") ;;
     --cold) steps+=("cold:now") ;;
+    --tap-text) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }; steps+=("taptext:$2"); shift ;;
     --tap|--press|--swipe|--text|--key|--broadcast|--wait|--shot|--gfx) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }; steps+=("${1#--}:$2"); shift ;;
     --dark) dark=1 ;;
     --leads) leads=$2; shift ;;

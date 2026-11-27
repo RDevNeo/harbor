@@ -6,6 +6,11 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 ## [Unreleased]
 
 ### Changed
+- **Phone: shell 7, Routine › Sleep sets the alarm itself.** The phone app's manifest declares
+  `com.android.alarm.permission.SET_ALARM` (granted at install), so "Going to sleep now" → a time adds the alarm to
+  the Clock app silently (`ACTION_SET_ALARM`, `EXTRA_SKIP_UI`) instead of asking the user to set it by hand. Phones on
+  shell 6 get no newer code until they install the new APK, which the app offers itself (Settings › Update, or
+  "Update available"). `scripts/boat/phoneshot` gains `--tap-text`, `--alarms` and the `routine:PAGE` screen.
 - **Hub comes back exactly where you were after an update, on the PC and the phone (and after a crash too).**
   PC: besides Projects (chat, transcript's place, composers, panes, splits), a restart's snapshot now keeps Hub's
   tabs: the tab on screen; Persons' open person or site request, its composer (person or AI, text and cursor, reply,

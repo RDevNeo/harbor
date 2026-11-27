@@ -235,6 +235,7 @@ open() {
     persons) a+=("$pkg/$cls.Persons") ;;
     persons:ana) a+=("$pkg/$cls.Persons" --es person p1 --es section stores) ;;
     routine) a+=("$pkg/$cls.Routine") ;;
+    routine:*) a+=("$pkg/$cls.Routine" --es section "${what#routine:}") ;;
     *) echo "unknown screen: $what"; return 2 ;;
   esac
   ad am start "${a[@]}" >/dev/null || { echo "could not open $what"; return 1; }
@@ -248,6 +249,17 @@ for st in "$@"; do
   case "$st" in
     screen:*) open "${st#screen:}" && shot "${st#screen:}" || { fail=1; break; } ;;
     tap:*) xy=${st#tap:}; ad input tap "${xy%,*}" "${xy#*,}" ;;
+    taptext:*) rm -f "$logs/tap.xml"; ad rm -f /sdcard/ui.xml
+      for _ in 1 2 3; do d=$(ad uiautomator dump /sdcard/ui.xml 2>&1 | tr -d '\r'); "$adb" pull /sdcard/ui.xml "$logs/tap.xml" >/dev/null 2>&1 && break; sleep 1; done
+      [ -f "$logs/tap.xml" ] || echo "uiautomator dump failed: $d"
+      xy=$(python3 -c '
+import re, sys, xml.etree.ElementTree as ET
+for e in ET.parse(sys.argv[1]).iter("node"):
+    if re.match(sys.argv[2], e.get("text", "")):
+        a = list(map(int, re.findall(r"\d+", e.get("bounds"))))
+        print("%d,%d" % ((a[0] + a[2]) // 2, (a[1] + a[3]) // 2)); break' "$logs/tap.xml" "${st#taptext:}" 2>/dev/null || true)
+      [ -n "$xy" ] || { echo "no view with text \"${st#taptext:}\" on screen; its texts:"; grep -oE '(text|content-desc)="[^"]+"' "$logs/tap.xml" | head -40 | sed 's/^/  /'; fail=1; break; }
+      echo "tap \"${st#taptext:}\" at $xy"; ad input tap "${xy%,*}" "${xy#*,}" ;;
     press:*) xy=${st#press:}; ad input swipe "${xy%,*}" "${xy#*,}" "${xy%,*}" "${xy#*,}" 900 ;;
     swipe:*) IFS=, read -r x1 y1 x2 y2 <<< "${st#swipe:}"; ad input swipe "$x1" "$y1" "$x2" "$y2" 300 ;;
     text:*) t=${st#text:}; ad input text "$(printf %q "${t// /%s}")" ;;
@@ -270,6 +282,11 @@ for st in "$@"; do
       sleep 3; echo "cold: pid $(pid), front: $(ad dumpsys activity activities | grep -m1 -E 'topResumedActivity|mResumedActivity' | tr -d '\r' | sed 's/^ *//')" ;;
     front:*) echo "front: $(ad dumpsys activity activities | grep -m1 -E 'topResumedActivity|mResumedActivity' | tr -d '\r' | sed 's/^ *//')" ;;
     wait:*) sleep "${st#wait:}" ;;
+    # The Clock app's alarms, as Android and the Clock app know them, and the screen as it is (any app in front).
+    alarms:*) echo "front: $(ad dumpsys activity activities | grep -m1 -E 'topResumedActivity|mResumedActivity' | tr -d '\r' | sed 's/^ *//')"
+      echo "alarm clocks (dumpsys alarm):"; ad dumpsys alarm | tr -d '\r' | grep -iE -A3 'next ?alarm ?clock|AlarmClockInfo|deskclock' | head -30 | sed 's/^/  /'
+      echo "clock app's alarms:"; ad content query --uri content://com.android.deskclock/alarms 2>&1 | tr -d '\r' | head -10 | sed 's/^/  /'
+      n=$((n + 1)); capture "$(printf '%s/%02d-alarms.png' "$shots" "$n")" && echo "shot $(printf '%02d' "$n")-alarms.png" ;;
     gfx:reset) ad dumpsys gfxinfo "$pkg" reset >/dev/null ;;
     gfx:*) echo "gfx ${st#gfx:}:"; ad dumpsys gfxinfo "$pkg" reset | tr -d '\r' |
       grep -E '^(Total frames rendered|Janky frames|[0-9]+th percentile|Number (Slow|Frozen|High input))' | sed 's/^/  /' ;;
