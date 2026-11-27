@@ -208,13 +208,18 @@ export interface ConnState {
 
 export type PresenceStatus = "online" | "idle" | "dnd" | "offline" | "invisible";
 
+/** Discord: where the account stands with someone (no entry = none). `sent`: our friend request waits; `incoming`: theirs. */
+export type Relation = "friend" | "sent" | "incoming" | "blocked";
+
 export type ConnEvent =
   | { type: "state"; state: ConnState }
   | { type: "messages"; peerId: string; messages: Message[] }
   | { type: "delete"; peerId: string; messageId: string }
   | { type: "users"; users: ChannelUser[] }
   | { type: "presence"; presence: Record<string, PresenceStatus | null>; lastSeen?: Record<string, number> }
-  | { type: "typing"; peerId: string; kind: "typing" | "recording"; until: number };
+  | { type: "typing"; peerId: string; kind: "typing" | "recording"; until: number }
+  /** Discord relationships: `all` replaces every one (a new session), else only these change (null = none now). */
+  | { type: "relations"; relations: Record<string, Relation | null>; all?: boolean };
 
 export interface LookupResult {
   matches: ChannelUser[];

@@ -346,12 +346,25 @@ export type ProposalStateJson = { kind: "waiting" } | { kind: "opening"; started
 /** A SpokPay site request proposed from a message (the engine's routes.ts proposalJson). */
 export interface ProposalJson { id: string; at: string; messageId: string | null; store: { slug: string; name: string } | null; category: string; subject: string; details: string; brief: Record<string, string>; why: string; from: string; chat: string | null; images: number; state: ProposalStateJson }
 export interface ProposingJson { personId: string; messageId: string; at: string; chat: string | null; error: string | null }
+/**
+ * The chat header's friend button from the Discord relationship: "add" (Add friend), "accept" (they asked), "sent"
+ * (disabled Request sent), "sending" (the click is on its way), "" hidden (friends, blocked, not Discord).
+ */
+export function friendButton(relation: string | null, sending: boolean): string {
+  if (relation === null || relation === "friend" || relation === "blocked") return "";
+  if (relation === "sent") return "sent";
+  if (sending) return "sending";
+  return relation === "incoming" ? "accept" : "add";
+}
+
 export interface ChatJson {
   person: { id: string; name: string; initials: string; color: string; avatar: string | null; avatarPath: string | null; presence: string | null; status: { text: string; tone: string } | null };
   /** The chat the composer sends on: `id` is its key ("<connection>:<who>", what `account` takes back). */
   account: { id: string; conn?: string; kind: string; section: string; label: string; to?: string; connected: boolean } | null;
   accounts: { id: string; conn?: string; kind: string; label: string; to?: string; connected?: boolean }[];
   peer: string | null;
+  /** Discord: friend | sent | incoming | blocked | none; null on the other channels (or signed out). */
+  relation?: string | null;
   typing: string | null;
   more: boolean;
   unreadFrom: string | null;

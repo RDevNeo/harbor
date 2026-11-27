@@ -6,7 +6,7 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { ChannelUser, ConnState, ConnStatus, Conversation, LookupResult, Message, OutgoingFile, PresenceStatus, SendResult } from "../model/types.ts";
+import type { ChannelUser, ConnState, ConnStatus, Conversation, LookupResult, Message, OutgoingFile, PresenceStatus, Relation, SendResult } from "../model/types.ts";
 import { tokenStore, type TokenStore } from "../tokens.ts";
 import * as core from "./discord-core.ts";
 import { createWorld, type World } from "./discord-world.ts";
@@ -379,13 +379,13 @@ export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Disc
     return h;
   }
 
-  async function api<T = unknown>(method: string, p: string, body?: unknown, { tries = 3, refresh = true }: { tries?: number; refresh?: boolean } = {}): Promise<T> {
+  async function api<T = unknown>(method: string, p: string, body?: unknown, { tries = 3, refresh = true, extra }: { tries?: number; refresh?: boolean; extra?: Record<string, string> } = {}): Promise<T> {
     if (!token) throw new ApiError("Discord is not connected", 0);
     const used = token;
     for (let attempt = 1; ; attempt++) {
       let res: Response;
       try {
-        const init: RequestInit = { method, headers: baseHeaders(body !== undefined), signal: AbortSignal.timeout(20_000) };
+        const init: RequestInit = { method, headers: { ...baseHeaders(body !== undefined), ...extra }, signal: AbortSignal.timeout(20_000) };
         if (body !== undefined) init.body = JSON.stringify(body);
         res = await fetch(API + p, init);
       } catch (e) {
@@ -415,7 +415,7 @@ export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Disc
       }
       if (res.ok) return json as T;
       if (res.status === 401 && refresh) {
-        if (await refreshAfter401(used)) return api<T>(method, p, body, { tries, refresh: false });
+        if (await refreshAfter401(used)) return api<T>(method, p, body, { tries, refresh: false, ...(extra ? { extra } : {}) });
       } else if (res.status === 401) {
         void signedOut("Discord signed this session out", false);
       }
@@ -531,6 +531,7 @@ export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Disc
         presence.clear();
         friends.clear();
         for (const f of core.friendIds(d.relationships)) friends.add(f);
+        emitRelations(null);
         probed.clear();
         memberSubs = {};
         takeReadyPresences(d, !!d.merged_presences);
@@ -639,9 +640,16 @@ export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Disc
           flushUsers();
         }
         if (d.type === 1 && d.id) friends.add(s(d.id));
+        if (d.id) emitRelations([s(d.id)]);
+        break;
+      case "RELATIONSHIP_UPDATE":
+        if (d.id) emitRelations([s(d.id)]);
         break;
       case "RELATIONSHIP_REMOVE":
-        if (d.id) friends.delete(s(d.id));
+        if (d.id) {
+          friends.delete(s(d.id));
+          emitRelations([s(d.id)]);
+        }
         break;
       case "GUILD_CREATE":
         if (d.id && !guildIds.includes(s(d.id))) guildIds.push(s(d.id));
@@ -966,6 +974,17 @@ export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Disc
     },
   };
 
+  /** Relationships as the world has them, to the service: these ids, or every one (`null`, a new session). */
+  function emitRelations(ids: string[] | null): void {
+    const out: Record<string, Relation | null> = {};
+    if (ids) for (const x of ids) out[x] = core.relationOf(world.relationships.get(x)?.type);
+    else for (const [x, r] of world.relationships) {
+      const v = core.relationOf(r.type);
+      if (v) out[x] = v;
+    }
+    ctx.emit(ids ? { type: "relations", relations: out } : { type: "relations", relations: out, all: true });
+  }
+
   // ---------- what the app calls ----------
   const needConnected = (): void => {
     if (status !== "connected" || !token) throw new Error("Connect Discord first");
@@ -1211,6 +1230,36 @@ export function createDiscord(ctx: ConnContext, opts: DiscordOptions = {}): Disc
         const code = e instanceof ApiError ? e.code : undefined;
         return { ok: false, error: (code !== undefined ? core.SEND_ERRORS[code] : undefined) ?? errMsg(e) };
       }
+    },
+
+    /**
+     * A friend request, as the client's Add Friend on their profile sends it (PUT /users/@me/relationships/{id}); on an
+     * incoming request it accepts it. Only on the user's click; paced with the messages.
+     */
+    async addFriend(peerId) {
+      needConnected();
+      const peer = String(peerId);
+      if (!core.isSnowflake(peer)) return { ok: false, error: "Invalid Discord id" };
+      if (peer === me?.id) return { ok: false, error: "That’s this account" };
+      const was = core.relationOf(world.relationships.get(peer)?.type);
+      if (was === "friend" || was === "sent") return { ok: true, relation: was };
+      if (was === "blocked") return { ok: false, error: "You blocked them on Discord" };
+      const wait = pacer.reserve();
+      if (wait) await sleep(wait);
+      try {
+        await api("PUT", `/users/@me/relationships/${peer}`, {}, { tries: 2, extra: { "X-Context-Properties": core.FRIEND_CONTEXT } });
+      } catch (e) {
+        log("friend request failed", e instanceof ApiError ? `${e.status} ${e.code ?? ""}` : errMsg(e));
+        if (e instanceof ApiError && e.captcha) return { ok: false, error: "Discord asked for a captcha. Add them from the Discord app." };
+        const code = e instanceof ApiError ? e.code : undefined;
+        return { ok: false, error: (code !== undefined ? core.FRIEND_ERRORS[code] : undefined) ?? errMsg(e) };
+      }
+      // the gateway's RELATIONSHIP_ADD follows; until then the world says what Discord will
+      const now: Relation = was === "incoming" ? "friend" : "sent";
+      world.relationships.set(peer, { type: now === "friend" ? 1 : 4, nickname: world.relationships.get(peer)?.nickname ?? null });
+      if (now === "friend") friends.add(peer);
+      emitRelations([peer]);
+      return { ok: true, relation: now };
     },
 
     /** Downloads an attachment from Discord's CDN into <persons dir>/files (once); returns the path. */

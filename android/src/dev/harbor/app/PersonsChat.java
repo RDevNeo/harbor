@@ -60,6 +60,8 @@ final class PersonsChat {
     private final ChatFlow.DayPill dayPill;
     /** The first render with the chat's messages placed it (where it was left, its unread line, else its end). */
     private boolean positioned;
+    /** Add friend tapped: the friend request is on its way. */
+    private boolean friending;
     /** How many times placeFirst ran (a correction queued before it is let go). */
     private int placed;
     /** The chat is at its end and stays there while its content grows (pictures and AI notes lay out after the first
@@ -633,6 +635,24 @@ final class PersonsChat {
             sw.setOnClickListener(v -> switchAccount(accounts));
             bar.actions.addView(sw, Ui.margins(Ui.wrap(), 4, 0, 4, 0));
         }
+        // Discord, not friends yet: Add friend (a DM to a stranger with no shared server bounces); Request sent waits
+        String rel = PersonsUi.s(data, "relation");
+        if (!rel.isEmpty() && !"friend".equals(rel) && !"blocked".equals(rel)) {
+            boolean sent = "sent".equals(rel);
+            String label = sent ? "Request sent" : friending ? "Sending…" : "incoming".equals(rel) ? "Accept friend" : "Add friend";
+            LinearLayout fr = Ui.row(a);
+            fr.setGravity(Gravity.CENTER_VERTICAL);
+            fr.setPadding(Ui.dp(10), Ui.dp(6), Ui.dp(12), Ui.dp(6));
+            fr.setBackground(Ui.press(Ui.CARD, Ui.LINE, 16));
+            fr.addView(Ui.icon(a, sent ? Ui.I_USER_CHECK : Ui.I_PLUS, 14, Ui.FG), new LinearLayout.LayoutParams(Ui.dp(14), Ui.dp(14)));
+            TextView ft = Ui.bold(a, label, 13, Ui.FG);
+            ft.setPadding(Ui.dp(5), 0, 0, 0);
+            fr.addView(ft);
+            fr.setContentDescription(label);
+            if (sent || friending) fr.setAlpha(0.5f);
+            else fr.setOnClickListener(v -> addFriend());
+            bar.actions.addView(fr, Ui.margins(Ui.wrap(), 4, 0, 4, 0));
+        }
         bar.action(Ui.I_PANEL_RIGHT, "Details", v -> p.openPanel(pid, section));
         headBox.addView(bar.view, new FrameLayout.LayoutParams(-1, -2));
 
@@ -641,6 +661,29 @@ final class PersonsChat {
             typingLine.setTextColor(Ui.BLUE);
             typingLine.setVisibility(View.VISIBLE);
         } else typingLine.setVisibility(View.GONE);
+    }
+
+    /** Add friend (Discord): a friend request to the person, sent by the PC; the tap is the user's go-ahead. */
+    private void addFriend() {
+        if (friending || p.hub == null) return;
+        friending = true;
+        header();
+        JSONObject b = PersonsUi.put(new JSONObject(), "section", section);
+        String ac = acctId();
+        if (ac != null) PersonsUi.put(b, "account", ac);
+        String path = base() + "/friend";
+        Ui.bg(a, () -> {
+            try {
+                return p.hub.call("POST", path, b);
+            } catch (Exception e) {
+                return PersonsUi.put(PersonsUi.put(new JSONObject(), "ok", false), "error", Hub.why(e));
+            }
+        }, r -> {
+            friending = false;
+            if (!r.optBoolean("ok", false)) Ui.toast(a, r.optString("error", "The friend request didn't go"));
+            else Ui.toast(a, "friend".equals(r.optString("relation")) ? "You're friends on Discord now" : "Friend request sent");
+            load(false);
+        });
     }
 
     private void switchAccount(JSONArray accounts) {
@@ -1348,7 +1391,10 @@ final class PersonsChat {
         if (n > 0) b.addView(Ui.text(a, n == 1 ? "1 attachment" : n + " attachments", 13, Ui.G700));
         // WhatsApp's: a clock while it goes; not sent: red, a tap sends it again, a long press drops it
         String err = PersonsUi.s(o, "error");
-        TextView st = err.isEmpty() ? ticks("pending") : Ui.text(a, "⚠ Not sent · Tap to retry", 11.5f, Ui.RED);
+        // not sent: why (Discord's "not friends, no shared server…"), then Tap to retry
+        boolean why = !err.isEmpty() && !"not sent".equalsIgnoreCase(err);
+        TextView st = err.isEmpty() ? ticks("pending") : Ui.text(a, "⚠ " + (why ? err : "Not sent") + " · Tap to retry", 11.5f, Ui.RED);
+        if (why) { st.setMaxWidth(maxW() - Ui.dp(24)); st.setGravity(Gravity.END); }
         b.addView(st, Ui.margins(endWrap(), 0, 2, 0, 0));
         if (!err.isEmpty()) {
             b.setBackground(Ui.round(Ui.G100, Ui.RED, 18));

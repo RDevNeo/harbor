@@ -1,6 +1,6 @@
 // Pure helpers for the Discord connection (port of Person Hub's shell/discord-core.cjs, plus the
 // upload/attachment rules of its shell/files.cjs): no network, so the unit tests load it.
-import type { Attachment, ChannelUser, Message, OutgoingFile, PresenceStatus, ReplyRef } from "../model/types.ts";
+import type { Attachment, ChannelUser, Message, OutgoingFile, PresenceStatus, Relation, ReplyRef } from "../model/types.ts";
 
 const CDN = "https://cdn.discordapp.com";
 
@@ -577,12 +577,31 @@ export function attachmentFileName(url: string, name?: string | null): string {
 
 /** Errors Discord answers sends with, in the user's words. */
 export const SEND_ERRORS: Readonly<Record<number, string>> = {
-  50007: "Discord won’t deliver to this user (DMs closed or no shared server)",
+  50007: "Discord blocked it: you’re not friends and share no server. Add friend first.",
   40002: "Discord wants this account verified first",
   20026: "Discord flagged this account; open Discord",
   40005: "The file is too big for Discord",
   50006: "Discord says the message is empty",
 };
+
+/** A relationship's type in Discord's numbers (READY, RELATIONSHIP_ADD) as Persons says it; null = none. */
+export function relationOf(type: unknown): Relation | null {
+  return type === 1 ? "friend" : type === 2 ? "blocked" : type === 3 ? "incoming" : type === 4 ? "sent" : null;
+}
+
+/** Errors Discord answers a friend request with, in the user's words. */
+export const FRIEND_ERRORS: Readonly<Record<number, string>> = {
+  80000: "They don’t take friend requests from people they share no server with",
+  80001: "Discord didn’t send it: they don’t take requests from this account",
+  80003: "That’s this account",
+  80004: "Discord doesn’t know that user",
+  80007: "You’re already friends",
+  40002: "Discord wants this account verified first",
+  20026: "Discord flagged this account; open Discord",
+};
+
+/** X-Context-Properties of the web client's Add Friend on a user's profile (base64 JSON). */
+export const FRIEND_CONTEXT = btoa(JSON.stringify({ location: "User Profile" }));
 
 // ---------- the account's files (and Person Hub's session folder names, for the import) ----------
 

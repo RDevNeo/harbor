@@ -187,6 +187,7 @@ export global PersonsBus {
     in property <string> c-channel;
     in property <string> c-account;
     in property <bool> c-accounts; // more than one: the account chip opens a menu
+    in property <string> c-friend; // Discord: "add" | "accept" | "sending" | "sent" (disabled), "" hidden
     in property <bool> c-gmail;
     in property <bool> c-connected: true;
     in property <string> c-empty: "No messages yet.";
@@ -377,6 +378,7 @@ export global PersonsBus {
     callback jump-reply(string); // a reply's quote clicked (the replying message's id)
     callback toggle-panel();
     callback account-menu(length, length);
+    callback add-friend(); // the chat header's Add friend (a Discord friend request)
     callback msg-menu(string, length, length);
     callback open-file(string, int);
     // A picture of a message (its index): Hub's lightbox, browsing that message's pictures.
@@ -1317,7 +1319,7 @@ component Bubble {
     property <length> text-w: min(root.max-w - 2 * pad-x, root.jumbo ? m.jumbo.length * 52px - 4px : body.preferred-width);
     // "TO THE AI · 00:00" fits.
     property <length> label-w: thread ? 124px : 0px;
-    property <length> w: ai ? root.max-w : max(max(root.m.has-image ? root.m.img-w : 0px, label-w), max(text-w, root.m.has-audio ? 280px : root.m.has-reply || root.m.files != "" ? 220px : 60px)) + 2 * pad-x;
+    property <length> w: ai ? root.max-w : max(max(root.m.has-image ? root.m.img-w : 0px, label-w), max(text-w, root.m.has-audio ? 280px : root.m.failed && root.m.meta != "" ? 260px : root.m.has-reply || root.m.files != "" ? 220px : 60px)) + 2 * pad-x;
     height: lay.preferred-height;
     lay := HorizontalLayout {
         width: root.width;
@@ -1610,7 +1612,10 @@ component Bubble {
                         }
                     }
                     Text {
-                        text: root.m.failed ? "Not sent · click to retry" : root.m.sending ? "Sending…" : root.m.meta != "" ? root.m.meta + " · " + root.m.time : root.m.time;
+                        // a failed one says why (Discord's 50007: not friends, no shared server…)
+                        text: root.m.failed ? (root.m.meta != "" ? root.m.meta + " · click to retry" : "Not sent · click to retry") : root.m.sending ? "Sending…" : root.m.meta != "" ? root.m.meta + " · " + root.m.time : root.m.time;
+                        wrap: word-wrap;
+                        horizontal-alignment: right;
                         font-size: 10px;
                         color: root.m.failed ? Theme.red-900 : Theme.gray-800;
                     }
@@ -2395,6 +2400,19 @@ component ChatPane inherits Rectangle {
                     clicked => {
                         PersonsBus.account-menu(self.absolute-position.x, self.absolute-position.y + self.height + 4px);
                     }
+                }
+            }
+            // Discord, not friends yet: send a friend request (DMs to strangers with no shared server bounce)
+            if PersonsBus.c-friend != "": Btn {
+                y: (parent.height - self.height) / 2;
+                icon: PersonsBus.c-friend == "sent" ? Icons.user-check : Icons.plus;
+                text: PersonsBus.c-friend == "sent" ? "Request sent" : PersonsBus.c-friend == "sending" ? "Sending…" : PersonsBus.c-friend == "accept" ? "Accept friend" : "Add friend";
+                size: BtnSize.xs;
+                variant: Variant.outline;
+                enabled: PersonsBus.c-friend == "add" || PersonsBus.c-friend == "accept";
+                tip: PersonsBus.c-friend == "sent" ? "Your friend request waits for them on Discord" : PersonsBus.c-friend == "accept" ? "They sent you a friend request on Discord" : "Send a friend request on Discord";
+                clicked => {
+                    PersonsBus.add-friend();
                 }
             }
             Btn {

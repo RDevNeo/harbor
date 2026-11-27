@@ -16,7 +16,7 @@ import { aiSlintParts, type PPartData } from "./aiparts.ts";
 import { customEmojiUrl, emojiCategories, emojiRows, inlineLayout, insertAt, jumboEmoji, plainEmoji, searchEmoji, type EmojiEntry } from "./emoji.ts";
 import { aiMenu, blockedNote, composerHint, CONTACT_FIELD, failedMenu, messageMenu, moveEntries, placeOfRow, quoteInto, type MenuEntry, type MoveEntry } from "./menus.ts";
 import { fwdSubtitle, pickable, pickerRows, quoteMeta, stepPick, type FwdProject } from "./fwdproject.ts";
-import { aiFolds, audioRow, blankRow, byRecent, chatRows, hhmm, shortAgo, listRows, matches, moveSection, nextSpeed, personSections, sectionOrder, servesSection, sideRows, srImageSize, srTimeline, type AiJson, type AudioRow, type AudioStateJson, type ChatJson, type ImgTile, type MsgRow, type PersonJson, type Row, type SrFileJson, type SrPaneJson, type StateJson, type UiState } from "./view.ts";
+import { aiFolds, audioRow, blankRow, byRecent, chatRows, friendButton, hhmm, shortAgo, listRows, matches, moveSection, nextSpeed, personSections, sectionOrder, servesSection, sideRows, srImageSize, srTimeline, type AiJson, type AudioRow, type AudioStateJson, type ChatJson, type ImgTile, type MsgRow, type PersonJson, type Row, type SrFileJson, type SrPaneJson, type StateJson, type UiState } from "./view.ts";
 
 interface Pixels {
   width: number;
@@ -202,6 +202,8 @@ class PersonsTab {
   private panelOpen = true;
   /** The composer writes to the person's AI (Person Hub's "To: AI | Name" switch), remembered per chat. */
   private aiMode = false;
+  /** Add friend clicked: the request is on its way (the person's id). */
+  private friending: string | null = null;
   private toAi = new Map<string, boolean>();
   private replyTo: { id: string; name: string; text: string } | null = null;
   /** A message forwarded to the AI (Forward to AI): quoted in the AI composer, for the chat it came from. */
@@ -300,6 +302,7 @@ class PersonsTab {
       this.query = q;
       this.render();
     }) as Cb);
+    on("add_friend", () => void this.addFriend());
     on("close_chat", () => {
       this.keepPlace();
       this.stopAudio();
@@ -727,6 +730,7 @@ class PersonsTab {
     // the chat the composer sends on; with two of a kind (a linked person's other number) it says which
     b.c_account = c.account ? (c.account.to && c.account.to.includes(" · ") ? `${c.account.label} → ${c.account.to.split(" · ").slice(1).join(" · ")}` : c.account.label) : "No channel";
     b.c_accounts = c.accounts.length > 1;
+    b.c_friend = friendButton(c.relation ?? null, this.friending === pp.id);
     b.c_gmail = c.account?.kind === "gmail";
     b.c_connected = !!c.account?.connected;
     b.c_more = c.more;
@@ -1338,6 +1342,20 @@ class PersonsTab {
     this.render();
     const r = await this.api("POST", `chat/${encodeURIComponent(open.id)}/send`, body);
     if (r.status !== 200 || r.body.ok === false) this.setToast(String(r.body.error ?? "Not sent"));
+    void this.loadChat(false);
+  }
+
+  /** The header's Add friend (Discord): a friend request to the person; the click is the user's go-ahead. */
+  private async addFriend(): Promise<void> {
+    const open = this.ui.open;
+    const c = this.chat;
+    if (!open || !c || this.friending || !["add", "accept"].includes(friendButton(c.relation ?? null, false))) return;
+    this.friending = open.id;
+    this.render();
+    const r = await this.api("POST", `chat/${encodeURIComponent(open.id)}/friend`, { section: open.section, account: c.account?.id });
+    this.friending = null;
+    if (r.status !== 200 || r.body.ok === false) this.setToast(String(r.body.error ?? "The friend request didn't go"));
+    else this.setToast(r.body.relation === "friend" ? "You're friends on Discord now" : "Friend request sent");
     void this.loadChat(false);
   }
 

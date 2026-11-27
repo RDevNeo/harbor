@@ -15,7 +15,7 @@ import { DEFAULT_LISTS } from "./model/data.ts";
 import { applyDiscordUser, applyPhoto, applySocialPhoto, cleanUsername, emailsOf, inScope, isSettled, personLabel, photoStale, renamePerson, settlePerson, socialPhotoKey, socialPhotoSources, socialPhotoStale, staleProfiles, unsettlePerson, wakeSettled } from "./model/data.ts";
 import { mergePresence, PRESENCE_RANK, rowStatus, type RowStatus } from "./model/presence.ts";
 import { badgeChats, chatUnread, defaultChat, laterMark, migrateAllSeen, seenOf } from "./model/readState.ts";
-import type { AppData, ChannelKind, ChannelUser, ConnEvent, ConnState, Conversation, LookupResult, Message, OutgoingFile, Person, PresenceStatus, SectionId, SendResult } from "./model/types.ts";
+import type { AppData, ChannelKind, ChannelUser, ConnEvent, ConnState, Conversation, LookupResult, Message, OutgoingFile, Person, PresenceStatus, Relation, SectionId, SendResult } from "./model/types.ts";
 import type { Connection, ConnFactory, ConnMeta } from "./conn/types.ts";
 import { attachmentFileName } from "./conn/discord-core.ts";
 import { DataFile, loadConnections, personsDir, saveConnections } from "./store.ts";
@@ -40,6 +40,8 @@ export interface Slice {
   presence: Record<string, PresenceStatus>;
   lastSeen: Record<string, number>;
   typing: Typing;
+  /** Discord: friends, pending requests and blocks by id (none = absent). */
+  relations: Record<string, Relation>;
 }
 
 /** A connection as the views see it (meta + live slice). */
@@ -92,7 +94,7 @@ export interface ServiceOptions {
 }
 
 const REFRESH_EVERY_MS = 30 * 60_000;
-const emptySlice = (): Slice => ({ state: { status: "starting", me: null, gateway: "down" }, convos: {}, outgoing: {}, presence: {}, lastSeen: {}, typing: {} });
+const emptySlice = (): Slice => ({ state: { status: "starting", me: null, gateway: "down" }, convos: {}, outgoing: {}, presence: {}, lastSeen: {}, typing: {}, relations: {} });
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const without = <T>(o: Record<string, T>, k: string): Record<string, T> => {
@@ -397,6 +399,15 @@ export class PersonsService {
       });
     } else if (ev.type === "users") {
       this.applyUsers(ev.users);
+    } else if (ev.type === "relations") {
+      this.patch(id, (s) => {
+        const r: Record<string, Relation> = ev.all ? {} : { ...s.relations };
+        for (const [k, v] of Object.entries(ev.relations)) {
+          if (v) r[k] = v;
+          else delete r[k];
+        }
+        return { ...s, relations: r };
+      });
     }
   }
 
@@ -751,6 +762,18 @@ export class PersonsService {
     const r = await this.deliver(m, pid, key, item);
     if (r.ok) this.markSeen(personId, connId, undefined, pid);
     return r;
+  }
+
+  /** Discord: sends `peer` a friend request (or accepts theirs) on that connection; on the user's click only. */
+  async addFriend(connId: string, peer: string): Promise<{ ok: boolean; relation?: Relation; error?: string }> {
+    const c = this.conns.get(connId);
+    if (!c?.addFriend) return { ok: false, error: "Friend requests are Discord's only" };
+    if (!this.view(connId)?.connected) return { ok: false, error: "Connect Discord first" };
+    try {
+      return await c.addFriend(peer);
+    } catch (e) {
+      return { ok: false, error: errText(e) };
+    }
   }
 
   retry(personId: string, connId: string, key: string, peer?: string): void {
