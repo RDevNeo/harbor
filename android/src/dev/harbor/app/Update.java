@@ -3,8 +3,6 @@ package dev.harbor.app;
 import android.app.Activity;
 import android.app.ActivityManager;
 import android.app.KeyguardManager;
-import android.app.Notification;
-import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
@@ -935,47 +933,23 @@ public class Update extends BroadcastReceiver {
         }
     }
 
-    /** "Hub X is ready: tap to install": once per version. The tap opens Settings, which
-     *  installs it in front (Settings.update), where Play Protect can ask to scan it. */
+    /** A version that couldn't install by itself (Play Protect, the network, …): offered once per
+     *  version, in the app only (the sidebar and Settings › Update say it; a tap installs it in
+     *  front, where Play Protect can ask to scan it). No notification since the phone posts only
+     *  what needs you (android/PROTOCOL.md "Notifications"). */
     static void offer(Context c, long code) {
         SharedPreferences p = Ui.prefs(c);
         if (code <= 0 || p.getLong("offered_code", 0) == code) return;
-        // Settings opens on a workspace; the update itself has nothing to do with it.
-        Hub h = Hub.get(c, Hub.last(c));
-        if (h == null && !Hub.all(c).isEmpty()) h = Hub.all(c).get(0);
-        if (h == null) return;
-        try {
-            NotificationManager nm = c.getSystemService(NotificationManager.class);
-            nm.createNotificationChannel(new NotificationChannel("update", "App updates", NotificationManager.IMPORTANCE_LOW));
-            // Harbor's start screen under it, so Back from Settings lands in the app.
-            Intent home = new Intent(c, Hubs.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
-            Intent install = new Intent(c, Settings.class).putExtra("hub", h.id).putExtra("install", code);
-            PendingIntent pi = PendingIntent.getActivities(c, 12, new Intent[] { home, install }, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-            Notification n = new Notification.Builder(c, "update").setSmallIcon(Ui.statIcon(c))
-                    .setContentTitle("Hub " + Settings.name(code) + " is ready")
-                    .setContentText("It couldn't install by itself: tap to install it.")
-                    .setStyle(new Notification.BigTextStyle().bigText(blocked(c)
-                            ? "It couldn't install by itself: tap to install it. Google Play Protect may ask to scan it first (Scan app)."
-                            : "It couldn't install by itself: tap to install it."))
-                    .setContentIntent(pi).setAutoCancel(true).build();
-            nm.notify("update", 1, n);
-            p.edit().putLong("offered_code", code).apply();
-        } catch (Exception ignored) { } // notifications off: Settings › Update still shows it
+        p.edit().putLong("offered_code", code).apply();
+        Runnable r = changed;
+        if (r != null) Ui.main.post(r);
     }
 
-    /** The system's confirmation, behind a notification: tap to finish installing. */
+    /** The system wants to confirm an install while nobody sees Hub: no dialog over what the user
+     *  does and no notification; Settings › Update installs it in front next time (it says so). */
     private static void ask(Context c, Intent confirm, long to) {
-        try {
-            NotificationManager nm = c.getSystemService(NotificationManager.class);
-            nm.createNotificationChannel(new NotificationChannel("update", "App updates", NotificationManager.IMPORTANCE_LOW));
-            PendingIntent pi = PendingIntent.getActivity(c, 11, confirm, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-            String v = to > 0 ? " " + Settings.name(to) : "";
-            Notification n = new Notification.Builder(c, "update").setSmallIcon(Ui.statIcon(c))
-                    .setContentTitle("Hub" + v + " is ready")
-                    .setContentText("Android asks you to confirm the update: tap to install it.")
-                    .setContentIntent(pi).setAutoCancel(true).build();
-            nm.notify("update", 1, n);
-            if (to > 0) Ui.prefs(c).edit().putLong("offered_code", to).apply(); // offered: no second notification
-        } catch (Exception ignored) { } // notifications off: Settings › Update still shows it
+        if (to > 0) Ui.prefs(c).edit().putLong("offered_code", to).apply();
+        Runnable r = changed;
+        if (r != null) Ui.main.post(r);
     }
 }

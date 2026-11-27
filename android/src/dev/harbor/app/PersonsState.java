@@ -241,6 +241,8 @@ final class PersonsState {
     /** A person's chat, from the row of a section ("" = All people). */
     void openChat(String id, String section) {
         navigated();
+        // Their notification goes once their chat is open (read here).
+        if (hub != null && id != null) Notes.clearPerson(a, hub.id, id);
         if (chat != null) closeChat();
         chat = new PersonsChat(this, id, section == null ? "" : section);
         push(chat.view);
