@@ -450,23 +450,28 @@ final class CollectorCreator {
         return f;
     }
 
-    /** A lead's detail, full screen (the PC's dialog, the SpokPay CRM's creator profile): under the bar Open channel,
-     *  Edit and "3 of 12"; picture, name, PLATFORM @handle, Has Contact; the stat tiles with data; MOST RECENT as the
-     *  podium (#2, #1, #3); Bio (a few lines); Reach (Email, Discord, WhatsApp, Instagram: one value, Save / Clear,
-     *  Send). At the bottom the review bar (the PC's): Reject / Skip / Approve (to the Approved list), each going on to
-     *  the next lead of the list the detail was opened from.
-     *  GET /v1/collector/creator, then POST fill (an older lead's missing data, read once). */
+    /** A lead's profile, full screen over the tab (the PC's detail dialog, the SpokPay CRM's creator profile, on the
+     *  phone's design system). The top bar: back, the name, "3 of 121" and the previous / next lead of the list it was
+     *  opened from. Then the profile: the picture, name, platform and handle, Approved / Restricted / Has contact, the
+     *  stat tiles (followers, videos, views), Send message and Open channel, then Edit, Email, Approve to Persons ›
+     *  Creators and Restrict as chips; then cards: Recent videos (3, a tap opens one), Bio, Contact (the email with
+     *  where it was found, typed by hand with its pencil; Reach: Email, Discord, WhatsApp, Instagram, one value, Save /
+     *  Clear, Send), Links, Note (private), and where it was found. At the bottom the review bar: Reject / Skip /
+     *  Approve, each going on to the next lead. GET /v1/collector/creator, then POST fill (an older lead's missing data,
+     *  read once). */
     static final class Detail implements Collector.Screen {
         private final Collector a;
         private final Hub h;
         private final String id, title;
-        private final LinearLayout root, body, foot, acts;
+        private final LinearLayout root, body;
+        private final Ds.TopBar bar;
+        private final TextView prev, next;
         private final java.util.List<String> queue;
         private boolean busy;
         private JSONObject d;
         private String kind = "email";
         private final java.util.Map<String, String> drafts = new java.util.HashMap<>();
-        private EditText field;
+        private EditText field, noteField;
         private boolean filling;
 
         Detail(Collector a, String id, String name) { this(a, id, name, new java.util.ArrayList<>()); }
@@ -479,30 +484,35 @@ final class CollectorCreator {
             this.queue = queue;
             root = Ui.col(a);
             root.setBackgroundColor(Ui.BG);
-            root.addView(topBar(a, name, a::pop), Ui.fill());
-            // Open channel, Edit, where this lead is in the list (drawn with the detail).
-            acts = Ui.row(a);
-            acts.setGravity(Gravity.CENTER_VERTICAL);
-            acts.setPadding(Ui.dp(16), 0, Ui.dp(16), Ui.dp(8));
-            root.addView(acts, Ui.fill());
+            bar = Ds.topBar(a, Ds.backButton(a, v -> a.pop()), name);
+            int pos = queue.indexOf(id);
+            if (pos >= 0 && queue.size() > 1) bar.sub((pos + 1) + " of " + queue.size(), Ui.G700);
+            prev = bar.action(Ui.I_UP_CHEVRON, "Previous lead", v -> step(-1));
+            next = bar.action(Ui.I_DOWN, "Next lead", v -> step(1));
+            boolean paged = pos >= 0 && queue.size() > 1;
+            prev.setVisibility(paged ? View.VISIBLE : View.GONE);
+            next.setVisibility(paged ? View.VISIBLE : View.GONE);
+            prev.setAlpha(pos > 0 ? 1f : 0.3f);
+            next.setAlpha(pos >= 0 && pos < queue.size() - 1 ? 1f : 0.3f);
+            root.addView(bar.view, Ui.fill());
             ScrollView sv = new ScrollView(a);
             body = Ui.col(a);
-            body.setPadding(Ui.dp(16), Ui.dp(4), Ui.dp(16), Ui.dp(24));
+            body.setPadding(Ui.dp(16), Ui.dp(8), Ui.dp(16), Ui.dp(24));
             sv.addView(body);
             root.addView(sv, new LinearLayout.LayoutParams(-1, 0, 1));
-            foot = Ui.col(a);
-            foot.setBackground(Ui.round(Ui.BG2, 0, 0));
+            LinearLayout foot = Ui.col(a);
+            foot.setBackgroundColor(Ui.BG);
             View top = new View(a);
             top.setBackgroundColor(Ui.LINE);
-            foot.addView(top, new LinearLayout.LayoutParams(-1, 1));
+            foot.addView(top, new LinearLayout.LayoutParams(-1, Math.max(1, Ui.dp(0.5f))));
             // The review bar: three equal cells, hairlines between.
-            LinearLayout bar = Ui.row(a);
-            bar.addView(cell(Ui.I_X, false, "Reject", Ui.RED, "reject"), new LinearLayout.LayoutParams(0, Ui.dp(56), 1));
-            bar.addView(rule(), new LinearLayout.LayoutParams(1, -1));
-            bar.addView(cell(null, true, "Skip", Ui.G700, "skip"), new LinearLayout.LayoutParams(0, Ui.dp(56), 1));
-            bar.addView(rule(), new LinearLayout.LayoutParams(1, -1));
-            bar.addView(cell(Ui.I_CHECK, false, "Approve", Ui.GREEN, "approve"), new LinearLayout.LayoutParams(0, Ui.dp(56), 1));
-            foot.addView(bar, Ui.fill());
+            LinearLayout rb = Ui.row(a);
+            rb.addView(cell(Ui.I_X, false, "Reject", Ui.RED, "reject"), new LinearLayout.LayoutParams(0, Ui.dp(56), 1));
+            rb.addView(rule(), new LinearLayout.LayoutParams(Math.max(1, Ui.dp(0.5f)), -1));
+            rb.addView(cell(null, true, "Skip", Ui.G700, "skip"), new LinearLayout.LayoutParams(0, Ui.dp(56), 1));
+            rb.addView(rule(), new LinearLayout.LayoutParams(Math.max(1, Ui.dp(0.5f)), -1));
+            rb.addView(cell(Ui.I_CHECK, false, "Approve", Ui.GREEN, "approve"), new LinearLayout.LayoutParams(0, Ui.dp(56), 1));
+            foot.addView(rb, Ui.fill());
             root.addView(foot, Ui.fill());
             body.addView(Ds.empty(a, "Loading…"), Ui.fill());
             load(true);
@@ -511,6 +521,14 @@ final class CollectorCreator {
         @Override public View view() { return root; }
 
         @Override public void shown() { load(false); }
+
+        /** The previous (-1) or next (+1) lead of the list, in place of this one. */
+        private void step(int dir) {
+            int at = queue.indexOf(id) + dir;
+            if (at < 0 || at >= queue.size()) return;
+            String other = queue.get(at);
+            a.replace(new Detail(a, other, a.nameOf(other), queue));
+        }
 
         private View rule() {
             View v = new View(a);
@@ -522,7 +540,7 @@ final class CollectorCreator {
         private View cell(String glyph, boolean down, String label, int color, String what) {
             LinearLayout c = Ui.row(a);
             c.setGravity(Gravity.CENTER);
-            c.setBackground(Ui.press(Ui.BG2, 0, 0));
+            c.setBackground(Ui.press(Ui.BG, 0, 0));
             if (glyph != null) c.addView(Ui.icon(a, glyph, 16, color), new LinearLayout.LayoutParams(Ui.dp(18), Ui.dp(18)));
             if (down) {
                 ImageView iv = new ImageView(a);
@@ -566,7 +584,7 @@ final class CollectorCreator {
             });
         }
 
-        /** A fresh detail; the Reach field keeps what was typed unless reset. */
+        /** A fresh detail; the Reach field and the note keep what was typed unless reset. */
         private void take(JSONObject r, boolean reset) {
             String typed = field != null ? field.getText().toString() : null;
             JSONObject old = d;
@@ -587,187 +605,239 @@ final class CollectorCreator {
             draw();
         }
 
-        private TextView section(String glyph, String title) {
+        /** A card with a caps head (glyph, TITLE, an optional quiet action on the right); its content goes into it. */
+        private LinearLayout card(String glyph, String head, String action, View.OnClickListener on) {
+            LinearLayout c = Ds.card(a);
             LinearLayout r = Ui.row(a);
             r.setGravity(Gravity.CENTER_VERTICAL);
-            r.setPadding(0, Ui.dp(18), 0, Ui.dp(6));
-            r.addView(Ui.icon(a, glyph, 12, Ui.G600), new LinearLayout.LayoutParams(Ui.dp(14), Ui.dp(14)));
-            TextView t = Ui.bold(a, title, 10.5f, Ui.G600);
+            r.setPadding(0, 0, 0, Ui.dp(8));
+            r.addView(Ui.icon(a, glyph, 13, Ui.G600), new LinearLayout.LayoutParams(Ui.dp(15), Ui.dp(15)));
+            TextView t = Ui.text(a, head, Ds.T_CAPS, Ui.G600);
+            t.setTypeface(Ui.semi);
             t.setLetterSpacing(0.06f);
-            t.setPadding(Ui.dp(6), 0, 0, 0);
-            r.addView(t, Ui.wrap());
-            body.addView(r, Ui.fill());
-            return t;
+            t.setAllCaps(true);
+            t.setPadding(Ui.dp(7), 0, 0, 0);
+            r.addView(t, Ui.weight());
+            if (action != null) {
+                TextView b = Ui.bold(a, action, 13, Ui.G900);
+                b.setPadding(Ui.dp(10), Ui.dp(4), Ui.dp(4), Ui.dp(4));
+                b.setBackground(Ui.press(0, 0, 10));
+                b.setOnClickListener(on);
+                r.addView(b, Ui.wrap());
+            }
+            c.addView(r, Ui.fill());
+            body.addView(c, Ui.margins(Ui.fill(), 0, 12, 0, 0));
+            return c;
         }
 
-        private TextView quiet(String s) {
-            TextView t = Ui.text(a, s, 13, Ui.G600);
-            body.addView(t, Ui.fill());
+        /** A small pill under the name (Approved, Restricted, Has contact). */
+        private TextView tag(String s, int tone) {
+            TextView t = Ui.bold(a, s, 11.5f, tone);
+            t.setIncludeFontPadding(false);
+            t.setPadding(Ui.dp(9), Ui.dp(4), Ui.dp(9), Ui.dp(4));
+            t.setBackground(Ui.round((tone & 0x00ffffff) | 0x24000000, 0, 10));
             return t;
         }
 
         private void draw() {
             body.removeAllViews();
-            acts.removeAllViews();
             field = null;
+            noteField = null;
             if (d == null) return;
-            // Open channel, Edit, where this lead is in the list.
-            final String url = d.optString("url");
-            if (!url.isEmpty()) acts.addView(Ui.button(a, d.optString("openLabel", "Open profile"), false, v -> Ui.openUrl(a, url)), Ui.wrap());
-            acts.addView(Ui.button(a, "Edit", true, v -> edit()), Ui.margins(Ui.wrap(), url.isEmpty() ? 0 : 8, 0, 0, 0));
-            acts.addView(new View(a), Ui.weight());
-            int pos = queue.indexOf(id);
-            if (pos >= 0 && queue.size() > 1) acts.addView(Ui.text(a, (pos + 1) + " of " + queue.size(), 12.5f, Ui.G600), Ui.wrap());
-            final String name = d.optString("name");
-            // Header: picture (a rounded square), name, PLATFORM @handle, Has Contact.
-            LinearLayout head = Ui.row(a);
-            head.setGravity(Gravity.CENTER_VERTICAL);
-            head.setPadding(0, Ui.dp(8), 0, Ui.dp(4));
+            final String name = d.optString("name"), url = d.optString("url");
+            bar.title.setText(name);
+            // The profile: the picture (round), the name, platform · @handle, the tags.
+            LinearLayout head = Ui.col(a);
+            head.setGravity(Gravity.CENTER_HORIZONTAL);
+            head.setPadding(0, Ui.dp(8), 0, 0);
             android.widget.FrameLayout pic = new android.widget.FrameLayout(a);
-            pic.setBackground(Ui.round(Collector.color(id), 0, 14));
-            pic.setClipToOutline(true);
-            TextView ini = Ui.bold(a, Collector.initials(name), 20, 0xffffffff);
+            TextView ini = Ui.bold(a, Collector.initials(name), 30, 0xffffffff);
             ini.setGravity(Gravity.CENTER);
+            ini.setIncludeFontPadding(false);
+            ini.setBackground(Ui.round(Collector.color(id), 0, 44));
             pic.addView(ini, new android.widget.FrameLayout.LayoutParams(-1, -1));
             String av = d.optString("avatarId", "");
             if (!av.isEmpty() && !"null".equals(av) && h != null) {
                 ImageView iv = new ImageView(a);
                 iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                iv.setOutlineProvider(Thumbs.OVAL);
+                iv.setClipToOutline(true);
                 pic.addView(iv, new android.widget.FrameLayout.LayoutParams(-1, -1));
-                PersonsUi.image(a, h, "/v1/collector/avatar?id=" + av, iv, Ui.dp(112), null);
+                Thumbs.load(a, h, "/v1/collector/avatar?id=" + av, iv, Ui.dp(88), Ui.dp(88));
             }
-            head.addView(pic, new LinearLayout.LayoutParams(Ui.dp(56), Ui.dp(56)));
-            LinearLayout who = Ui.col(a);
-            who.setPadding(Ui.dp(12), 0, 0, 0);
-            who.addView(Ui.bold(a, name, 18, Ui.FG), Ui.fill());
-            LinearLayout l2 = Ui.row(a);
-            l2.setGravity(Gravity.CENTER_VERTICAL);
-            TextView pl = Ui.text(a, d.optString("platform").toUpperCase(Locale.ROOT), 12, Ui.G600);
-            pl.setLetterSpacing(0.05f);
-            l2.addView(pl, Ui.wrap());
+            head.addView(pic, new LinearLayout.LayoutParams(Ui.dp(88), Ui.dp(88)));
+            TextView nm = Ui.bold(a, name, 20, Ui.FG);
+            nm.setGravity(Gravity.CENTER);
+            nm.setLetterSpacing(-0.01f);
+            head.addView(nm, Ui.margins(Ui.wrap(), 0, 12, 0, 0));
             String handle = d.optString("handle");
-            if (!handle.isEmpty()) l2.addView(Ui.subtitle(Ui.text(a, handle, 12.5f, Ui.G700)), Ui.margins(Ui.wrap(), 8, 0, 0, 0));
-            if (d.optBoolean("hasContact")) {
-                TextView chip = Ui.text(a, "Has Contact", 11, Ui.G900);
-                chip.setPadding(Ui.dp(8), Ui.dp(2), Ui.dp(8), Ui.dp(2));
-                chip.setBackground(Ui.round(Ui.G200, 0, 10));
-                l2.addView(chip, Ui.margins(Ui.wrap(), 8, 0, 0, 0));
-            }
+            TextView who = Ui.subtitle(Ui.text(a, join(" · ", d.optString("platform"), handle), 14, Ui.G700));
+            head.addView(who, Ui.margins(Ui.wrap(), 0, 3, 0, 0));
+            LinearLayout tags = Ui.row(a);
             boolean restricted = d.optBoolean("restricted"), approved = !restricted && d.optBoolean("approved");
-            if (restricted || approved) {
-                int tone = approved ? Ui.GREEN : Ui.RED;
-                TextView chip = Ui.text(a, approved ? "Approved" : "Restricted", 11, tone);
-                chip.setPadding(Ui.dp(8), Ui.dp(2), Ui.dp(8), Ui.dp(2));
-                chip.setBackground(Ui.round((tone & 0x00ffffff) | 0x1f000000, 0, 10));
-                l2.addView(chip, Ui.margins(Ui.wrap(), 6, 0, 0, 0));
-            }
-            who.addView(l2, Ui.margins(Ui.fill(), 0, 3, 0, 0));
-            head.addView(who, Ui.weight());
+            if (approved) tags.addView(tag("Approved", Ui.GREEN), Ui.margins(Ui.wrap(), 3, 0, 3, 0));
+            if (restricted) tags.addView(tag("Restricted", Ui.RED), Ui.margins(Ui.wrap(), 3, 0, 3, 0));
+            if (d.optBoolean("hasContact")) tags.addView(tag("Has contact", Ui.G900), Ui.margins(Ui.wrap(), 3, 0, 3, 0));
+            if (tags.getChildCount() > 0) head.addView(tags, Ui.margins(Ui.wrap(), 0, 10, 0, 0));
             body.addView(head, Ui.fill());
-            // The stat tiles (only those with data).
+            // The stat tiles (only those with data): followers, videos, views.
             JSONArray st = d.optJSONArray("stats");
             if (st != null && st.length() > 0) {
                 LinearLayout tiles = Ui.row(a);
+                tiles.setBaselineAligned(false);
                 for (int i = 0; i < st.length(); i++) {
                     JSONObject s = st.optJSONObject(i);
                     if (s == null) continue;
                     LinearLayout t = Ui.col(a);
-                    t.setPadding(Ui.dp(10), Ui.dp(8), Ui.dp(10), Ui.dp(8));
-                    t.setBackground(Ui.round(Ui.G100, 0, 10));
-                    LinearLayout v = Ui.row(a);
-                    v.setGravity(Gravity.CENTER_VERTICAL);
+                    t.setGravity(Gravity.CENTER_HORIZONTAL);
+                    t.setPadding(Ui.dp(8), Ui.dp(10), Ui.dp(8), Ui.dp(10));
+                    t.setBackground(Ui.round(Ui.CARD, Ui.LINE, 12));
+                    t.addView(Ui.bold(a, s.optString("value"), 17, Ui.FG), Ui.wrap());
+                    LinearLayout l = Ui.row(a);
+                    l.setGravity(Gravity.CENTER_VERTICAL);
                     String ic = s.optString("icon");
-                    v.addView(Ui.icon(a, "video".equals(ic) ? I_VIDEO : "heart".equals(ic) ? I_HEART : "eye".equals(ic) ? I_EYE : Ui.I_USERS, 13, Ui.G600), new LinearLayout.LayoutParams(Ui.dp(15), Ui.dp(15)));
-                    v.addView(Ui.bold(a, s.optString("value"), 15, Ui.FG), Ui.margins(Ui.wrap(), 5, 0, 0, 0));
-                    t.addView(v, Ui.fill());
-                    TextView lb = Ui.text(a, s.optString("label").toUpperCase(Locale.ROOT), 10, Ui.G600);
-                    lb.setLetterSpacing(0.05f);
-                    t.addView(lb, Ui.fill());
+                    l.addView(Ui.icon(a, "video".equals(ic) ? I_VIDEO : "heart".equals(ic) ? I_HEART : "eye".equals(ic) ? I_EYE : Ui.I_USERS, 12, Ui.G600), new LinearLayout.LayoutParams(Ui.dp(14), Ui.dp(14)));
+                    l.addView(Ui.subtitle(Ui.text(a, s.optString("label"), 12, Ui.G700)), Ui.margins(Ui.wrap(), 4, 0, 0, 0));
+                    t.addView(l, Ui.margins(Ui.wrap(), 0, 2, 0, 0));
                     LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1);
                     if (i > 0) lp.leftMargin = Ui.dp(8);
                     tiles.addView(t, lp);
                 }
-                body.addView(tiles, Ui.margins(Ui.fill(), 0, 12, 0, 0));
+                body.addView(tiles, Ui.margins(Ui.fill(), 0, 16, 0, 0));
             } else if (filling) {
-                body.addView(Collector.pad(Ui.text(a, "Reading their profile…", 12.5f, Ui.G600), 10), Ui.fill());
+                TextView t = Ui.text(a, "Reading their profile…", 12.5f, Ui.G600);
+                t.setGravity(Gravity.CENTER);
+                body.addView(t, Ui.margins(Ui.fill(), 0, 14, 0, 0));
             }
-            // MOST RECENT: the podium, #2, #1 (wider, featured), #3.
+            // Send message (primary) and Open channel; then the quieter actions as chips.
+            LinearLayout acts = Ui.row(a);
+            TextView send = Ui.button(a, "Send message", true, v -> a.push(new Compose(a, id, name)));
+            acts.addView(send, new LinearLayout.LayoutParams(0, -2, 1));
+            if (!url.isEmpty()) acts.addView(Ui.button(a, d.optString("openLabel", "Open profile"), false, v -> Ui.openUrl(a, url)), Ui.margins(new LinearLayout.LayoutParams(0, -2, 1), 8, 0, 0, 0));
+            body.addView(acts, Ui.margins(Ui.fill(), 0, 16, 0, 0));
+            HorizontalScrollView hs = new HorizontalScrollView(a);
+            hs.setHorizontalScrollBarEnabled(false);
+            LinearLayout chips = Ui.row(a);
+            chips.addView(Ds.chip(a, "Edit profile", false, v -> edit()), Ui.margins(Ui.wrap(), 0, 0, 6, 0));
+            if (!approved) chips.addView(Ds.chip(a, "Approve to Persons › Creators", false, v -> approveToPersons(name)), Ui.margins(Ui.wrap(), 0, 0, 6, 0));
+            else chips.addView(Ds.chip(a, "Unapprove", false, v -> a.post("approve", () -> { Ui.toast(a, name + " is back in Available"); load(false); }, "id", id, "approved", false)), Ui.margins(Ui.wrap(), 0, 0, 6, 0));
+            if (!approved) chips.addView(Ds.chip(a, restricted ? "Unrestrict" : "Restrict", false, v -> a.post("restrict", () -> {
+                Ui.toast(a, restricted ? name + " is back in Available" : name + " moved to Restricted");
+                load(false);
+            }, "id", id, "restricted", !restricted)), Ui.margins(Ui.wrap(), 0, 0, 6, 0));
+            if (!url.isEmpty()) chips.addView(Ds.chip(a, "Copy link", false, v -> Ui.copy(a, url)), Ui.wrap());
+            hs.addView(chips);
+            body.addView(hs, Ui.margins(Ui.fill(), 0, 10, 0, 0));
+            // Recent videos: three across (16:9 for YouTube, upright for Shorts, TikTok and Reels).
             JSONArray rv = d.optJSONArray("recent");
             if (rv != null && rv.length() > 0) {
-                LinearLayout hd = Ui.row(a);
-                hd.setGravity(Gravity.CENTER);
-                hd.setPadding(0, Ui.dp(20), 0, Ui.dp(10));
-                hd.addView(Ui.icon(a, I_FLAME, 15, Ui.G600), new LinearLayout.LayoutParams(Ui.dp(17), Ui.dp(17)));
-                TextView mr = Ui.bold(a, "MOST RECENT", 13, Ui.G900);
-                mr.setLetterSpacing(0.2f);
-                mr.setPadding(Ui.dp(6), 0, 0, 0);
-                hd.addView(mr, Ui.wrap());
-                body.addView(hd, Ui.fill());
-                LinearLayout pod = Ui.row(a);
-                pod.setGravity(Gravity.BOTTOM);
-                int avail = a.getResources().getDisplayMetrics().widthPixels - Ui.dp(32) - Ui.dp(12);
-                int[] order = {1, 0, 2};
-                for (int j = 0; j < 3; j++) {
-                    int i = order[j];
-                    boolean featured = i == 0;
-                    float w = featured ? 1.25f : 1f;
-                    LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, w);
-                    if (j > 0) lp.leftMargin = Ui.dp(6);
+                LinearLayout c = card(I_FLAME, "Recent videos", null, null);
+                LinearLayout row = Ui.row(a);
+                row.setBaselineAligned(false); // tops in line, whatever their titles' lines
+                row.setGravity(Gravity.TOP);
+                int w = (a.getResources().getDisplayMetrics().widthPixels - Ui.dp(32) - Ui.dp(Ds.CARD_PAD_X * 2) - Ui.dp(12)) / 3;
+                boolean upright = !"youtube".equals(d.optString("platformKey"));
+                for (int i = 0; i < 3; i++) {
+                    LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1);
+                    if (i > 0) lp.leftMargin = Ui.dp(6);
                     JSONObject v = i < rv.length() ? rv.optJSONObject(i) : null;
-                    if (v == null) { pod.addView(new View(a), lp); continue; }
-                    pod.addView(tile(v, featured, Math.round(avail * w / 3.25f)), lp);
+                    if (v == null) { row.addView(new View(a), lp); continue; }
+                    row.addView(tile(v, w, upright ? w * 4 / 3 : w * 9 / 16), lp);
                 }
-                body.addView(pod, Ui.fill());
+                c.addView(row, Ui.fill());
             }
-            // Bio
-            section(I_NOTE, "BIO");
+            // Bio: a few lines (a tap shows it all).
+            LinearLayout bc = card(I_NOTE, "Bio", null, null);
             String bio = d.optString("bio");
-            if (bio.isEmpty()) quiet(filling ? "Reading their profile…" : "No bio on the profile.");
+            if (bio.isEmpty()) bc.addView(Ui.text(a, filling ? "Reading their profile…" : "No bio on the profile.", 13.5f, Ui.G600), Ui.fill());
             else {
-                // A few lines at most (a tap shows it all).
-                TextView t = Ui.text(a, bio, 13.5f, Ui.G900);
-                t.setMaxLines(4);
+                TextView t = Ui.text(a, bio, 14, Ui.G900);
+                t.setLineSpacing(0, 1.15f);
+                t.setMaxLines(5);
                 t.setEllipsize(TextUtils.TruncateAt.END);
                 t.setOnClickListener(v -> { t.setMaxLines(Integer.MAX_VALUE); t.setEllipsize(null); });
-                body.addView(t, Ui.fill());
+                bc.addView(t, Ui.fill());
             }
-            drawReach();
+            drawContact();
+            drawLinks();
+            drawNote();
+            // Where it came from, and what happened with them.
+            String via = d.optString("foundVia"), ct = d.optString("contacted"), an = d.optString("approvedNote");
+            String meta = join("\n", via.isEmpty() ? "" : "Found searching “" + via + "”", ct, an);
+            if (!meta.isEmpty()) {
+                TextView t = Ui.text(a, meta, 12.5f, Ui.G600);
+                t.setGravity(Gravity.CENTER);
+                t.setLineSpacing(0, 1.2f);
+                body.addView(t, Ui.margins(Ui.fill(), 0, 16, 0, 0));
+            }
         }
 
-        /** One of the podium's videos: 16:9 thumbnail, two lines of title, "yesterday · 22K views"; a tap opens it. */
-        private View tile(JSONObject v, boolean featured, int w) {
+        /** Approve and add them to Persons › Creators (no message sent): the PC's "Approve to: Persons". */
+        private void approveToPersons(String name) {
+            Ui.dialog(a).setTitle("Approve " + name + "?")
+                    .setMessage("They leave Available for Approved and are added to Persons › Creators. No message is sent.")
+                    .setPositiveButton("Approve", (x, w) -> a.post("approve", () -> {
+                        Ui.toast(a, name + " approved and added to Persons › Creators");
+                        load(false);
+                    }, "id", id, "approved", true, "to", "persons"))
+                    .setNegativeButton("Cancel", null).show();
+        }
+
+        /** One recent video: its thumbnail (w x th px), two lines of title, "yesterday · 22K views"; a tap opens it. */
+        private View tile(JSONObject v, int w, int th) {
             LinearLayout t = Ui.col(a);
-            t.setPadding(Ui.dp(5), Ui.dp(5), Ui.dp(5), Ui.dp(6));
-            t.setBackground(Ui.press(featured ? Ui.G200 : Ui.G100, featured ? Ui.LINE : 0, 10));
+            t.setBackground(Ui.press(0, 0, 8));
             ImageView iv = new ImageView(a);
             iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            iv.setBackground(Ui.round(0xff000000, 0, 6));
+            iv.setBackground(Ui.round(Ui.G200, 0, 8));
             iv.setClipToOutline(true);
             String tid = v.optString("thumbId", "");
-            if (!tid.isEmpty() && !"null".equals(tid) && h != null) PersonsUi.image(a, h, "/v1/collector/avatar?id=" + tid, iv, Ui.dp(200), null);
-            t.addView(iv, new LinearLayout.LayoutParams(-1, Math.max(Ui.dp(40), (w - Ui.dp(10)) * 9 / 16)));
-            TextView ti = Ui.text(a, v.optString("title").isEmpty() ? "Untitled" : v.optString("title"), featured ? 12 : 11, Ui.FG);
+            Thumbs.load(a, h, tid.isEmpty() || "null".equals(tid) ? null : "/v1/collector/avatar?id=" + tid, iv, w, th);
+            t.addView(iv, new LinearLayout.LayoutParams(-1, th));
+            TextView ti = Ui.text(a, v.optString("title").isEmpty() ? "Untitled" : v.optString("title"), 12, Ui.FG);
             ti.setMaxLines(2);
             ti.setEllipsize(TextUtils.TruncateAt.END);
-            ti.setPadding(Ui.dp(2), Ui.dp(6), Ui.dp(2), 0);
+            ti.setPadding(0, Ui.dp(6), 0, 0);
             t.addView(ti, Ui.fill());
-            TextView me = Ui.subtitle(Ui.text(a, v.optString("meta"), 10, Ui.G600));
-            me.setPadding(Ui.dp(2), Ui.dp(2), Ui.dp(2), 0);
+            TextView me = Ui.subtitle(Ui.text(a, v.optString("meta"), 11, Ui.G600));
+            me.setPadding(0, Ui.dp(2), 0, Ui.dp(2));
             t.addView(me, Ui.fill());
             final String u = v.optString("url");
+            t.setContentDescription(v.optString("title"));
             t.setOnClickListener(x -> { if (!u.isEmpty()) Ui.openUrl(a, u); });
             return t;
         }
 
-        /** Reach: the four kinds, the picked one's value, Save / Clear, and the saved Reach's Send. */
-        private void drawReach() {
-            section(I_MAIL, "REACH");
-            body.addView(Ui.text(a, "One way to contact them. The matching icon shows on their card.", 12, Ui.G600), Ui.fill());
+        /** Contact: the email (where it was found; the pencil types one by hand, which a found one never replaces),
+         *  then Reach: the four kinds, the picked one's value, Save / Clear, and the saved Reach's Send. */
+        private void drawContact() {
+            LinearLayout c = card(I_MAIL, "Contact", null, null);
+            final String email = d.optString("email"), src = d.optString("emailSource");
+            LinearLayout er = Ui.row(a);
+            er.setGravity(Gravity.CENTER_VERTICAL);
+            er.setMinimumHeight(Ui.dp(44));
+            er.setBackground(Ui.press(0, 0, 10));
+            er.addView(Ui.icon(a, I_MAIL, 16, Ui.G700), new LinearLayout.LayoutParams(Ui.dp(20), Ui.dp(20)));
+            LinearLayout et = Ui.col(a);
+            et.setPadding(Ui.dp(10), 0, Ui.dp(6), 0);
+            et.addView(Ui.subtitle(Ui.text(a, email.isEmpty() ? "No email yet" : email, 14.5f, email.isEmpty() ? Ui.G600 : Ui.FG)), Ui.fill());
+            if (!src.isEmpty()) et.addView(Ui.subtitle(Ui.text(a, "typed".equals(src) ? "Typed by hand" : "Found in " + src, 12, Ui.G600)), Ui.fill());
+            er.addView(et, Ui.weight());
+            TextView pen = Ui.icon(a, I_PENCIL, 16, Ui.G900);
+            er.addView(pen, new LinearLayout.LayoutParams(Ui.dp(36), Ui.dp(36)));
+            er.setContentDescription(email.isEmpty() ? "Add email" : "Edit email");
+            er.setOnClickListener(v -> a.editEmail(id, email, () -> load(false)));
+            c.addView(er, Ui.fill());
+            View line = new View(a);
+            line.setBackgroundColor(Ui.LINE);
+            c.addView(line, Ui.margins(new LinearLayout.LayoutParams(-1, Math.max(1, Ui.dp(0.5f))), 0, 8, 0, 10));
+            TextView rh = Ui.text(a, "Reach: one way to contact them (its icon shows on their card).", 12.5f, Ui.G600);
+            c.addView(rh, Ui.fill());
             LinearLayout kinds = Ui.row(a);
             for (final String k : REACH) {
                 boolean on = k.equals(kind);
                 android.widget.FrameLayout b = new android.widget.FrameLayout(a);
-                b.setBackground(Ui.press(on ? tint(brandColor(k)) : Ui.G100, on ? Ui.G700 : 0, 8));
+                b.setBackground(Ui.press(on ? tint(brandColor(k)) : Ui.G100, on ? Ui.G700 : 0, 10));
                 View m = brand(a, k, 18, on ? brandColor(k) : Ui.G600);
                 if (!on) m.setAlpha(0.6f);
                 b.addView(m, new android.widget.FrameLayout.LayoutParams(Ui.dp(18), Ui.dp(18), Gravity.CENTER));
@@ -778,17 +848,17 @@ final class CollectorCreator {
                     kind = k;
                     draw();
                 });
-                kinds.addView(b, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(40), Ui.dp(40)), 0, 0, 6, 0));
+                kinds.addView(b, Ui.margins(new LinearLayout.LayoutParams(Ui.dp(44), Ui.dp(40)), 0, 0, 6, 0));
             }
-            body.addView(kinds, Ui.margins(Ui.fill(), 0, 8, 0, 8));
+            c.addView(kinds, Ui.margins(Ui.fill(), 0, 8, 0, 8));
             field = Ui.input(a, "email".equals(kind) ? "name@studio.com" : "discord".equals(kind) ? "Discord user ID (17-20 digits)" : "whatsapp".equals(kind) ? "+55 21 97570-9440" : "@handle", false);
             field.setInputType("email".equals(kind) ? InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS : "whatsapp".equals(kind) ? InputType.TYPE_CLASS_PHONE : "discord".equals(kind) ? InputType.TYPE_CLASS_NUMBER : InputType.TYPE_CLASS_TEXT);
             field.setTypeface(Ui.sans);
             String dv = drafts.get(kind);
             field.setText(dv == null ? "" : dv);
-            body.addView(field, Ui.fill());
-            if ("whatsapp".equals(kind)) body.addView(Collector.pad(Ui.text(a, "Country code first, like +55 21 97570-9440 (a Brazilian number without it gets +55).", 12, Ui.G600), 4), Ui.fill());
-            if ("discord".equals(kind)) body.addView(Collector.pad(Ui.text(a, "Enable Developer Mode, long-press a user › Copy User ID.", 12, Ui.G600), 4), Ui.fill());
+            c.addView(field, Ui.fill());
+            if ("whatsapp".equals(kind)) c.addView(Collector.pad(Ui.text(a, "Country code first, like +55 21 97570-9440 (a Brazilian number without it gets +55).", 12, Ui.G600), 4), Ui.fill());
+            if ("discord".equals(kind)) c.addView(Collector.pad(Ui.text(a, "Enable Developer Mode, long-press a user › Copy User ID.", 12, Ui.G600), 4), Ui.fill());
             LinearLayout btns = Ui.row(a);
             btns.addView(Ui.rowButton(a, "Save", true, v -> save(field.getText().toString().trim())), Ui.wrap());
             final String saved = d.optString("reach");
@@ -796,9 +866,65 @@ final class CollectorCreator {
             btns.addView(new View(a), Ui.weight());
             String send = d.optString("reachSend");
             if (!send.isEmpty()) btns.addView(Ui.rowButton(a, send, false, v -> go(saved, d.optString("reachValue"), d.optString("reachHref"))), Ui.wrap());
-            body.addView(btns, Ui.margins(Ui.fill(), 0, 8, 0, 0));
-            String ct = d.optString("contacted");
-            if (!ct.isEmpty()) body.addView(Collector.pad(Ui.text(a, ct, 12, Ui.G600), 6), Ui.fill());
+            c.addView(btns, Ui.margins(Ui.fill(), 0, 8, 0, 0));
+        }
+
+        /** Links from the profile (and typed ones): the brand's mark, the title and the address; a tap opens it, a long
+         *  press copies it. */
+        private void drawLinks() {
+            JSONArray ls = d.optJSONArray("links");
+            LinearLayout c = card(Ui.I_LINK, "Links", "Edit", v -> edit());
+            if (ls == null || ls.length() == 0) {
+                c.addView(Ui.text(a, "No links on the profile.", 13.5f, Ui.G600), Ui.fill());
+                return;
+            }
+            for (int i = 0; i < ls.length(); i++) {
+                JSONObject l = ls.optJSONObject(i);
+                if (l == null) continue;
+                final String u = l.optString("url");
+                LinearLayout r = Ui.row(a);
+                r.setGravity(Gravity.CENTER_VERTICAL);
+                r.setMinimumHeight(Ui.dp(44));
+                r.setBackground(Ui.press(0, 0, 10));
+                String b = l.optString("brand");
+                int col = l.optString("color").startsWith("#") ? parse(l.optString("color")) : brandColor(b);
+                android.widget.FrameLayout mk = new android.widget.FrameLayout(a);
+                mk.setBackground(Ui.round(tint(col), 0, 8));
+                mk.addView(brand(a, b, 15, col), new android.widget.FrameLayout.LayoutParams(Ui.dp(15), Ui.dp(15), Gravity.CENTER));
+                r.addView(mk, new LinearLayout.LayoutParams(Ui.dp(30), Ui.dp(30)));
+                LinearLayout tx = Ui.col(a);
+                tx.setPadding(Ui.dp(10), 0, Ui.dp(6), 0);
+                tx.addView(Ui.subtitle(Ui.text(a, l.optString("title").isEmpty() ? u : l.optString("title"), 14, Ui.FG)), Ui.fill());
+                tx.addView(Ui.subtitle(Ui.text(a, u.replaceFirst("^https?://(www\\.)?", "").replaceFirst("/$", ""), 12, Ui.G600)), Ui.fill());
+                r.addView(tx, Ui.weight());
+                r.addView(Ui.icon(a, Ui.I_EXTERNAL, 14, Ui.G600), new LinearLayout.LayoutParams(Ui.dp(28), Ui.dp(28)));
+                r.setOnClickListener(v -> { if (!u.isEmpty()) Ui.openUrl(a, u); });
+                r.setOnLongClickListener(v -> { Ui.copy(a, u); return true; });
+                c.addView(r, Ui.fill());
+            }
+        }
+
+        private static int parse(String hex) {
+            try { return android.graphics.Color.parseColor(hex); } catch (Exception e) { return Ui.G600; }
+        }
+
+        /** A private note (never exported): saved with its button. */
+        private void drawNote() {
+            LinearLayout c = card(I_PENCIL, "Note", null, null);
+            noteField = Ui.input(a, "A quick note about them (only you see it)", true);
+            noteField.setMinLines(2);
+            noteField.setGravity(Gravity.TOP | Gravity.START);
+            noteField.setText(d.optString("note"));
+            c.addView(noteField, Ui.fill());
+            LinearLayout btns = Ui.row(a);
+            btns.setGravity(Gravity.END);
+            btns.addView(Ui.rowButton(a, "Save note", false, v -> {
+                if (h == null || noteField == null) return;
+                JSONObject b = new JSONObject();
+                try { b.put("id", id).put("note", noteField.getText().toString().trim()); } catch (Exception ignored) { }
+                Ui.bg(a, () -> h.call("POST", "/v1/collector/note", b), r -> Ui.toast(a, "Note saved"));
+            }), Ui.wrap());
+            c.addView(btns, Ui.margins(Ui.fill(), 0, 6, 0, 0));
         }
 
         private void save(String value) {
@@ -819,7 +945,7 @@ final class CollectorCreator {
 
         /** Edit: name, handle, bio and links typed by hand (a link a line: Title https://…). */
         private void edit() {
-            JSONObject e = d.optJSONObject("edit");
+            JSONObject e = d == null ? null : d.optJSONObject("edit");
             if (e == null || h == null) return;
             LinearLayout box = Ui.col(a);
             box.setPadding(Ui.dp(20), Ui.dp(8), Ui.dp(20), Ui.dp(8));

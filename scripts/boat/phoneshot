@@ -48,8 +48,13 @@ Screens and steps run in the order given; each --screen opens a screen and shoot
                    dev.harbor.app.RIG_LOCAL_BG then runs the local API's chat calls there)
   --wait SECONDS
   --shot NAME      a shot of what is on the screen now (after it stops changing)
+  --gfx NAME       the app's frame times since the last --gfx (Android's gfxinfo: frames drawn, janky
+                   ones, 50th/90th/95th/99th percentile), printed under NAME; `--gfx reset` only starts
+                   counting (e.g. --gfx reset --swipe … --swipe … --gfx scroll)
 Options:
   --dark           the phone's dark theme
+  --leads N        Collector's made-up data gets N more Available leads (each with a picture and 3
+                   thumbnails the size real ones are), for timing long lists
   --code           run the app from downloaded app code, as a phone on Android 9+ does after an
                    update (android/README.md, "Shell and code"): the build's hub-phone-code.zip,
                    one patch version newer than its APK, is put where the shell keeps staged code
@@ -71,7 +76,7 @@ Time: 3 to 7 minutes from harbor-phone (most of it waits for the restored sandbo
 PHONESHOT_GPU try another system image / -gpu mode (installed on the spot). Prerequisites: as scripts/boat/check (the boat CLI logged in, jq, git, GNU tar).
 EOF2
 }
-steps=() quiet="" dark="" from="" save="" drop="" code="" extra="" via=""
+steps=() quiet="" dark="" leads="" from="" save="" drop="" code="" extra="" via=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --screen) IFS=, read -ra sc <<< "$2"; for x in "${sc[@]}"; do steps+=("screen:$x"); done; shift ;;
@@ -83,8 +88,9 @@ while [ $# -gt 0 ]; do
       steps+=("${via:+via-}${via:-view}:$2${extra:+~$(printf %s "$extra" | base64 -w0)}"); extra="" via=""; shift ;;
     --front) steps+=("front:now") ;;
     --cold) steps+=("cold:now") ;;
-    --tap|--press|--swipe|--text|--key|--broadcast|--wait|--shot) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }; steps+=("${1#--}:$2"); shift ;;
+    --tap|--press|--swipe|--text|--key|--broadcast|--wait|--shot|--gfx) [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }; steps+=("${1#--}:$2"); shift ;;
     --dark) dark=1 ;;
+    --leads) leads=$2; shift ;;
     --code) code=1 ;;
     --from) from=$2; shift ;;
     --save-snapshot) save=1 ;;
@@ -131,7 +137,7 @@ at() { echo "$(( $(date +%s) - started ))"; }
 sandbox; t_ready=$(at)
 upload; t_up=$(at)
 set +e
-remote DARK="$dark" CODE="$code" IMAGE="${PHONESHOT_IMAGE:-}" GPU="${PHONESHOT_GPU:-}" \
+remote DARK="$dark" LEADS="$leads" CODE="$code" IMAGE="${PHONESHOT_IMAGE:-}" GPU="${PHONESHOT_GPU:-}" \
   SAVE="$save" -- bash .github/boat/phoneshot.sh "${steps[@]}"
 code=$?
 set -e

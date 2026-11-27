@@ -6,7 +6,6 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.BaseAdapter;
 import android.widget.EditText;
-import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.TextView;
@@ -20,17 +19,17 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 
-/** The Persons tab's home, Person Hub's sidebar on the phone: "All people", then Stores (each
- *  store a fold with its people, the owner first with a crown), then each list (Creators,
- *  SpokPay) with its people by their last message, each section with a "Settled (N)" fold and its
- *  connections' chips. A long press on a person: Rename, Settle / Unsettle, Link with…, Unlink, Move to… (SpokPay,
+/** The Persons tab's home, Person Hub's sidebar on the phone: Stores (each store a fold with its people, the owner
+ *  first with a crown), then each list (Creators, SpokPay) with its people by their last message, each section with a
+ *  "Settled (N)" fold (no connection chips: only a sign-in waiting for its QR code shows; All people is the head's
+ *  magnifier). A long press on a person: Rename, Settle / Unsettle, Link with…, Unlink, Move to… (SpokPay,
  *  Creators, Stores › a store or New store…).
  *  At the top of SpokPay: Headquarters' "Site requests" list (the state's siteRequests): its heading (amber dot while one
  *  waits on SpokPay, the count, the chevron), its notices, and each active request (the store's square icon, the
  *  subject, "Store replied" / "Store waiting" / "Nothing new", the ref); a tap opens its pane (PersonsSr, SpokPay's admin request page), a long
  *  press copies the link. */
 final class PersonsHome {
-    static final int ALL = 0, HEAD = 1, CHIPS = 2, QR = 3, NOTE = 4, STORE = 5, PERSON = 6, FOLD = 7,
+    static final int HEAD = 1, QR = 3, NOTE = 4, STORE = 5, PERSON = 6, FOLD = 7,
             SR_HEAD = 8, SR_NOTICE = 9, SR = 10, ADD = 11;
 
     static final class Item {
@@ -55,17 +54,18 @@ final class PersonsHome {
         this.p = p;
         a = p.a;
         view = Ui.col(a);
-        view.setBackgroundColor(drawer ? Ui.BG2 : Ui.BG);
+        view.setBackgroundColor(Ui.BG);
         view.setClickable(true);
+        // The drawer's head is every tab's (Ds.drawerHead); the page has the top bar. Both search everyone (All
+        // people) from their magnifier: no "All people" row in the list.
         if (drawer) {
-            LinearLayout h = Ui.row(a);
-            h.setGravity(android.view.Gravity.CENTER_VERTICAL);
-            h.setMinimumHeight(Ui.dp(Ds.BAR_H));
-            h.setPadding(Ui.dp(20), 0, Ui.dp(12), 0);
-            h.addView(Ui.subtitle(Ui.bold(a, "Persons", Ds.T_BAR, Ui.FG)), Ui.weight());
-            view.addView(h, Ui.fill());
+            Ds.DrawerHead h = Ds.drawerHead(a, "Persons");
+            h.action(Ui.I_SEARCH, "Search people", v -> p.openList());
+            view.addView(h.view, Ui.fill());
         } else {
-            view.addView(Ds.topBar(a, p.sideButton(), "Persons").view, Ui.fill());
+            Ds.TopBar bar = Ds.topBar(a, p.sideButton(), "Persons");
+            bar.action(Ui.I_SEARCH, "Search people", v -> p.openList());
+            view.addView(bar.view, Ui.fill());
         }
         error = Ui.text(a, "", 13, Ui.RED);
         error.setPadding(Ui.dp(20), 0, Ui.dp(20), Ui.dp(6));
@@ -124,9 +124,6 @@ final class PersonsHome {
     private void build(JSONObject st) {
         JSONArray people = PersonsUi.arr(st, "people"), stores = PersonsUi.arr(st, "stores"),
                 lists = PersonsUi.arr(st, "lists"), conns = PersonsUi.arr(st, "connections");
-        Item all = new Item(ALL);
-        all.count = people.length();
-        items.add(all);
 
         // Stores: the store people are everyone in a store or owning one.
         List<JSONObject> stList = objs(stores);
@@ -238,9 +235,7 @@ final class PersonsHome {
         List<JSONObject> mine = new ArrayList<>();
         for (JSONObject c : objs(conns)) if (serves(c, section)) mine.add(c);
         if (mine.isEmpty()) return;
-        Item ch = new Item(CHIPS);
-        ch.conns = mine;
-        items.add(ch);
+        // No connection chips under the heads (Settings has the connections); only a sign-in waiting for its QR code.
         for (JSONObject c : mine) {
             if (!PersonsUi.s(c, "qr").isEmpty() || ("signing-in".equals(PersonsUi.s(c, "status")) && "discord".equals(PersonsUi.s(c, "kind")))) {
                 Item q = new Item(QR);
@@ -314,25 +309,8 @@ final class PersonsHome {
 
     private View itemView(Item it) {
         switch (it.kind) {
-            case ALL: {
-                LinearLayout r = Ds.row(a, false);
-                r.addView(Ui.icon(a, Ui.I_USERS, 18, Ui.FG), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(20), Ui.dp(20)), 0, 0, 14, 0));
-                r.addView(Ds.rowTitle(a, "All people", false, Ui.FG), Ui.weight());
-                if (it.count > 0) r.addView(Ds.meta(a, String.valueOf(it.count)));
-                r.setOnClickListener(v -> p.openList());
-                return Ds.inset(a, r, 0);
-            }
             case HEAD: {
                 return Ds.inset(a, Ds.sectionHead(a, it.text, it.open, it.unread, v -> { p.flip("closed", it.key); p.redrawHomes(); }), 0);
-            }
-            case CHIPS: {
-                HorizontalScrollView hs = new HorizontalScrollView(a);
-                hs.setHorizontalScrollBarEnabled(false);
-                LinearLayout r = Ui.row(a);
-                r.setPadding(Ui.dp(20), Ui.dp(2), Ui.dp(20), Ui.dp(6));
-                for (JSONObject c : it.conns) r.addView(chip(c), Ui.margins(Ui.wrap(), 0, 0, 6, 0));
-                hs.addView(r);
-                return hs;
             }
             case QR: {
                 // a sign-in by QR code: Discord's (scanned in the Discord app on another phone) or WhatsApp's link
@@ -490,33 +468,6 @@ final class PersonsHome {
         return r;
     }
 
-    /** A connection: its mark, "Discord · Connected", a dot by status; a tap says more. */
-    private View chip(JSONObject c) {
-        String status = PersonsUi.s(c, "status"), kind = PersonsUi.s(c, "kind");
-        LinearLayout r = Ui.row(a);
-        r.setPadding(Ui.dp(8), Ui.dp(4), Ui.dp(10), Ui.dp(4));
-        r.setBackground(Ui.press(Ui.CARD, Ui.LINE, 14));
-        r.addView(PersonsUi.channel(a, kind, 14), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(14), Ui.dp(14)), 0, 0, 6, 0));
-        r.addView(Ui.text(a, PersonsUi.kindLabel(kind) + " · " + statusText(status), 12, Ui.G900));
-        int dot = "connected".equals(status) ? 0xff23a55a : "signed-out".equals(status) ? Ui.RED : Ui.AMBER;
-        r.addView(Ui.dot(a, dot, 7), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(7), Ui.dp(7)), 7, 0, 0, 0));
-        String label = PersonsUi.s(c, "label"), err = PersonsUi.s(c, "error"), cid = PersonsUi.s(c, "id");
-        r.setOnClickListener(v -> {
-            // Discord and WhatsApp sign in by QR code, right here; Gmail needs Google's page on the PC, Instagram a session pasted there
-            if ("signed-out".equals(status) && !"gmail".equals(kind) && !"instagram".equals(kind)) {
-                new android.app.AlertDialog.Builder(a)
-                        .setTitle(PersonsUi.kindLabel(kind) + " is signed out")
-                        .setMessage(err.isEmpty() ? "Sign in with a QR code?" : err + "\n\nSign in with a QR code?")
-                        .setPositiveButton("Sign in", (d, w) -> connCall("/v1/persons/connections/" + PersonsUi.enc(cid) + "/connect"))
-                        .setNegativeButton("Not now", null).show();
-                return;
-            }
-            Ui.toast(a, (label.isEmpty() ? PersonsUi.kindLabel(kind) : label) + ": " + statusText(status)
-                    + (err.isEmpty() ? "" : "\n" + err) + ("signed-out".equals(status) ? "\nSign in on the PC (the section's + menu)." : ""));
-        });
-        return r;
-    }
-
     private void connCall(String path) {
         Ui.bg(a, () -> p.hub.call("POST", path, new JSONObject()), r -> p.refresh());
     }
@@ -533,16 +484,6 @@ final class PersonsHome {
         }
         android.graphics.Bitmap small = android.graphics.Bitmap.createBitmap(px, side, side, android.graphics.Bitmap.Config.ARGB_8888);
         return android.graphics.Bitmap.createScaledBitmap(small, side * 8, side * 8, false);
-    }
-
-    static String statusText(String s) {
-        switch (s) {
-            case "connected": return "Connected";
-            case "connecting": case "starting": return "Connecting…";
-            case "signing-in": return "Signing in…";
-            case "signed-out": return "Signed out";
-            default: return s;
-        }
     }
 
     // ---- a person's long-press menu (shared with the list) ----

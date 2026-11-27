@@ -174,17 +174,43 @@ final class Ds {
         return Math.min(c.getResources().getDisplayMetrics().widthPixels * 84 / 100, Ui.dp(340));
     }
 
-    /** A tab's drawer: BG2, its head (the tab's name, in line with the top bar) and `body` under it. */
+    /** A drawer's head, the same for every tab and in line with the page's top bar: BAR_H tall, the tab's name in the
+     *  top bar's title style at the rows' glyph column (20dp), its buttons (`action`) on the right, the same hairline
+     *  under it as the top bar's, so the bar runs on across the drawer. */
+    static final class DrawerHead {
+        final LinearLayout view, row;
+        final TextView title;
+
+        DrawerHead(Context c, String text) {
+            view = Ui.col(c);
+            row = Ui.row(c);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setMinimumHeight(Ui.dp(BAR_H));
+            row.setPadding(Ui.dp(20), 0, Ui.dp(6), 0);
+            title = Ui.subtitle(Ui.bold(c, text, T_BAR, Ui.FG));
+            row.addView(title, Ui.weight());
+            view.addView(row, Ui.fill());
+            view.addView(hairline(c), new LinearLayout.LayoutParams(-1, Math.max(1, Ui.dp(0.5f))));
+        }
+
+        /** A 40dp ghost icon button on the right (the top bar's). */
+        TextView action(String glyph, String label, View.OnClickListener on) {
+            TextView t = barButton(view.getContext(), glyph, on);
+            t.setContentDescription(label);
+            row.addView(t);
+            return t;
+        }
+    }
+
+    static DrawerHead drawerHead(Context c, String title) { return new DrawerHead(c, title); }
+
+    /** A tab's drawer: the page's own black (BG), its head (drawerHead) and `body` under it. Base.installTab draws
+     *  the hairline down its right edge. */
     static LinearLayout drawer(Context c, String title, View body) {
         LinearLayout d = Ui.col(c);
-        d.setBackgroundColor(Ui.BG2);
+        d.setBackgroundColor(Ui.BG);
         d.setClickable(true); // taps never fall through to the page
-        LinearLayout h = Ui.row(c);
-        h.setGravity(Gravity.CENTER_VERTICAL);
-        h.setMinimumHeight(Ui.dp(BAR_H));
-        h.setPadding(Ui.dp(20), 0, Ui.dp(12), 0);
-        h.addView(Ui.subtitle(Ui.bold(c, title, T_BAR, Ui.FG)), Ui.weight());
-        d.addView(h, Ui.fill());
+        d.addView(drawerHead(c, title).view, Ui.fill());
         if (body != null) d.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
         return d;
     }
@@ -197,7 +223,11 @@ final class Ds {
         r.setGravity(Gravity.CENTER_VERTICAL);
         r.addView(Ui.icon(c, glyph, 18, on ? Ui.FG : Ui.G700), new LinearLayout.LayoutParams(Ui.dp(22), Ui.dp(22)));
         r.addView(rowTitle(c, label, on, on ? Ui.FG : Ui.G900), Ui.margins(Ui.weight(), 12, 0, 0, 0));
-        if (count != null && !count.isEmpty()) r.addView(meta(c, count));
+        if (count != null && !count.isEmpty()) {
+            TextView m = Ui.subtitle(meta(c, count));
+            m.setMaxWidth(Ui.dp(160));
+            r.addView(m, Ui.margins(Ui.wrap(), 10, 0, 0, 0));
+        }
         r.setContentDescription(label + (on ? ", open" : ""));
         if (l != null) r.setOnClickListener(l);
         return inset(c, r, 0);

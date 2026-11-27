@@ -28,8 +28,8 @@ import java.util.Set;
  *  nav rows (Projects, Settings, and Update when there is one), a
  *  thin line, then the chats by project as the desktop's sidebar orders them (a foldable header
  *  each, thin lines between), Threads and a folded Settled: one-line rows with a chat icon and a
- *  dot while a turn runs. A round avatar (your photo, else the workspace's initial), the round light/dark button beside
- *  it and the black "New session" pill float at the bottom. The title row's workspace button narrows the list to some of the account's
+ *  dot while a turn runs. The black "New session" pill floats at the bottom. The head is "Projects" (Ds.drawerHead);
+ *  its workspace button narrows the list to some of the account's
  *  workspaces, as the desktop sidebar's does.
  *  Used full screen (Chats) and as the drawer inside a chat or a GitHub list. */
 final class Sidebar {
@@ -37,7 +37,7 @@ final class Sidebar {
     final FrameLayout view;
     private final LinearLayout list;
     private final EditText search;
-    private final TextView avatar, wsBtn;
+    private final TextView wsBtn;
     private final String current; // the open chat (highlighted), or null
     private JSONObject st;
     private boolean showSettled;
@@ -86,7 +86,6 @@ final class Sidebar {
     Sidebar(Base a, String current) { this(a, current, false); }
 
     private final boolean asPage;
-    private TextView headTitle;
 
     Sidebar(Base a, String current, boolean asPage) {
         this.a = a;
@@ -94,33 +93,22 @@ final class Sidebar {
         this.asPage = asPage;
         filter = Ui.prefs(a).getString("filter-" + a.hub.id, "");
         view = new FrameLayout(a);
-        view.setBackgroundColor(asPage ? Ui.BG : Ui.BG2);
+        view.setBackgroundColor(Ui.BG);
         view.setClickable(true);
         LinearLayout col = Ui.col(a);
 
-        // The drawer's head, in line with the page's top bar (Ds.drawer): the workspace's name (a tap picks the
-        // workspaces shown), Add project and Search everything.
-        LinearLayout head = Ui.row(a);
-        head.setGravity(Gravity.CENTER_VERTICAL);
-        head.setMinimumHeight(Ui.dp(Ds.BAR_H));
-        head.setPadding(Ui.dp(20), 0, Ui.dp(6), 0);
-        headTitle = Ui.subtitle(Ui.bold(a, workspaceName(a, null), Ds.T_BAR, Ui.FG));
-        head.addView(headTitle, Ui.weight());
+        // The drawer's head (Ds.drawerHead, as every tab's): "Projects", the workspaces shown, Add project, Search.
+        Ds.DrawerHead head = Ds.drawerHead(a, "Projects");
         // Which workspace's chats show; hidden until `render` knows there are any.
-        wsBtn = Ds.barButton(a, Ui.I_USERS, v -> pickWorkspaces());
+        wsBtn = head.action(Ui.I_USERS, "Pick the workspaces shown", v -> pickWorkspaces());
         wsBtn.setVisibility(View.GONE);
-        head.addView(wsBtn);
         // Add project (the desktop sidebar's folder-plus beside its filters).
-        TextView addBtn = Ds.barButton(a, Ui.I_FOLDER_PLUS, v -> addProject());
-        addBtn.setContentDescription("Add project");
-        head.addView(addBtn);
+        head.action(Ui.I_FOLDER_PLUS, "Add project", v -> addProject());
         // Search everything (the desktop's Ctrl+K palette); a long press filters this list instead.
-        TextView find = Ds.barButton(a, Ui.I_SEARCH, v -> palette());
+        TextView find = head.action(Ui.I_SEARCH, "Search everything", v -> palette());
         find.setOnLongClickListener(v -> { toggleSearch(); return true; });
-        find.setContentDescription("Search everything");
-        head.addView(find);
-        if (asPage) head.setVisibility(View.GONE);
-        col.addView(head, Ui.fill());
+        if (asPage) head.view.setVisibility(View.GONE);
+        col.addView(head.view, Ui.fill());
 
         search = Ui.input(a, "Search chats", false);
         search.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
@@ -142,28 +130,11 @@ final class Sidebar {
 
         // The last rows fade out under the floating buttons.
         View fade = new View(a);
-        int under = asPage ? Ui.BG : Ui.BG2;
+        int under = Ui.BG;
         fade.setBackground(new GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP, new int[]{under, under, under & 0x00ffffff}));
         view.addView(fade, new FrameLayout.LayoutParams(-1, Ui.dp(84), Gravity.BOTTOM));
 
-        // Bottom: avatar (your photo → Settings) and New session.
-        avatar = Ui.bold(a, "", 16, 0xffffffff);
-        avatar.setGravity(Gravity.CENTER);
-        avatar.setBackground(Ui.press(0xff7a6ad8, 0, 20));
-        avatar.setOnClickListener(v -> settings());
-        avatar.setOnLongClickListener(v -> { workspaces(); return true; });
-        FrameLayout.LayoutParams ap = new FrameLayout.LayoutParams(Ui.dp(40), Ui.dp(40), Gravity.BOTTOM | Gravity.START);
-        ap.setMargins(Ui.dp(16), 0, 0, Ui.dp(18));
-        view.addView(avatar, ap);
-        // Beside it (apart from it, so a tap meant for one never lands on the other), one round
-        // light/dark button: a sun in dark, a moon in light; a tap flips the theme at once.
-        TextView themeBtn = Ui.icon(a, Ui.dark ? Ui.I_SUN : Ui.I_MOON, 19, Ui.FG);
-        themeBtn.setBackground(Ui.press(Ui.G200, Ui.LINE, 20));
-        themeBtn.setContentDescription(Ui.dark ? "Light theme" : "Dark theme");
-        themeBtn.setOnClickListener(v -> a.flipTheme());
-        FrameLayout.LayoutParams tp = new FrameLayout.LayoutParams(Ui.dp(40), Ui.dp(40), Gravity.BOTTOM | Gravity.START);
-        tp.setMargins(Ui.dp(68), 0, 0, Ui.dp(18));
-        view.addView(themeBtn, tp);
+        // Bottom: New session (Settings is a row at the top; the phone is always black: no theme switch).
         TextView fab = Ui.bold(a, "+  New session", 15, Ui.ON_INK);
         fab.setGravity(Gravity.CENTER);
         fab.setPadding(Ui.dp(18), 0, Ui.dp(20), 0);
@@ -173,33 +144,10 @@ final class Sidebar {
         FrameLayout.LayoutParams fp = new FrameLayout.LayoutParams(-2, Ui.dp(44), Gravity.BOTTOM | Gravity.END);
         fp.setMargins(0, 0, Ui.dp(16), Ui.dp(16));
         view.addView(fab, fp);
-        label();
     }
 
-    /** Your photo (Settings › Account), else the workspace's initial on purple. */
-    void label() {
-        String l = a.hub.label(), photo = Account.photo(a);
-        avatar.setContentDescription("Settings");
-        if (!photo.isEmpty() && photo.equals(avatar.getTag())) return; // already showing it
-        avatar.setTag(null);
-        avatar.setBackground(Ui.press(0xff7a6ad8, 0, 20));
-        avatar.setText(l.isEmpty() ? "?" : l.substring(0, 1).toUpperCase());
-        Avatars.into(avatar, avatar, photo);
-    }
-
-    /** The name the Projects tab goes by: the one workspace shown, else this PC's workspace ("Igor's Workspace"),
-     *  else the PC's own name. */
-    static String workspaceName(Base a, JSONObject st) {
-        Map<String, String> ws = Account.workspaces(a);
-        List<String> shown = WsFilter.picked(Ui.prefs(a).getString("ws-filter", ""), ws.keySet());
-        if (shown.size() == 1 && ws.get(shown.get(0)) != null) return ws.get(shown.get(0));
-        String id = Account.wsOf(a.hub);
-        if (id == null && st != null) id = Account.pcWorkspaces(a).get(st.optString("hub_id"));
-        if (id != null && ws.get(id) != null && !ws.get(id).isEmpty()) return ws.get(id);
-        String pc = st == null ? "" : st.optString("hub_name", "");
-        if (pc.isEmpty() && a.hub != null) pc = a.hub.label();
-        return pc == null || pc.isEmpty() ? "Projects" : pc;
-    }
+    /** The name the Projects tab goes by, on the page's top bar and the drawer's head. */
+    static final String TITLE = "Projects";
 
     /** Hub's start screen: the account, its workspaces and the paired PCs (another workspace or PC). */
     void workspaces() {
@@ -261,10 +209,9 @@ final class Sidebar {
     }
 
     /** The name over the list now (the page's top bar, Chats). */
-    String title() { return workspaceName(a, st); }
+    String title() { return TITLE; }
 
     private void renderList(JSONObject st) {
-        label(); // your photo may have come with a newer directory
         this.st = st;
         list.removeAllViews();
 
@@ -309,15 +256,14 @@ final class Sidebar {
         }
         // Their Update buttons need the PC: not while it doesn't answer.
         if (offTitle == null) banners(st);
-        headTitle.setText(workspaceName(a, st));
         // The drawer's pages (as Headquarters' drawer lists its app's): a project filter, Settings, and the
         // workspaces and PCs; the tab's own page (Chats) is the list alone, its top bar has the rest.
-        if (!asPage || !filter.isEmpty()) list.addView(nav(Ui.I_LAYERS, "Projects", filter.isEmpty() ? null : projects.get(filter), Ui.FG, v -> pickProject(projects)), Ui.inset());
+        if (!asPage || !filter.isEmpty()) list.addView(nav(Ui.I_LAYERS, "Projects", filter.isEmpty() ? null : projects.get(filter), v -> pickProject(projects)), Ui.fill());
         if (!asPage) {
             // No PCs row (Settings lists the workspace's PCs), and no
             // Pull requests or Issues rows (the search's pages and a project's sheet open them).
-            list.addView(nav(Ui.I_SETTINGS, "Settings", null, Ui.FG, v -> settings()), Ui.inset());
-            list.addView(nav(Ui.I_MONITOR, "Workspaces & PCs", null, Ui.FG, v -> workspaces()), Ui.inset());
+            list.addView(nav(Ui.I_SETTINGS, "Settings", null, v -> settings()), Ui.fill());
+            list.addView(nav(Ui.I_MONITOR, "Workspaces & PCs", null, v -> workspaces()), Ui.fill());
         }
         // A newer app on GitHub: a sheet says so, once per version (Update.prompt); Settings › App keeps it.
         long offered = Update.known(a);
@@ -844,17 +790,9 @@ final class Sidebar {
         }
     }
 
-    private View nav(String glyph, String title, String value, int color, View.OnClickListener on) {
-        LinearLayout r = Ui.listRow(a, glyph, color, title, color);
-        r.setMinimumHeight(Ui.dp(44));
-        r.setBackground(Ui.press(0, 0, 12));
-        if (value != null) {
-            TextView s = Ui.subtitle(Ui.text(a, value, 13, Ui.G600));
-            s.setMaxWidth(Ui.dp(170));
-            r.addView(s, Ui.margins(Ui.wrap(), 10, 0, 0, 0));
-        }
-        r.setOnClickListener(on);
-        return r;
+    /** A page row at the drawer's top: the shared Ds.navRow (Routine's and Collector's), `value` quiet on the right. */
+    private View nav(String glyph, String title, String value, View.OnClickListener on) {
+        return Ds.navRow(a, glyph, title, value, false, on);
     }
 
     /** Who else is typing in c (a chat, or an items reply): "Desk is typing…", or null. */

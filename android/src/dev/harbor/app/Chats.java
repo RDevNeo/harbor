@@ -62,7 +62,6 @@ public class Chats extends Base {
         if (fresh == null) { finish(); return; }
         hub = fresh;
         Update.shown(this, hub.id, null);
-        list.label();
         load();
     }
 

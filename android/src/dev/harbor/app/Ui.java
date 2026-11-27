@@ -7,7 +7,6 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.content.res.Configuration;
 import android.graphics.Canvas;
 import android.graphics.ColorFilter;
 import android.graphics.Paint;
@@ -50,7 +49,7 @@ final class Ui {
     /** Every Stop control, the same in both themes. */
     static final int STOP = 0xffd93a3f, ON_STOP = 0xffffffff;
     static boolean dark;
-    static int themeGen; // bumped when the theme flips: open screens redraw on resume
+    static int themeGen; // bumped if the theme ever changes: open screens redraw on resume
 
     // Lucide glyphs in assets/fonts/lucide.ttf (a subset: the code points of src/icons.rs).
     static final String I_SETTINGS = "", I_PLUS = "", I_LEFT = "", I_CLIP = "",
@@ -103,21 +102,10 @@ final class Ui {
     // ---- colour mode ----
 
     static SharedPreferences prefs(Context c) { return c.getSharedPreferences("ui", Context.MODE_PRIVATE); }
-    /** "system" (follow the phone: until the drawer's sun/moon is first tapped), "light" or "dark". */
-    static String mode(Context c) { return prefs(c).getString("color_mode", "system"); }
-
-    /** The drawer's sun/moon: the other of light and dark from what shows now, kept from then on
-     *  (Settings has no Color mode or Density anymore; rows are always the comfortable ones). */
-    static void flipTheme(Context c) {
-        prefs(c).edit().putString("color_mode", dark ? "light" : "dark").remove("density").apply();
-        themeGen++;
-        theme(c);
-    }
 
     static void theme(Context c) {
-        String m = mode(c);
-        dark = "dark".equals(m) || ("system".equals(m)
-                && (c.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES);
+        // Always black on the phone (no light theme, no switch): the PC's dark theme.
+        dark = true;
         if (dark) {
             // Black, the PC's dark theme (ts/packages/ui/src/theme.ts DARK): bg100 page, bg200 surfaces, its grays.
             BG = 0xff0a0a0a; BG2 = 0xff111111; CARD = 0xff111111; LINE = 0xff2e2e2e;

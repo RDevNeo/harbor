@@ -101,7 +101,11 @@ Per tab:
   Send (ghost-muted sm Btns); a lead with a Reach shows its icon after the handle (24px, the brand's mark on its tint).
   A click elsewhere on a card opens the lead's detail: the SpokPay CRM's creator profile dialog on Hub's tokens (720
   wide, radius 12, a scrolling body, a fixed footer with Open channel / Edit; tiles and rows on `fg` at 3.5%, caps heads
-  at 35%), Edit a DialogFrame (512); on the phone a full-screen sheet. Under the footer's row (Quick note Input, the
+  at 35%), Edit a DialogFrame (512); on the phone a full-screen profile (CollectorCreator.Detail): the top bar (back,
+  the name, "3 of 121", previous / next), the 88dp picture, name, platform · handle, tags, the stat tiles, Send
+  message and Open channel, chips (Edit profile, Approve to Persons › Creators, Restrict, Copy link), then cards:
+  Recent videos, Bio, Contact (the email and its source, a pencil to type one; Reach), Links, Note; the review bar
+  under it. Under the footer's row (Quick note Input, the
   "Approve to: …" trigger and its menu above it, Open channel / Edit) the review bar: three equal 56px cells with
   hairlines, Reject (red-900) / Skip (fg 60%) / Approve (green-900), icon + 15px/500 label + 16px outlined key caps,
   the cell tinted 8% on hover; keys R S A, ← ↓ →, N (the note) only while no field has the focus. Send message is a DialogFrame (760): templates on the left, channel Chips, To, Subject, a
@@ -149,16 +153,22 @@ the model: a slim top bar with the sidebar button, a sheet from the left, the ta
   person's Details has `Ds.backButton` there instead), then the page's name (16sp semi-bold, an optional 12sp line
   under it; a person's chat puts their 32dp avatar before it), the page's actions on the right (`Ds.barButton`,
   20dp glyphs). No big serif tab titles: the tab bar says which tab, the top bar which page. Projects' first page
-  is the workspace ("Igor's Workspace", a tap picks the workspaces shown; Add project, Search); a Projects chat's
+  is "Projects" (a tap on the title picks the workspaces shown; Add project, Search); a Projects chat's
   title opens its menu (Rename, Settle, Copy link, Delete…); its team is a swipe to the left (no team or menu
   buttons on the phone).
-- **Drawer** (`Base.installTab`, `Ds.drawer`, `Ds.drawerWidth`): the tab's side list on BG2 sliding in from the left
-  over the page and the tab bar (84% of the width, at most 340dp; scrim 60% black), opened by the top bar's
-  button or a swipe right anywhere (not on something that scrolls sideways), closed by a swipe left, the scrim or
-  Back; picking a row closes it. Its head is the tab's name in line with the top bar. Projects: the chat list
-  (Sidebar; its first rows Projects, Settings, Workspaces & PCs). Persons: the people list (PersonsHome: All
-  people, Stores, Creators, SpokPay). Routine: Today, History, Sleep, Goals, Coach. Collector: Collector,
-  Available, Approved, Restricted with their counts (`Ds.navRow`: 18dp glyph, label, count; G200 on the page shown).
+- **Drawer** (`Base.installTab`, `Ds.drawer`, `Ds.drawerHead`, `Ds.drawerWidth`): the tab's side list sliding in
+  from the left over the page and the tab bar (84% of the width, at most 340dp), as Headquarters' sheet: on the page's
+  own black (BG, not a lighter slab), a hairline down its right edge and no shadow, the page beside it faded under an
+  80% black scrim. Its head (`Ds.drawerHead`) is the same in every tab: the tab's name in the top bar's title style
+  (16sp semi-bold) at the rows' glyph column (20dp), 52dp tall with the top bar's hairline under it, the tab's
+  buttons on the right. Opened by the top bar's button or a swipe right anywhere (not on something that scrolls
+  sideways), closed by a swipe left, the scrim or Back; picking a row closes it. Page rows are `Ds.navRow` in every
+  tab (18dp glyph, 15sp label, quiet count; G200 on the page shown). Projects: "Projects" (workspaces, Add project,
+  Search), then Projects, Settings, Workspaces & PCs and the chat list (Sidebar), New session at the bottom (no
+  avatar, no theme button: the phone is always black). Persons: "Persons" (its magnifier opens All people), then
+  Stores, Creators, SpokPay, Personal (PersonsHome; no All people row, no connection chips: only a sign-in waiting
+  for its QR code shows). Routine: Today, History, Sleep, Goals, Coach. Collector: Collector, Available, Approved,
+  Restricted with their counts.
 - **Tab bar** (`Tabs.around`): Projects, Persons, Routine, Collector, on every page including chats; it steps aside
   only while the keyboard is up. Tapping a tab brings back the page it showed (Projects: the chat, else the
   workspace; never Hub's start screen, which is the drawer's Workspaces & PCs).
@@ -175,6 +185,11 @@ Components:
 - `Ds.pill` — unread / count pill (ink or blue).
 - `Ds.chip` — a pill choice or quick action (INK when on).
 - `Ds.card` — a content card (CARD fill, LINE border, 16dp radius, 14/12dp padding).
+
+- `Thumbs` — pictures in long lists (Collector's leads): only for rows on screen (a recycled row drops the request
+  it no longer shows), the newest request first, decoded and centre-cropped to the size drawn, cached in memory and
+  in the app's cache folder. Lists of many cards are `ListView`s with a holder per row, PAGE (40) at a time with
+  "Show more"; no video plays in a list (thumbnails only).
 
 Used by Projects (Chats, Chat, Sidebar.java), Persons (PersonsHome, PersonsList, PersonsChat, PersonsSr, PersonsPanel),
 Routine (Routine.java) and Collector (Collector.java).

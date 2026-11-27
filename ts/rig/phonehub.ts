@@ -72,7 +72,7 @@ writeFileSync(join(dir, "home", ".opencode", "bin", "opencode"), '#!/bin/sh\n[ "
 {
   const cdir = join(dir, "collector");
   Object.assign(process.env, { HUB_COLLECTOR_DIR: cdir, HUB_COLLECTOR_OFFLINE: "1", HUB_COLLECTOR_SEND: "fake" });
-  await writeCollectorFixture(cdir, { running: process.env.HUB_RIG_COLLECTOR !== "idle" });
+  await writeCollectorFixture(cdir, { running: process.env.HUB_RIG_COLLECTOR !== "idle", more: Number(process.env.HUB_RIG_COLLECTOR_LEADS) || 0 });
 }
 
 // Imported after the environment is set: the store reads its folders when loaded.

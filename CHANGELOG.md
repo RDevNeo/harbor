@@ -20,8 +20,25 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
   settings. The background connection's notification is as small as Android allows (minimum importance, one line,
   no status bar icon, hidden on the lock screen). The desktop's notifications are unchanged; macOS and Windows
   share this PC side (they have no phone-specific UI).
+- **Phone: one drawer for every tab, on the page's own black.** The drawers (Projects, Persons, Routine, Collector)
+  were a lighter grey slab with a shadow over the page; they now sit on the page's black with a hairline down their
+  edge, the page faded behind, and the same head (the tab's name at the top bar's height and title style, the same
+  hairline under it) and page rows in every tab. Projects is called "Projects" (not the PC's name); its drawer lost the
+  avatar and the light/dark button (the phone is always black; Settings is the drawer's row). Persons lost the
+  "All people" row (the head's magnifier opens it) and the connection chips under the section heads. Phone only.
 
 ### Fixed
+- **Phone: Collector scrolls smoothly with long lists.** Its leads were all built at once in one scrolling column and
+  built again on every poll during a run (every 1.5 s), each card asking for its picture and three thumbnails at once
+  (600 downloads for 150 leads, decoded near full size). The list is now recycled (only the cards on screen exist, a
+  poll rebinds those), 40 at a time with "Show more", and pictures load only for rows on screen, newest first, scaled
+  to the size drawn, kept in memory and on disk (`Thumbs`). On boat's emulator with 150 leads (same steps, two passes each):
+  scrolling went from 84-92% janky frames (median 73 ms, worst 0.85-1.05 s) to 0.6-5.5% (median 24-31 ms, worst
+  32-48 ms); during a run each poll froze the screen for 0.5-0.9 s before and is no longer seen. Phone only (the PC's list is Slint's own).
+- **Phone: a lead's detail in Collector is a real profile**: picture, name, platform and handle, tags, followers and
+  the other counts, Send message and Open channel, Edit profile / Approve to Persons › Creators / Restrict / Copy link,
+  recent videos, bio, the email with its source (and the pencil to type one), Reach, links, a private note, "3 of 121"
+  with previous / next in the top bar, and the review bar. Phone only (the PC has its dialog).
 - **Persons: emoji in chats.** Discord's custom emoji (`<:CatSou:1296…>`, animated `<a:…>`) showed as raw text; they
   now show as their pictures inside the text (on the phone too; an animated one shows its first frame on the PC), and
   as `:name:` in one-line quotes (replies, Reply/Forward chips). A message of nothing but 1-3 emoji, custom or Unicode,

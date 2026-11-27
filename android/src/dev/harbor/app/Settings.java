@@ -18,7 +18,7 @@ import org.json.JSONObject;
 /** Settings in titled sections, like the desktop's pages: the workspace (switch with ▾), the
  *  account, the workspace's members (owners invite by email) and PCs (each with the machines it
  *  added over SSH), the PCs' apps, voice, notifications, this app and its updates, sign out.
- *  Light or dark is the drawer's sun/moon (Ui.flipTheme). Settings that were dropped keep a
+ *  The phone is always black (no light theme). Settings that were dropped keep a
  *  fixed value in code: rows are the comfortable ones (no Density), updates install by
  *  themselves (Update), sending while
  *  the agent works steers (Chat.FOLLOW_UP), web links open in the phone's browser, dictation

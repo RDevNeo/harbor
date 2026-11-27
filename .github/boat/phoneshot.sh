@@ -10,7 +10,9 @@
 # broadcast:<action> (to the app; a test build's Rig hooks), wait:<seconds>, front:now (prints the
 # activity in front), cold:now (Harbor's process restarted by its service Listen alone, the test caller in front), view:/via-plain:/via-shared:<chat>[~<base64 query>] (a chat link; via-*: opened by
 # the test caller app android/rigcaller),
-# shot:<name>. A screen ends with a shot of its own. Env: DARK=1 the system's dark theme; IMAGE (an
+# gfx:<name> (the app's frame times since the last gfx step, printed; gfx:reset only starts counting),
+# shot:<name>. A screen ends with a shot of its own. Env: DARK=1 the system's dark theme; LEADS=N more
+# made-up Collector leads (ts/rig/collector-fixture.ts); IMAGE (an
 # sdkmanager system image) and GPU (the emulator's -gpu) replace the defaults; CODE=1 runs the app
 # from downloaded app code (the build's hub-phone-code.zip, one patch version newer than the APK,
 # staged as root where the shell keeps it: android/README.md, "Shell and code").
@@ -113,7 +115,7 @@ b=$(bun_get "$core" x64)
 run_in "$core" -e PATH="$b:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" -e BUN_INSTALL_CACHE_DIR=/c/bun-cache -- \
   bash -euo pipefail -c 'cd ts && bun install --frozen-lockfile >/dev/null'
 rm -rf /tmp/phonehub
-run_in "$core" -e PATH="$b:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" -- \
+run_in "$core" -e PATH="$b:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" -e HUB_RIG_COLLECTOR_LEADS="${LEADS:-0}" -- \
   bash -c "cd ts && exec bun rig/phonehub.ts /tmp/phonehub $port $token" > "$logs/hub.log" 2>&1 &
 for _ in $(seq 480); do grep -q '^phonehub ready' "$logs/hub.log" && break; sleep 0.5; done
 grep -q '^phonehub ready' "$logs/hub.log" || {
@@ -267,6 +269,9 @@ for st in "$@"; do
       sleep 3; echo "cold: pid $(pid), front: $(ad dumpsys activity activities | grep -m1 -E 'topResumedActivity|mResumedActivity' | tr -d '\r' | sed 's/^ *//')" ;;
     front:*) echo "front: $(ad dumpsys activity activities | grep -m1 -E 'topResumedActivity|mResumedActivity' | tr -d '\r' | sed 's/^ *//')" ;;
     wait:*) sleep "${st#wait:}" ;;
+    gfx:reset) ad dumpsys gfxinfo "$pkg" reset >/dev/null ;;
+    gfx:*) echo "gfx ${st#gfx:}:"; ad dumpsys gfxinfo "$pkg" reset | tr -d '\r' |
+      grep -E '^(Total frames rendered|Janky frames|[0-9]+th percentile|Number (Slow|Frozen|High input))' | sed 's/^/  /' ;;
     shot:*) shot "${st#shot:}" || { fail=1; break; } ;;
     *) echo "unknown step: $st"; fail=1; break ;;
   esac

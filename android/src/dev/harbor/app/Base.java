@@ -194,35 +194,33 @@ abstract class Base extends Activity {
         if (st != null) side.render(st);
     }
 
-    /** The page (`page`, already the content view) over the tab bar of `tab`, `drawerView` as its drawer. */
+    /** The page (`page`, already the content view) over the tab bar of `tab`, `drawerView` as its drawer: on the
+     *  page's own black, a hairline down its right edge and no shadow (Headquarters' sheet), so it reads as the
+     *  same surface slid out rather than a slab over the page; the page beside it fades under the scrim. */
     void installTab(String tab, View drawerView) {
         this.tab = tab;
-        drawer = drawerView;
         shell = new FrameLayout(this);
         if (page.getParent() != null) ((ViewGroup) page.getParent()).removeView(page);
         shell.addView(Tabs.around(this, page, tab), frameFill());
         scrim = new View(this);
-        scrim.setBackgroundColor(0x99000000);
+        scrim.setBackgroundColor(0xcc000000);
         scrim.setAlpha(0);
         scrim.setVisibility(View.GONE);
         scrim.setOnClickListener(v -> closeDrawer());
         shell.addView(scrim, frameFill());
         panelW = Ds.drawerWidth(this);
-        drawer.setElevation(Ui.dp(8));
-        if (drawer.getParent() != null) ((ViewGroup) drawer.getParent()).removeView(drawer);
+        if (drawerView.getParent() != null) ((ViewGroup) drawerView.getParent()).removeView(drawerView);
+        FrameLayout d = new FrameLayout(this);
+        d.setBackgroundColor(Ui.BG);
+        d.setClickable(true); // taps never fall through to the page
+        d.addView(drawerView, frameFill());
+        View edge = Ds.hairline(this);
+        d.addView(edge, new FrameLayout.LayoutParams(Math.max(1, Ui.dp(0.5f)), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END));
+        drawer = d;
         shell.addView(drawer, new FrameLayout.LayoutParams(panelW, ViewGroup.LayoutParams.MATCH_PARENT));
         drawer.setTranslationX(-panelW);
         drawer.setVisibility(View.INVISIBLE);
         setContentView(shell);
-        // Redrawn for the drawer's sun/moon: the drawer stays open, as it was when tapped.
-        if (reopenDrawer) {
-            reopenDrawer = false;
-            open = LEFT;
-            drawer.setVisibility(View.VISIBLE);
-            drawer.setTranslationX(0);
-            scrim.setVisibility(View.VISIBLE);
-            scrim.setAlpha(1f);
-        }
     }
 
     /** The screen's root: the tab frame (page, tab bar, drawer), or the page alone. */
@@ -234,17 +232,6 @@ abstract class Base extends Activity {
             JSONObject st = Hub.states.get(hub.id);
             if (st != null) side.render(st);
         }
-    }
-
-    /** Set by flipTheme: the screen it recreates opens with its drawer out. */
-    private static boolean reopenDrawer;
-
-    /** The drawer's sun/moon (Sidebar): light <-> dark at once, this screen redrawn in it (the
-     *  others redraw when they come back: Ui.themeGen). */
-    void flipTheme() {
-        Ui.flipTheme(this);
-        reopenDrawer = drawerOpen();
-        recreate();
     }
 
     /** A panel for the right edge (after installDrawer): a swipe to the left opens it. */
