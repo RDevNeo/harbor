@@ -159,6 +159,15 @@ abstract class Base extends Activity {
         try { startActivityForResult(i, PICK_IMAGE); } catch (Exception e) { picked = null; Ui.toast(this, "No app to pick images with"); }
     }
 
+    /** The system photo picker with photos and videos (Android 13+), else any picker of either; `then` gets the file. */
+    void pickMedia(Picked then) {
+        picked = then;
+        Intent i = Build.VERSION.SDK_INT >= 33
+                ? new Intent(android.provider.MediaStore.ACTION_PICK_IMAGES)
+                : new Intent(Intent.ACTION_GET_CONTENT).setType("*/*").putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"image/*", "video/*"}).addCategory(Intent.CATEGORY_OPENABLE);
+        try { startActivityForResult(i, PICK_IMAGE); } catch (Exception e) { picked = null; Ui.toast(this, "No app to pick photos or videos with"); }
+    }
+
     @Override
     protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);

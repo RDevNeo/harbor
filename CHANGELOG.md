@@ -6,6 +6,17 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 ## [Unreleased]
 
 ### Changed
+- **Videos in Persons chats play like WhatsApp's (phone and PC).** A video a person sent (WhatsApp, Discord, Gmail,
+  Instagram) is no longer a file chip: it's a tile the size of a picture (its own ratio, 16:9 when unknown) showing
+  its first frame, ▶ and its length. A click or tap downloads it once (a spinner in the ▶ meanwhile) and plays it in
+  the viewer pictures use: on the PC Hub's own player in the lightbox (libmpv drawn natively: pause, seek, time,
+  mute, volume, full screen, Esc), on the phone the image viewer's player (MediaPlayer, streamed from the PC by
+  Range). Posters are drawn on the PC by ffmpeg (`GET /v1/persons/poster`); a video over 48 MB gets its poster once
+  opened, so opening a chat doesn't download it. The phone's attach button now takes videos too (Android's picker
+  with photos and videos): the video goes to the PC ahead (`/v1/upload`, up to 100 MB) and is sent as a video on
+  WhatsApp, a file on Discord and Gmail; the PC's attach already took any file. `.m4v`, `.3gp` and `.mkv` count as
+  videos (Projects too). Every platform: the PC side is the same Slint/TS on Linux, macOS and Windows (a PC without
+  ffmpeg shows the tile dark with ▶); the phone change is app code only (no new shell).
 - **Chats move like WhatsApp's (Persons and Projects, phone and PC).** A new message fades and slides in (~180 ms) and
   the chat glides to it when you're at the bottom, instead of the whole list being rebuilt (the phone's Persons chat
   now patches its views: only new or changed messages are built, pictures aren't loaded again). Scrolled up, nothing

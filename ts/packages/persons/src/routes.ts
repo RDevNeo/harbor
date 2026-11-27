@@ -3,7 +3,7 @@
 import type { AgentDiscord } from "./agent/index.ts";
 import { readFileSync, statSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { paths } from "@harbor/os";
 import { chatKey, KIND_LABEL, isSection, SECTION_LABEL, normWhatsApp, personSections, pickChat, SECTIONS, serves, validPeer, type ChatRef } from "./model/accounts.ts";
 import { ContactConflict, isAddKind } from "./model/personal.ts";
@@ -97,7 +97,7 @@ export class PersonsRoutes {
   /** WhatsApp photos by number: file or null (asked once per run per number). */
   private waPhotos = new Map<string, string | null>();
 
-  constructor(private readonly s: PersonsService, private readonly extra: { socials?: (urls: string[], fresh: boolean) => Promise<Json>; ai?: AiPort; qr?: (text: string) => Promise<string[] | null>; agent?: AgentDiscord; sites?: SiteRequests; board?: SiteRequestBoard; audio?: AudioService; voice?: VoiceQueue } = {}) {
+  constructor(private readonly s: PersonsService, private readonly extra: { socials?: (urls: string[], fresh: boolean) => Promise<Json>; ai?: AiPort; qr?: (text: string) => Promise<string[] | null>; agent?: AgentDiscord; sites?: SiteRequests; board?: SiteRequestBoard; audio?: AudioService; voice?: VoiceQueue; poster?: (video: string) => Promise<string | null>; uploads?: string } = {}) {
     this.avatars = new Avatars(s.dir, () => s.touch());
   }
 
@@ -168,6 +168,7 @@ export class PersonsRoutes {
       if (rest[0] === "audio") return await this.audioRoute(m, rest[1] ?? "", obj(c.body));
       if (m === "GET" && rest[0] === "img") return await this.img(rest, c);
       if (m === "GET" && rest[0] === "file") return await this.file(c);
+      if (m === "GET" && rest[0] === "poster") return await this.poster(c);
     } catch (e) {
       return err(500, e instanceof Error ? e.message : String(e));
     }
@@ -276,6 +277,36 @@ export class PersonsRoutes {
     if (size > 20 << 20) return err(413, "too large for the phone");
     const out = Avatars.read(f);
     return out ? ok({ ...out, name, size }) : err(404, "gone");
+  }
+
+  /**
+   * `GET poster?account=&url=&name=`: a video attachment's first frame (JPEG, at most 1280 wide), the video downloaded
+   * once into the attachment cache; `path=1` answers `{path, video}` (both files here) instead of the picture.
+   */
+  private async poster(c: Call): Promise<Reply> {
+    const make = this.extra.poster;
+    if (!make) return err(404, "no posters here");
+    const video = await this.s.fetchAttachment(q(c, "url") ?? "", q(c, "name") ?? "video.mp4", q(c, "account") ?? undefined);
+    if (!video) return err(404, "can't fetch that video");
+    const f = await make(video).catch(() => null);
+    if (!f) return err(404, "no picture of that video");
+    if (q(c, "path") === "1") return ok({ path: f, video });
+    const out = Avatars.read(f);
+    return out ? ok(out) : err(404, "gone");
+  }
+
+  /** A file the phone sent ahead with `POST /v1/upload` (`{id}`), when it is one of the uploads folder's. */
+  private uploaded(id: string): Uint8Array | null {
+    const dir = this.extra.uploads;
+    if (!dir || !id) return null;
+    const root = resolve(dir);
+    const f = resolve(root, id);
+    if (!f.startsWith(root + sep)) return null;
+    try {
+      return new Uint8Array(readFileSync(f));
+    } catch {
+      return null;
+    }
   }
 
   // ---------- state ----------
@@ -618,6 +649,9 @@ export class PersonsRoutes {
         height: a.height ?? null,
         kind,
         image: kind === "image",
+        video: kind === "video",
+        // a video's first frame (GET poster), drawn as its tile with ▶ and its length
+        ...(kind === "video" ? { poster: `/v1/persons/poster?account=${encodeURIComponent(conn.id)}&url=${encodeURIComponent(a.url)}&name=${encodeURIComponent(a.name)}` } : {}),
         duration: a.duration ?? meta?.duration ?? null,
         // audio: the bubble's bars (the platform's waveform, else measured once played), played, its transcript
         ...(kind === "audio" ? { audio: key, bars: waveBars(a.waveform) ?? meta?.bars ?? null, played: !!meta?.played || m.fromMe, transcript: meta?.transcript ?? null, transcribing: !!this.extra.audio?.isTranscribing(key) || this.extra.voice?.current === key, transcriptFailed: meta?.transcript === undefined && !!meta?.failed } : {}),
@@ -749,7 +783,10 @@ export class PersonsRoutes {
     const text = str(b.text) ?? "";
     const files: OutgoingFile[] = (Array.isArray(b.files) ? b.files : []).map((x) => {
       const f = obj(x);
-      return { name: str(f.name) ?? "file", type: str(f.type) ?? "application/octet-stream", data: new Uint8Array(Buffer.from(str(f.data) ?? "", "base64")) };
+      // a video (or any large file) comes ahead through /v1/upload: {name, type, upload: id}
+      const up = str(f.upload);
+      const data = up ? this.uploaded(up) ?? new Uint8Array() : new Uint8Array(Buffer.from(str(f.data) ?? "", "base64"));
+      return { name: str(f.name) ?? "file", type: str(f.type) ?? "application/octet-stream", data };
     }).filter((f) => f.data.length > 0);
     if (!text.trim() && !files.length) return err(400, "nothing to send");
     const opts: { files?: OutgoingFile[]; replyTo?: string; subject?: string; peer?: string } = { peer: r.peer };

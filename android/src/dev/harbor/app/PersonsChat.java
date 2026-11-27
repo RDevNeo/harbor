@@ -194,7 +194,7 @@ final class PersonsChat {
         body.addView(edit, Ui.fill());
         LinearLayout row = Ui.row(a);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        attach = Ui.iconButton(a, Ui.I_CLIP, Ui.G700, v -> { if (a instanceof Base) ((Base) a).pickImage(this::addPhoto); });
+        attach = Ui.iconButton(a, Ui.I_CLIP, Ui.G700, v -> { if (a instanceof Base) ((Base) a).pickMedia(this::addPhoto); });
         attach.setContentDescription("Attach a photo");
         row.addView(attach, new LinearLayout.LayoutParams(Ui.dp(40), Ui.dp(40)));
         toLabel = Ui.text(a, "To", 13, Ui.G700);
@@ -906,6 +906,7 @@ final class PersonsChat {
         for (JSONObject f : fs) {
             boolean audio = "audio".equals(PersonsUi.s(f, "kind")) || (m.optBoolean("voice") && !f.optBoolean("image"));
             View fv = f.optBoolean("image") ? imageView(f, inner, gallery)
+                    : f.optBoolean("video") ? videoView(f, inner)
                     : audio ? PersonsAudio.view(a, p.hub, f, me, fileAccount(f), inner, () -> load(false))
                     : fileRow(f, m.optBoolean("voice"), inner);
             b.addView(fv, Ui.margins(Ui.wrap(), 0, b.getChildCount() > 0 ? 6 : 0, 0, 0));
@@ -1001,6 +1002,76 @@ final class PersonsChat {
         return iv;
     }
 
+    /** Videos whose tile fetches its poster by itself (the PC downloads the video for it); a larger one shows ▶ alone. */
+    private static final long POSTER_AUTO = 48L << 20;
+
+    /** A video as WhatsApp draws it: its first frame (the PC's poster), ▶ in a dark disc and its length in the corner,
+     *  sized like a picture (its ratio, else 16:9). A tap has the PC download it (a spinner in the disc meanwhile),
+     *  then plays it in the viewer ({@link Images#view}: MediaPlayer, streamed from the PC by Range, seek, mute). */
+    private View videoView(JSONObject f, int inner) {
+        int w = Math.min(inner, Ui.dp(240));
+        int fw = f.optInt("width"), fh = f.optInt("height");
+        int h = fw > 0 && fh > 0 ? Math.max(Ui.dp(80), Math.min(Ui.dp(320), w * fh / fw)) : w * 9 / 16;
+        FrameLayout box = new FrameLayout(a);
+        box.setBackground(Ui.round(0xff181818, 0, 12));
+        box.setClipToOutline(true);
+        box.setLayoutParams(new LinearLayout.LayoutParams(w, h));
+        ImageView iv = new ImageView(a);
+        iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        box.addView(iv, new FrameLayout.LayoutParams(-1, -1));
+        String url = PersonsUi.s(f, "url"), name = PersonsUi.s(f, "name"), poster = PersonsUi.s(f, "poster");
+        long size = f.optLong("size");
+        if (!poster.isEmpty() && (size <= 0 || size <= POSTER_AUTO)) PersonsUi.image(a, p.hub, poster, iv, Math.max(w, h), () -> iv.setImageDrawable(null));
+        FrameLayout disc = new FrameLayout(a);
+        disc.setBackground(Ui.round(0x99000000, 0, 24));
+        TextView play = Ui.icon(a, Ui.I_PLAY, 22, 0xffffffff);
+        play.setGravity(Gravity.CENTER);
+        play.setPadding(Ui.dp(3), 0, 0, 0);
+        disc.addView(play, new FrameLayout.LayoutParams(-1, -1));
+        android.widget.ProgressBar spin = new android.widget.ProgressBar(a);
+        spin.setIndeterminate(true);
+        spin.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(0xffffffff));
+        spin.setVisibility(View.GONE);
+        disc.addView(spin, new FrameLayout.LayoutParams(Ui.dp(30), Ui.dp(30), Gravity.CENTER));
+        box.addView(disc, new FrameLayout.LayoutParams(Ui.dp(48), Ui.dp(48), Gravity.CENTER));
+        double dur = f.optDouble("duration", 0);
+        String meta = dur > 0 ? PersonsUi.duration(dur) : PersonsUi.bytes(size);
+        if (!meta.isEmpty()) {
+            TextView badge = Ui.text(a, meta, 11.5f, 0xfff0f0f0);
+            badge.setBackground(Ui.round(0x99000000, 0, 6));
+            badge.setPadding(Ui.dp(6), Ui.dp(1), Ui.dp(6), Ui.dp(2));
+            box.addView(badge, Ui.margins(new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.START), 6, 0, 0, 6));
+        }
+        box.setContentDescription("Video " + name + (dur > 0 ? ", " + PersonsUi.duration(dur) : "") + ": play");
+        box.setOnClickListener(v -> {
+            if (spin.getVisibility() == View.VISIBLE) return;
+            spin.setVisibility(View.VISIBLE);
+            play.setVisibility(View.INVISIBLE);
+            Runnable done = () -> { spin.setVisibility(View.GONE); play.setVisibility(View.VISIBLE); };
+            Ui.pool.execute(() -> {
+                String path = null, why = null;
+                try {
+                    // the PC downloads it first (a large one from WhatsApp takes a while)
+                    JSONObject r = p.hub.call("GET", url + (url.contains("?") ? "&" : "?") + "path=1", null, 180_000);
+                    path = PersonsUi.s(r, "path");
+                } catch (Exception e) { why = Hub.why(e); }
+                String got = path, err = why;
+                Ui.main.post(() -> {
+                    if (a.isDestroyed()) return;
+                    done.run();
+                    if (got == null || got.isEmpty()) { Ui.toast(a, err != null ? err : "Couldn't download that video"); return; }
+                    // the picture's poster again, now that the video is on the PC
+                    if (iv.getDrawable() == null && !poster.isEmpty()) PersonsUi.image(a, p.hub, poster, iv, Math.max(w, h), null);
+                    String q = android.net.Uri.encode(got);
+                    List<Images.Src> one = new ArrayList<>();
+                    one.add(new Images.Src(p.hub, "/v1/media?path=" + q, name, "/v1/image?path=" + q + "&max=2048"));
+                    Images.view(a, one, 0);
+                });
+            });
+        });
+        return box;
+    }
+
     /** A voice message or a file: its icon, name and size (or length); a tap downloads and opens it. */
     private View fileRow(JSONObject f, boolean voice, int inner) {
         String type = PersonsUi.s(f, "type"), name = PersonsUi.s(f, "name");
@@ -1067,7 +1138,7 @@ final class PersonsChat {
             tv.setMaxWidth(maxW() - Ui.dp(24));
             b.addView(tv, textWidth(tv, text, maxW() - Ui.dp(24)));
         }
-        if (n > 0) b.addView(Ui.text(a, n == 1 ? "1 photo" : n + " photos", 13, Ui.G700));
+        if (n > 0) b.addView(Ui.text(a, n == 1 ? "1 attachment" : n + " attachments", 13, Ui.G700));
         // WhatsApp's: a clock while it goes; not sent: red, a tap sends it again, a long press drops it
         String err = PersonsUi.s(o, "error");
         TextView st = err.isEmpty() ? ticks("pending") : Ui.text(a, "⚠ Not sent · Tap to retry", 11.5f, Ui.RED);
@@ -1428,8 +1499,60 @@ final class PersonsChat {
         return r;
     }
 
-    /** A photo from the picker: scaled to 1600 px and sent as JPEG (bodies stay small). */
+    /** Videos the phone sends: WhatsApp's own limit. */
+    private static final long MAX_VIDEO = 100L << 20;
+
+    /** A video from the picker: sent ahead to the PC (POST /v1/upload, streamed from the picker's file), then goes
+     *  with the message as {name, type, upload}; its chip shows its first frame (MediaMetadataRetriever). */
+    private void addVideo(Uri uri, String type) {
+        if (files.size() >= 6) { Ui.toast(a, "Up to 6 files at once"); return; }
+        Ui.toast(a, "Getting the video ready…");
+        Ui.bg(a, () -> {
+            String name = "video.mp4";
+            long len = -1;
+            try (android.database.Cursor c = a.getContentResolver().query(uri, new String[]{android.provider.OpenableColumns.DISPLAY_NAME, android.provider.OpenableColumns.SIZE}, null, null, null)) {
+                if (c != null && c.moveToFirst()) {
+                    if (c.getString(0) != null) name = c.getString(0);
+                    if (!c.isNull(1)) len = c.getLong(1);
+                }
+            } catch (RuntimeException ignored) { }
+            if (len <= 0) throw new java.io.IOException("Couldn't read that video");
+            if (len > MAX_VIDEO) throw new java.io.IOException("Videos up to 100 MB");
+            Bitmap thumb = null;
+            android.media.MediaMetadataRetriever r = new android.media.MediaMetadataRetriever();
+            try {
+                r.setDataSource(a, uri);
+                Bitmap b = r.getFrameAtTime(0);
+                if (b != null) thumb = Bitmap.createScaledBitmap(b, Math.max(1, b.getWidth() * 96 / Math.max(b.getWidth(), b.getHeight())),
+                        Math.max(1, b.getHeight() * 96 / Math.max(b.getWidth(), b.getHeight())), true);
+            } catch (RuntimeException ignored) {
+            } finally {
+                try { r.release(); } catch (Exception ignored) { }
+            }
+            JSONObject up;
+            try (java.io.InputStream in = a.getContentResolver().openInputStream(uri)) {
+                if (in == null) throw new java.io.IOException("Couldn't read that video");
+                up = p.hub.upload(name, null, in, len);
+            }
+            String id = PersonsUi.s(up, "id");
+            if (id.isEmpty()) throw new java.io.IOException("The PC didn't take the video");
+            JSONObject f = new JSONObject();
+            PersonsUi.put(f, "name", name);
+            PersonsUi.put(f, "type", type);
+            PersonsUi.put(f, "upload", id);
+            return new Object[]{f, thumb != null ? thumb : Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)};
+        }, r -> {
+            if (closed) return;
+            files.add((JSONObject) r[0]);
+            thumbs.add((Bitmap) r[1]);
+            composer();
+        });
+    }
+
+    /** A photo from the picker: scaled to 1600 px and sent as JPEG (bodies stay small); a video goes as it is. */
     private void addPhoto(Uri uri) {
+        String type = a.getContentResolver().getType(uri);
+        if (type != null && type.startsWith("video/")) { addVideo(uri, type); return; }
         if (files.size() >= 6) { Ui.toast(a, "Up to 6 photos at once"); return; }
         Ui.bg(a, () -> {
             Bitmap b = Images.decode(a.getContentResolver(), uri, 1600);

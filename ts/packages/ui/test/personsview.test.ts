@@ -343,3 +343,14 @@ describe("a site request's timeline with its AI turns", () => {
     expect(srTimeline(items, [], new Map()).map((l) => l.kind)).toEqual(["sr", "sr", "sr"]);
   });
 });
+
+test("a video's tile: its ratio (16:9 when unknown), its poster route and its length", () => {
+  const one = imageTiles([{ url: "/f?v", width: null, height: null, video: true, poster: "/p?v", duration: 17, size: 3_000_000 }]);
+  expect([one.w, one.h]).toEqual([280, 158]);
+  expect(one.tiles[0]).toMatchObject({ video: true, poster: "/p?v", dur: "0:17", size: 3_000_000 });
+  const tall = imageTiles([{ url: "/f?v", width: 720, height: 1280, video: true, poster: "/p?v", duration: 65 }]);
+  expect(tall.h).toBe(320);
+  expect(tall.tiles[0]!.dur).toBe("1:05");
+  const pic = imageTiles([{ url: "/f?i", width: 100, height: 100 }]);
+  expect(pic.tiles[0]!.video).toBeUndefined();
+});

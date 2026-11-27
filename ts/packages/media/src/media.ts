@@ -12,7 +12,7 @@ import { gfmStrikethrough } from "micromark-extension-gfm-strikethrough";
 import { gfmTable } from "micromark-extension-gfm-table";
 
 export const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp", "svg"] as const;
-export const VIDEO_EXTS = ["mp4", "webm", "mov"] as const;
+export const VIDEO_EXTS = ["mp4", "webm", "mov", "m4v", "3gp", "mkv"] as const;
 export const MAX_IMAGE = 40 * 2 ** 20;
 export const MAX_VIDEO = 200 * 2 ** 20;
 const MAX_PER_TEXT = 8;
@@ -63,6 +63,9 @@ const MIMES: Record<string, string> = {
   mp4: "video/mp4",
   webm: "video/webm",
   mov: "video/quicktime",
+  m4v: "video/mp4",
+  "3gp": "video/3gpp",
+  mkv: "video/x-matroska",
 };
 
 export function mime(path: string): string {

@@ -16,7 +16,7 @@ import { aiSlintParts, type PPartData } from "./aiparts.ts";
 import { customEmojiUrl, emojiCategories, emojiRows, inlineLayout, insertAt, jumboEmoji, plainEmoji, searchEmoji, type EmojiEntry } from "./emoji.ts";
 import { aiMenu, blockedNote, composerHint, CONTACT_FIELD, failedMenu, messageMenu, moveEntries, placeOfRow, quoteInto, type MenuEntry, type MoveEntry } from "./menus.ts";
 import { fwdSubtitle, pickable, pickerRows, quoteMeta, stepPick, type FwdProject } from "./fwdproject.ts";
-import { aiFolds, audioRow, blankRow, byRecent, chatRows, hhmm, shortAgo, listRows, matches, moveSection, nextSpeed, personSections, sectionOrder, servesSection, sideRows, srImageSize, srTimeline, type AiJson, type AudioRow, type AudioStateJson, type ChatJson, type MsgRow, type PersonJson, type Row, type SrFileJson, type SrPaneJson, type StateJson, type UiState } from "./view.ts";
+import { aiFolds, audioRow, blankRow, byRecent, chatRows, hhmm, shortAgo, listRows, matches, moveSection, nextSpeed, personSections, sectionOrder, servesSection, sideRows, srImageSize, srTimeline, type AiJson, type AudioRow, type AudioStateJson, type ChatJson, type ImgTile, type MsgRow, type PersonJson, type Row, type SrFileJson, type SrPaneJson, type StateJson, type UiState } from "./view.ts";
 
 interface Pixels {
   width: number;
@@ -24,6 +24,8 @@ interface Pixels {
   data: Uint8ClampedArray;
 }
 const NO_PX: Pixels = { width: 1, height: 1, data: new Uint8ClampedArray(4) };
+/** A video tile asks for its poster by itself up to this size (the engine downloads the video for it); a larger one once opened. */
+const POSTER_AUTO = 48 << 20;
 /** The store owner's avatar colour behind their initials when the store has no icon (SrLogo's gray). */
 const SR_OWNER_COLOR = "#71717a";
 
@@ -578,6 +580,10 @@ class PersonsTab {
   }
 
   private attachPaths = new Map<string, string | null>();
+  /** Video posters by their route (null: asked for, or none). */
+  private posters = new Map<string, string | null>();
+  /** Videos being downloaded for the viewer (their tiles spin), by file route. */
+  private videoLoading = new Set<string>();
   /** The AI answers the user folded (true) or opened (false) with their chevron, by row id: kept for the session. */
   private aiFold = new Map<string, boolean>();
   /** The answers folded on screen now (what a chevron click turns around). */
@@ -730,9 +736,14 @@ class PersonsTab {
 
   private msgJs(r: MsgRow): Record<string, unknown> {
     const images = r.images.map((t) => {
+      if (t.video) {
+        const poster = this.posterPath(t);
+        const px = poster ? this.pics.get(poster, 640) : null;
+        return { image: px ?? NO_PX, x: t.x, y: t.y, w: t.w, h: t.h, video: true, dur: t.dur ?? "", loading: this.videoLoading.has(t.url) };
+      }
       const known = this.localPath(t.url);
       const px = known ? this.pics.get(known, 640) : null;
-      return { image: px ?? NO_PX, x: t.x, y: t.y, w: t.w, h: t.h };
+      return { image: px ?? NO_PX, x: t.x, y: t.y, w: t.w, h: t.h, video: false, dur: "", loading: false };
     });
     const em = this.emojiJs(r);
     return {
@@ -780,6 +791,31 @@ class PersonsTab {
       a_transcribing: !!r.audio && (r.audio.transcribing || this.transcribing.has(r.audio.key)),
       a_hidden: !!r.audio && !this.shownTranscripts.has(r.audio.key),
     };
+  }
+
+  /** A video tile's poster here (null until it is): asked for once, which downloads the video into the engine's
+   *  cache, so only for videos up to POSTER_AUTO bytes (or of unknown size); a larger one gets its poster once it was
+   *  opened. */
+  private posterPath(t: ImgTile, force = false): string | null {
+    const route = t.poster;
+    if (!route) return null;
+    const known = this.posters.get(route);
+    if (known !== undefined) return known;
+    if (!force && t.size != null && t.size > POSTER_AUTO) return null;
+    this.posters.set(route, null);
+    const u = new URL(route, "http://hub");
+    const q: Record<string, string> = { path: "1" };
+    for (const [k, v] of u.searchParams) q[k] = v;
+    void this.ctx
+      .call("GET", u.pathname.replace(/^\//, ""), q)
+      .catch(() => null)
+      .then((r) => {
+        const b = r && r.status === 200 ? (r.body as { path?: string; video?: string }) : null;
+        this.posters.set(route, b?.path ?? null);
+        if (b?.video) this.attachPaths.set(t.url, b.video);
+        if (b?.path) this.render();
+      });
+    return null;
   }
 
   /** A file route's local path when it's here; else fetched once in the background (then drawn again). */
@@ -1172,9 +1208,9 @@ class PersonsTab {
    * system; a message with only pictures shows them in the lightbox. */
   private async openFile(id: string): Promise<void> {
     const m = this.chat?.messages.find((x) => x.id === id);
-    const f = m?.files.find((x) => !x.image);
+    const f = m?.files.find((x) => !x.image && !x.video);
     if (!f) {
-      if (m?.files.some((x) => x.image)) await this.openImage(id, 0);
+      if (m?.files.some((x) => x.image || x.video)) await this.openImage(id, 0);
       return;
     }
     const path = await this.fetchPath(f.url);
@@ -1182,11 +1218,18 @@ class PersonsTab {
     else this.setToast("Couldn't download that file");
   }
 
-  /** A picture in a bubble was clicked: Hub's lightbox, browsing every picture of that message. */
+  /** A picture or video in a bubble was clicked: Hub's lightbox (videos play there, natively), browsing every picture
+   *  and video of that message. A video downloads first (once, into the engine's cache): its tile spins meanwhile. */
   private async openImage(id: string, i: number): Promise<void> {
     const m = this.chat?.messages.find((x) => x.id === id);
-    const imgs = m?.files.filter((x) => x.image) ?? [];
+    const imgs = m?.files.filter((x) => x.image || x.video) ?? [];
     if (!imgs.length) return;
+    const at = Math.min(Math.max(i, 0), imgs.length - 1);
+    const clicked = imgs[at]!;
+    if (clicked.video && this.videoLoading.has(clicked.url)) return;
+    const slow = imgs.filter((f) => f.video && !this.attachPaths.get(f.url));
+    for (const f of slow) this.videoLoading.add(f.url);
+    if (slow.length) this.render();
     const paths = await Promise.all(
       imgs.map(async (f) => {
         const known = this.attachPaths.get(f.url);
@@ -1195,11 +1238,19 @@ class PersonsTab {
         if (p) this.attachPaths.set(f.url, p);
         return p;
       }),
-    );
-    const path = paths[Math.min(Math.max(i, 0), paths.length - 1)];
+    ).finally(() => {
+      for (const f of slow) this.videoLoading.delete(f.url);
+      if (slow.length) this.render();
+    });
+    const path = paths[at];
     if (!path) {
-      this.setToast("Couldn't download that picture");
+      this.setToast(clicked.video ? "Couldn't download that video" : "Couldn't download that picture");
       return;
+    }
+    // a large video's poster, now that it's here
+    if (clicked.video && clicked.poster && !this.posters.get(clicked.poster)) {
+      this.posters.delete(clicked.poster);
+      this.posterPath({ url: clicked.url, poster: clicked.poster, x: 0, y: 0, w: 0, h: 0, video: true }, true);
     }
     const group = paths.filter((p): p is string => !!p);
     if (this.ctx.openImage) this.ctx.openImage(path, group);

@@ -334,7 +334,7 @@ export function listRows(s: StateJson, q: string, open: UiState["open"]): Row[] 
 // ---------- chat ----------
 
 /** An attachment; audio ones carry their key (play, transcribe), bars 0..1, whether it was played and its transcript. */
-export interface FileJson { name: string; url: string; raw: string; type: string | null; size: number | null; width: number | null; height: number | null; kind: string; image: boolean; duration: number | null; audio?: string; bars?: number[] | null; played?: boolean; transcript?: string | null; transcribing?: boolean; transcriptFailed?: boolean }
+export interface FileJson { name: string; url: string; raw: string; type: string | null; size: number | null; width: number | null; height: number | null; kind: string; image: boolean; video?: boolean; poster?: string; duration: number | null; audio?: string; bars?: number[] | null; played?: boolean; transcript?: string | null; transcribing?: boolean; transcriptFailed?: boolean }
 /** The chat a message is in (a person's page shows every chat of theirs in one timeline). */
 export interface ChannelJson { key: string; kind: string; label: string }
 export interface MsgJson { id: string; fromMe: boolean; text: string; at: string; edited: boolean; subject: string | null; threadId: string | null; status: string | null; voice: boolean; embed: boolean; forwarded?: boolean; reply: { id: string; text: string; fromMe: boolean } | null; files: FileJson[]; channel?: ChannelJson }
@@ -387,13 +387,18 @@ export interface AudioRow {
   voice: boolean;
 }
 
-/** A picture in a message's bubble: its file route (the driver decodes it) and its place in the bubble's image box. */
+/** A picture in a message's bubble: its file route (the driver decodes it) and its place in the bubble's image box.
+ * A video's tile draws its poster (`poster`, a route) with ▶ and its length (`dur`); `size` its bytes when known. */
 export interface ImgTile {
   url: string;
   x: number;
   y: number;
   w: number;
   h: number;
+  video?: boolean;
+  poster?: string;
+  dur?: string;
+  size?: number | null;
 }
 
 /** One chat row (PMsg); `images`: every picture of the message, tiled in a box of `imgW` × `imgH`. */
@@ -470,17 +475,20 @@ export function fitImage(w: number | null, h: number | null, maxW = 280, maxH = 
 
 /** A message's pictures in its bubble: one keeps its ratio (`fitImage`); more go two by two in cropped cells (an
  * odd last one takes the whole width). Returns the tiles and the box they fill. */
-export function imageTiles(imgs: readonly { url: string; width: number | null; height: number | null }[], maxW = 280, cellH = 180, gap = 6): { tiles: ImgTile[]; w: number; h: number } {
+export function imageTiles(imgs: readonly { url: string; width: number | null; height: number | null; video?: boolean; poster?: string; duration?: number | null; size?: number | null }[], maxW = 280, cellH = 180, gap = 6): { tiles: ImgTile[]; w: number; h: number } {
   if (!imgs.length) return { tiles: [], w: 0, h: 0 };
+  const extra = (f: (typeof imgs)[number]): Partial<ImgTile> => (f.video ? { video: true, poster: f.poster ?? "", dur: f.duration ? duration(f.duration) : "", size: f.size ?? null } : {});
   if (imgs.length === 1) {
-    const [w, h] = fitImage(imgs[0]!.width, imgs[0]!.height, maxW);
-    return { tiles: [{ url: imgs[0]!.url, x: 0, y: 0, w, h }], w, h };
+    const f = imgs[0]!;
+    // a video of unknown size is drawn 16:9 (WhatsApp's and Discord's usually say theirs)
+    const [w, h] = f.video && (!f.width || !f.height) ? [maxW, Math.round((maxW * 9) / 16)] : fitImage(f.width, f.height, maxW);
+    return { tiles: [{ url: f.url, x: 0, y: 0, w, h, ...extra(f) }], w, h };
   }
   const half = Math.floor((maxW - gap) / 2);
   const tiles = imgs.map((f, i) => {
     const row = Math.floor(i / 2);
     const alone = i === imgs.length - 1 && i % 2 === 0;
-    return { url: f.url, x: alone || i % 2 === 0 ? 0 : half + gap, y: row * (cellH + gap), w: alone ? maxW : half, h: cellH };
+    return { url: f.url, x: alone || i % 2 === 0 ? 0 : half + gap, y: row * (cellH + gap), w: alone ? maxW : half, h: cellH, ...extra(f) };
   });
   const rows = Math.ceil(imgs.length / 2);
   return { tiles, w: maxW, h: rows * cellH + (rows - 1) * gap };
@@ -552,15 +560,15 @@ export function chatRows(c: ChatJson, now = Date.now()): MsgRow[] {
       r.reply = `${m.reply.fromMe ? "You" : c.person.name}: ${plainEmoji(m.reply.text) || "…"}`;
       r.replyId = m.reply.id;
     } else if (m.forwarded) r.reply = "Forwarded";
-    // every picture shown in the bubble (none of them again as a file below it)
-    const imgs = m.files.filter((f) => f.image);
+    // every picture and video shown in the bubble (none of them again as a file below it)
+    const imgs = m.files.filter((f) => f.image || f.video);
     const box = imageTiles(imgs);
     r.images = box.tiles;
     r.imgW = box.w;
     r.imgH = box.h;
-    const sound = m.files.find((f) => !f.image && (f.kind === "audio" || m.voice));
+    const sound = m.files.find((f) => !f.image && !f.video && (f.kind === "audio" || m.voice));
     if (sound) r.audio = audioRow(sound, m.voice, c.account?.conn ?? c.account?.id ?? "");
-    const rest = m.files.filter((f) => !f.image && f !== sound);
+    const rest = m.files.filter((f) => !f.image && !f.video && f !== sound);
     r.files = rest.map((f) => `${f.name}${f.size ? ` · ${formatBytes(f.size)}` : ""}`).join("\n");
     if (marks && m.channel) {
       r.chan = m.channel.kind;

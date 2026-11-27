@@ -4008,15 +4008,17 @@ export class Shell {
     img.openClicked(path, group);
   }
 
-  /** A tab's picture (a Persons message's) in the lightbox, browsing `group`; what it can't show, the system opens. */
+  /** A tab's picture or video (a Persons message's) in the lightbox, browsing `group`; what it can't show, the system opens. */
   private openImageIn(path: string, group: string[] = [path]): void {
     const img = this.images;
     const media = this.media;
-    if (!img || !media || !media.images.isImage(path)) {
+    // videos play in the lightbox too (VideoPane, libmpv drawn natively); what it can't show, the system opens
+    const shows = (p: string): boolean => !!media && (media.images.isImage(p) || media.media.isVideo(p));
+    if (!img || !media || !shows(path)) {
       osDesktop.open(path);
       return;
     }
-    const list = group.filter((p) => media.images.isImage(p));
+    const list = group.filter(shows);
     img.openClicked(path, list.includes(path) ? list : [path, ...list]);
   }
 

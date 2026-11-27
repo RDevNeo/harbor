@@ -17,6 +17,7 @@ import { mergePresence, PRESENCE_RANK, rowStatus, type RowStatus } from "./model
 import { badgeChats, chatUnread, defaultChat, laterMark, migrateAllSeen, seenOf } from "./model/readState.ts";
 import type { AppData, ChannelKind, ChannelUser, ConnEvent, ConnState, Conversation, LookupResult, Message, OutgoingFile, Person, PresenceStatus, SectionId, SendResult } from "./model/types.ts";
 import type { Connection, ConnFactory, ConnMeta } from "./conn/types.ts";
+import { attachmentFileName } from "./conn/discord-core.ts";
 import { DataFile, loadConnections, personsDir, saveConnections } from "./store.ts";
 
 export interface Outgoing {
@@ -818,8 +819,14 @@ export class PersonsService {
     const cid = connId?.split(":")[0];
     const c = (cid ? views.find((x) => x.id === cid) : undefined) ?? views.find((x) => x.kind === kind && x.connected) ?? views.find((x) => x.kind === kind);
     const conn = c ? this.conns.get(c.id) : undefined;
-    if (!conn?.fetchAttachment) return null;
+    if (!conn?.fetchAttachment) return this.o.offline && kind === "discord" ? this.offlineFile(url, name) : null;
     return conn.fetchAttachment(url, name);
+  }
+
+  /** Offline (the screenshot rigs): a Discord attachment already in <dir>/files, as its connection would have saved it. */
+  private offlineFile(url: string, name: string): string | null {
+    const f = join(this.dir, "files", attachmentFileName(url, name));
+    return existsSync(f) ? f : null;
   }
 
   // ---------- derived ----------

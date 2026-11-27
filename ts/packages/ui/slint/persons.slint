@@ -42,13 +42,17 @@ export struct PPart {
     gap: length,
 }
 
-// A picture in a message's bubble at its place in the bubble's image box (img-w × img-h).
+// A picture in a message's bubble at its place in the bubble's image box (img-w × img-h). A video's tile: its poster
+// (`image`, empty until it's here) with ▶ and its length (`dur`); `loading` while a click downloads it.
 export struct PImg {
     image: image,
     x: length,
     y: length,
     w: length,
     h: length,
+    video: bool,
+    dur: string,
+    loading: bool,
 }
 
 // An emoji drawn as a picture or a glyph: a Discord custom emoji inside a message's text (its gap's UTF-8 offsets
@@ -1422,14 +1426,48 @@ component Bubble {
                         height: p.h;
                         border-radius: 8px;
                         clip: true;
-                        background: Theme.fg.with-alpha(0.06);
+                        background: p.video ? #181818 : Theme.fg.with-alpha(0.06);
                         Image {
                             width: parent.width;
                             height: parent.height;
                             source: p.image;
                             image-fit: cover;
                         }
-                        TouchArea {
+                        // a video: ▶ in a dark disc (a spinner while it downloads), its length in the corner
+                        if p.video: Rectangle {
+                            width: 48px;
+                            height: 48px;
+                            border-radius: 24px;
+                            background: black.with-alpha((tile-ta.has-hover ? 210 : 150) / 255);
+                            if !p.loading: Glyph {
+                                x: 2px;
+                                width: parent.width;
+                                height: parent.height;
+                                icon: Icons.play;
+                                size: 22px;
+                                color: white;
+                            }
+                            if p.loading: Spinner {
+                                radius: 9px;
+                                color: white;
+                            }
+                        }
+                        if p.video && p.dur != "": Rectangle {
+                            x: 6px;
+                            y: parent.height - 6px - self.height;
+                            width: dur-t.preferred-width + 10px;
+                            height: dur-t.preferred-height + 4px;
+                            border-radius: 4px;
+                            background: black.with-alpha(150 / 255);
+                            dur-t := Text {
+                                x: 5px;
+                                y: 2px;
+                                text: p.dur;
+                                font-size: 11.5px;
+                                color: #f0f0f0;
+                            }
+                        }
+                        tile-ta := TouchArea {
                             mouse-cursor: pointer;
                             clicked => {
                                 PersonsBus.open-image(root.m.id, i);

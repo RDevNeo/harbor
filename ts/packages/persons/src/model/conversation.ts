@@ -28,6 +28,7 @@ export function preview(m: Message): string {
   if (m.content.trim()) return m.content
   if (m.voice) return '🎤 Voice message'
   if (m.attachments?.length === 1 && attachmentKind(m.attachments[0]!) === 'image') return '🖼 Image'
+  if (m.attachments?.length === 1 && attachmentKind(m.attachments[0]!) === 'video') return '🎥 Video'
   if (m.attachments?.length) return m.attachments.length === 1 ? `📎 ${m.attachments[0]!.name}` : `📎 ${m.attachments.length} files`
   return m.embed ? 'Embed' : ''
 }
@@ -57,11 +58,15 @@ export const formatDateTime = (iso: string) => dateTime.format(new Date(iso))
 export const formatDate = (iso: string) => dateOnly.format(new Date(iso))
 
 /** How to show an attachment: inline image, audio player, or a file chip. */
-export function attachmentKind(a: Attachment, voice?: boolean): 'image' | 'audio' | 'file' {
+/** Video files Hub plays (in the chat as a poster with ▶, in the viewer on the PC and the phone). */
+export const VIDEO_EXTS = ['mp4', 'mov', 'webm', 'm4v', '3gp', 'mkv']
+
+export function attachmentKind(a: Attachment, voice?: boolean): 'image' | 'audio' | 'video' | 'file' {
   const t = (a.type ?? '').toLowerCase()
-  const ext = a.name.toLowerCase().split('.').pop() ?? ''
+  const ext = (a.name ?? '').toLowerCase().split('.').pop() ?? ''
   if (voice || t.startsWith('audio/') || ['ogg', 'mp3', 'm4a', 'wav', 'opus', 'flac', 'aac'].includes(ext)) return 'audio'
   if (t.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext)) return 'image'
+  if (t.startsWith('video/') || VIDEO_EXTS.includes(ext)) return 'video'
   return 'file'
 }
 

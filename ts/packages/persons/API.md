@@ -79,7 +79,7 @@ has it, the API's header leaves it out), except for requests Hub opened (the pro
   unreadFrom: "<message id>"|null,
   messages: [{ id, fromMe, text, at, edited, subject|null, status|null, voice,
                reply: { text, fromMe }|null,
-               files: [{ name, url: "/v1/persons/file?...", type, size, width, height, image: bool, duration }],
+               files: [{ name, url: "/v1/persons/file?...", type, size, width, height, image: bool, video: bool, poster?: "/v1/persons/poster?...", duration }],
                ai: false }] ,
   ai: [{ id, role: "user"|"assistant", text, at, streaming?,
          parts?, forwarded? }],   // the Person AI chat for this person+section; an answer's `parts` (aiparts.ts):
@@ -94,7 +94,9 @@ has it, the API's header leaves it out), except for requests Hub opened (the pro
 ```
 `?account=ID` picks another of `accounts`. `?before=MSGID` returns an older page (same shape, `messages` only older).
 
-## POST /v1/persons/chat/{personId}/send  { section, account?, text, replyTo?, subject?, files?: [{ name, type, data: base64 }] }
+## POST /v1/persons/chat/{personId}/send  { section, account?, text, replyTo?, subject?, files?: [{ name, type, data: base64 } | { name, type, upload: id }] }
+A file too large for a JSON body (a video from the phone) goes ahead with `POST /v1/upload?name=` (raw body, up to
+200 MB) and is named here by the `id` that answered (only files of the uploads folder are taken).
 → `{ ok, message?, error? }`
 ## POST /v1/persons/chat/{personId}/read  { section, account? }  → `{ ok }`
 ## POST /v1/persons/chat/{personId}/typing { section, account?, on } → `{ ok }`
@@ -122,7 +124,12 @@ spokpay: {...}|null }`
 ## Pictures and files (JSON: Hub's routes answer JSON only)
 - `GET /v1/persons/img/person/{id}?size=64|256` → `{ type: "image/png", data: "<base64>" }`, 404 when none (draw initials).
 - `GET /v1/persons/img/store/{id}` → same shape.
-- `GET /v1/persons/file?account=ID&url=ENC&name=ENC` → `{ type, name, size, data: "<base64>" }` (at most 20 MB).
+- `GET /v1/persons/file?account=ID&url=ENC&name=ENC` → `{ type, name, size, data: "<base64>" }` (at most 20 MB);
+  `&path=1` → `{ path, name, size }`, the file downloaded on the PC (any size).
+- `GET /v1/persons/poster?account=ID&url=ENC&name=ENC` (a file with `video: true`; its `poster`) → `{ type:
+  "image/jpeg", data }`, the video's first frame (ffmpeg; the video is downloaded on the PC for it); 404 when none.
+  `&path=1` → `{ path, video }`. The phone plays a video from `/v1/media?path=<file path=1's path>` (Range), its
+  viewer's poster `/v1/image?path=…&max=2048`.
 On the PC (in-process) rows also carry `avatarPath` / `imagePath`: a local file for Slint.
 
 ## Connections

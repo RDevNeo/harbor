@@ -77,6 +77,8 @@ export interface Media {
   file_name?: string;
   size?: number;
   seconds?: number;
+  width?: number;
+  height?: number;
 }
 
 function media(type: string, m: Json): Media {
@@ -89,6 +91,13 @@ function media(type: string, m: Json): Media {
   if (size !== undefined) v.size = size;
   const secs = num(m.seconds);
   if (secs !== undefined) v.seconds = secs;
+  // a picture's or a video's size: its tile in the chat keeps the ratio before it's downloaded
+  const w = num(m.width);
+  const h = num(m.height);
+  if (w && h) {
+    v.width = w;
+    v.height = h;
+  }
   return v;
 }
 
@@ -98,6 +107,9 @@ export interface Parsed {
   media?: Media;
   quoted?: { id: string; text: string };
 }
+
+/** A file's extension for a mimetype's subtype when they differ (video/quicktime is a .mov). */
+const EXT_OF: Record<string, string> = { jpeg: "jpg", quicktime: "mov", "3gpp": "3gp", "x-matroska": "mkv", "x-m4v": "m4v" };
 
 /** What a message says and carries (Hub's parseContent). Undefined: nothing a person would read. */
 export function parseContent(message: unknown): Parsed | undefined {
@@ -217,10 +229,14 @@ export function slimWa(rawv: unknown, chat: string, connId: string): Message | u
     const c = unwrap(raw.message);
     const m = obj(c[contentType(c) ?? ""]);
     const ext = (p.media.mimetype ?? "").split("/")[1]?.split(";")[0] || "bin";
-    const name = p.media.file_name ?? `${p.kind}-${id.slice(0, 6)}.${ext === "jpeg" ? "jpg" : ext}`;
+    const name = p.media.file_name ?? `${p.kind}-${id.slice(0, 6)}.${EXT_OF[ext] ?? ext}`;
     const a: Attachment = { name, type: p.media.mimetype ?? "application/octet-stream", url: mediaUrl(connId, id, name, p.media.mimetype ?? "") };
     if (p.media.size) a.size = p.media.size;
     if (p.media.seconds) a.duration = p.media.seconds;
+    if (p.media.width && p.media.height) {
+      a.width = p.media.width;
+      a.height = p.media.height;
+    }
     const wf = waveformB64(m.waveform);
     if (wf) a.waveform = wf;
     out.attachments = [a];

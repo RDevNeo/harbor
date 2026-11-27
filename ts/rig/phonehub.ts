@@ -7,7 +7,7 @@
 // hub itself runs on PORT+1; everything else goes through to it as it is).
 // Nothing here is anyone's real data, and it never reaches the network: no mesh, discovery,
 // account, updates or webhooks, and no agent turn starts (none is asked for).
-import { mkdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeCollectorFixture } from "./collector-fixture.ts";
 import sharp from "sharp";
@@ -94,6 +94,12 @@ for (const d of ["home", "run", "state", "data", "cache", "config", "persons"]) 
   msgs[17].status = "sent";
   msgs[17].timestamp = new Date(Date.parse(String(msgs[16].timestamp)) + 60_000).toISOString();
   msgs[15].reply = { id: "500000000000000001", fromMe: true, content: "Ana, o pedido #4821 voltou para o centro de distribuição." };
+  // Ana's video (a made-up 17 s clip, rig/fixtures/rig-video.mp4), as the Discord connection would have saved it: its
+  // tile shows the poster with ▶ and 0:17, a tap plays it in the viewer
+  const clip = "https://cdn.discordapp.com/attachments/300000000000000001/700000000000000001/unboxing.mp4";
+  mkdirSync(join(dir, "persons", "files"), { recursive: true });
+  copyFileSync(join(import.meta.dir, "fixtures", "rig-video.mp4"), join(dir, "persons", "files", "700000000000000001-unboxing.mp4"));
+  msgs.push({ id: "500000000000000200", channelId: "300000000000000001", authorId: ana, fromMe: false, content: "Olha o unboxing que gravei 👀", timestamp: new Date(Date.parse(String(msgs[17].timestamp)) + 120_000).toISOString(), attachments: [{ name: "unboxing.mp4", url: clip, type: "video/mp4", size: 110864, width: 480, height: 270, duration: 17 }] });
   writeFileSync(join(dir, "persons", "discord-cache.json"), JSON.stringify({ conversations: { [ana]: { channelId: "300000000000000001", messages: msgs } } }));
 }
 // OpenCode as its installer puts it (~/.opencode/bin), so the Account sheet lists it: a stub that only lists models.
