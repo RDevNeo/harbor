@@ -4,7 +4,7 @@
 // queue, and refreshes profiles and photos in the background. Every change bumps `rev`.
 import { randomBytes } from "node:crypto";
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { allPeers, chatKey, chatsFor, KIND_LABEL, peerOf, personSections, phoneVariants, SECTION_LABEL, seenKey, serves, validPeer, type ChatRef } from "./model/accounts.ts";
 import { freshIncoming, type IncomingLine } from "./incoming.ts";
 import { contactConflict, personalShares, resolveContact, whatsAppContactToSave, type AddKind } from "./model/personal.ts";
@@ -875,14 +875,17 @@ export class PersonsService {
     const cid = connId?.split(":")[0];
     const c = (cid ? views.find((x) => x.id === cid) : undefined) ?? views.find((x) => x.kind === kind && x.connected) ?? views.find((x) => x.kind === kind);
     const conn = c ? this.conns.get(c.id) : undefined;
-    if (!conn?.fetchAttachment) return this.o.offline && kind === "discord" ? this.offlineFile(url, name) : null;
+    if (!conn?.fetchAttachment) return this.o.offline ? this.offlineFile(url, name) : null;
     return conn.fetchAttachment(url, name);
   }
 
-  /** Offline (the screenshot rigs): a Discord attachment already in <dir>/files, as its connection would have saved it. */
+  /** Offline (the screenshot rigs): an attachment already in <dir>/files, as a Discord connection would have saved it,
+   *  or under its own name there (WhatsApp's and Gmail's, whose saved names aren't derived from the URL alone). */
   private offlineFile(url: string, name: string): string | null {
     const f = join(this.dir, "files", attachmentFileName(url, name));
-    return existsSync(f) ? f : null;
+    if (existsSync(f)) return f;
+    const plain = join(this.dir, "files", basename(name));
+    return name && existsSync(plain) ? plain : null;
   }
 
   // ---------- derived ----------

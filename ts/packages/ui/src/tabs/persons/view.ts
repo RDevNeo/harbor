@@ -2,6 +2,7 @@
 // rows (Sidebar.tsx, App.tsx, Chat.tsx in Person Hub). No Slint here, so it is unit tested.
 
 import { plainEmoji } from "./emoji.ts";
+import { attachTypeOf } from "./attachkind.ts";
 
 export type SectionId = "stores" | "creators" | "spokpay" | "neobux" | "personal";
 
@@ -421,6 +422,30 @@ export interface ImgTile {
   poster?: string;
   dur?: string;
   size?: number | null;
+  /** A picture the image decoder can't read (HEIC, BMP…): drawn from an ffmpeg still of it. */
+  still?: boolean;
+}
+
+/** Pictures sharp doesn't decode (iPhones' HEIC, BMP, TIFF from some scanners…): their bubble draws an ffmpeg still. */
+export function needsStill(name: string, type?: string | null): boolean {
+  const t = attachTypeOf(name, type);
+  return t.kind === "image" && !t.direct;
+}
+
+/** A file below a bubble's text (not a picture, video or the bubble's audio): its file route ("" for one still being
+ *  sent), name, MIME type and size; the tab draws it with its preview (a PDF's first page) or its type's icon. */
+export interface FileRow {
+  url: string;
+  name: string;
+  type: string | null;
+  size: number | null;
+}
+
+/** A message's files drawn as file cards below its bubble (index = PersonsBus.open-file's): every file that isn't a
+ *  picture, a video or the one audio the bubble plays. */
+export function restFiles(m: Pick<MsgJson, "files" | "voice">): FileJson[] {
+  const sound = m.files.find((f) => !f.image && !f.video && (f.kind === "audio" || m.voice));
+  return m.files.filter((f) => !f.image && !f.video && f !== sound);
 }
 
 /** One chat row (PMsg); `images`: every picture of the message, tiled in a box of `imgW` × `imgH`. */
@@ -437,7 +462,7 @@ export interface MsgRow {
   images: ImgTile[];
   imgW: number;
   imgH: number;
-  files: string;
+  files: FileRow[];
   first: boolean;
   failed: boolean;
   /** Failed on Discord's captcha: the click's menu opens it in Discord's app. */
@@ -499,9 +524,9 @@ export function fitImage(w: number | null, h: number | null, maxW = 280, maxH = 
 
 /** A message's pictures in its bubble: one keeps its ratio (`fitImage`); more go two by two in cropped cells (an
  * odd last one takes the whole width). Returns the tiles and the box they fill. */
-export function imageTiles(imgs: readonly { url: string; width: number | null; height: number | null; video?: boolean; poster?: string; duration?: number | null; size?: number | null }[], maxW = 280, cellH = 180, gap = 6): { tiles: ImgTile[]; w: number; h: number } {
+export function imageTiles(imgs: readonly { url: string; name?: string; type?: string | null; width: number | null; height: number | null; video?: boolean; poster?: string; duration?: number | null; size?: number | null }[], maxW = 280, cellH = 180, gap = 6): { tiles: ImgTile[]; w: number; h: number } {
   if (!imgs.length) return { tiles: [], w: 0, h: 0 };
-  const extra = (f: (typeof imgs)[number]): Partial<ImgTile> => (f.video ? { video: true, poster: f.poster ?? "", dur: f.duration ? duration(f.duration) : "", size: f.size ?? null } : {});
+  const extra = (f: (typeof imgs)[number]): Partial<ImgTile> => (f.video ? { video: true, poster: f.poster ?? "", dur: f.duration ? duration(f.duration) : "", size: f.size ?? null } : needsStill(f.name ?? "", f.type) ? { still: true } : {});
   if (imgs.length === 1) {
     const f = imgs[0]!;
     // a video of unknown size is drawn 16:9 (WhatsApp's and Discord's usually say theirs)
@@ -519,7 +544,7 @@ export function imageTiles(imgs: readonly { url: string; width: number | null; h
 }
 
 /** An empty chat row of a kind (the fields every PMsg carries). */
-export const blankRow = (kind: MsgRow["kind"], id: string): MsgRow => ({ kind, id, mine: false, text: "", time: "", meta: "", reply: "", replyId: "", images: [], imgW: 0, imgH: 0, files: "", first: true, failed: false, inDiscord: false, sending: false, streaming: false, toAi: false, parts: [], card: { title: "", sub: "", state: "", note: "", why: "", chat: false }, folded: false, preview: "", draft: "", chan: "", chanLabel: "", audio: null, day: "" });
+export const blankRow = (kind: MsgRow["kind"], id: string): MsgRow => ({ kind, id, mine: false, text: "", time: "", meta: "", reply: "", replyId: "", images: [], imgW: 0, imgH: 0, files: [], first: true, failed: false, inDiscord: false, sending: false, streaming: false, toAi: false, parts: [], card: { title: "", sub: "", state: "", note: "", why: "", chat: false }, folded: false, preview: "", draft: "", chan: "", chanLabel: "", audio: null, day: "" });
 
 /** A turn with the Person AI as its bubble: the user's note ("out", to the AI) or the AI's answer in parts. */
 export function aiRow(a: AiJson): MsgRow {
@@ -608,8 +633,7 @@ export function chatRows(c: ChatJson, now = Date.now()): MsgRow[] {
     r.imgH = box.h;
     const sound = m.files.find((f) => !f.image && !f.video && (f.kind === "audio" || m.voice));
     if (sound) r.audio = audioRow(sound, m.voice, c.account?.conn ?? c.account?.id ?? "");
-    const rest = m.files.filter((f) => !f.image && !f.video && f !== sound);
-    r.files = rest.map((f) => `${f.name}${f.size ? ` · ${formatBytes(f.size)}` : ""}`).join("\n");
+    r.files = restFiles(m).map((f) => ({ url: f.url, name: f.name, type: f.type, size: f.size }));
     if (marks && m.channel) {
       r.chan = m.channel.kind;
       r.chanLabel = m.channel.label;
@@ -627,7 +651,8 @@ export function chatRows(c: ChatJson, now = Date.now()): MsgRow[] {
     r.time = hhmm(o.at);
     r.failed = o.status === "failed";
     r.sending = o.status === "sending";
-    r.files = o.files.map((f) => `${f.name} · ${formatBytes(f.size)}`).join("\n");
+    // being sent: pictures and the rest alike as file cards (no route yet)
+    r.files = o.files.map((f) => ({ url: "", name: f.name, type: f.type || null, size: f.size }));
     if (o.error) r.meta = o.error;
     r.inDiscord = r.failed && !!o.open;
     if (marks && o.channel) {

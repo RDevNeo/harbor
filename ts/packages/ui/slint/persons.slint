@@ -71,6 +71,11 @@ export struct PEmojiCat { icon: string, label: string }
 export struct PEmojiCell { e: string, name: string }
 export struct PEmojiRow { cells: [PEmojiCell] }
 
+// A file below a bubble's text (MsgFile): kind image | video | audio | pdf | file; a PDF's first page (or an odd
+// picture's / video's still) once here, else its type's icon, tint and extension; `meta` "PDF · 2 pages · 65 KB";
+// `loading` while a click downloads it, `failed` when that failed (a click tries again); `can-open`: not still being sent.
+export struct PFile { name: string, kind: string, thumb: image, has-thumb: bool, icon: string, tint: color, ext: string, meta: string, loading: bool, failed: bool, can-open: bool }
+
 export struct PMsg {
     kind: string, // msg | day | unread | subject | ai | out
     id: string,
@@ -89,7 +94,8 @@ export struct PMsg {
     has-image: bool,
     img-w: length,
     img-h: length,
-    files: string,
+    files: [PFile],
+    has-files: bool,
     first: bool,
     failed: bool,
     in-discord: bool, // failed on Discord's captcha: the click's menu opens it in Discord's app
@@ -1308,6 +1314,117 @@ component EmojiLayer {
     }
 }
 
+// A file below a bubble's text (PFile): a card with its type's icon and extension (a spinner while a click downloads
+// it), its name and "PDF · 2 pages · 65 KB"; a PDF shows the top of its first page over that (a picture or video sent
+// as a file, its still). A click opens it: Hub's lightbox for pictures and videos, the system's app for the rest.
+component MsgFile {
+    in property <PFile> f;
+    in property <bool> mine;
+    callback open();
+    property <bool> page: f.has-thumb && f.kind == "pdf";
+    property <bool> wide: f.has-thumb && (f.kind == "image" || f.kind == "video");
+    property <bool> big: page || wide;
+    height: card.height;
+    card := Rectangle {
+        height: (root.big ? (root.page ? 140px : 160px) : 0px) + 52px;
+        border-radius: 10px;
+        clip: true;
+        border-width: 1px;
+        border-color: area.has-hover && root.f.can-open ? Theme.gray-600 : Theme.border;
+        background: area.has-hover && root.f.can-open ? Theme.fg.with-alpha(0.08) : Theme.fg.with-alpha(root.mine ? 0.04 : 0.05);
+        animate background { duration: 100ms; }
+        if root.big: Rectangle {
+            y: 0;
+            height: root.page ? 140px : 160px;
+            background: root.page ? #ffffff : #181818;
+            Image {
+                width: parent.width;
+                height: parent.height;
+                source: root.f.thumb;
+                image-fit: cover;
+                vertical-alignment: root.page ? top : center;
+            }
+            if root.f.kind == "video": Rectangle {
+                width: 40px;
+                height: 40px;
+                border-radius: 20px;
+                background: black.with-alpha((area.has-hover ? 210 : 150) / 255);
+                Glyph {
+                    x: 2px;
+                    width: parent.width;
+                    height: parent.height;
+                    icon: Icons.play;
+                    size: 18px;
+                    color: white;
+                }
+            }
+            Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                background: Theme.border;
+            }
+        }
+        HorizontalLayout {
+            y: parent.height - 52px;
+            height: 52px;
+            padding: 8px;
+            padding-right: 12px;
+            spacing: 10px;
+            Rectangle {
+                width: 36px;
+                height: 36px;
+                border-radius: 8px;
+                background: root.f.tint.with-alpha(Theme.dark ? 0.22 : 0.12);
+                if !root.f.loading: VerticalLayout {
+                    alignment: center;
+                    spacing: 0px;
+                    Glyph {
+                        icon: root.f.icon;
+                        size: 15px;
+                        color: root.f.tint;
+                    }
+                    if root.f.ext != "": Text {
+                        text: root.f.ext;
+                        font-size: 8.5px;
+                        font-weight: 700;
+                        color: root.f.tint;
+                        horizontal-alignment: center;
+                        overflow: elide;
+                    }
+                }
+                if root.f.loading: Spinner {
+                    radius: 8px;
+                    color: root.f.tint;
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                spacing: 2px;
+                Text {
+                    text: root.f.name;
+                    font-size: 12.5px;
+                    font-weight: 500;
+                    color: Theme.fg;
+                    overflow: elide;
+                }
+                Text {
+                    text: root.f.loading ? "Downloading…" : root.f.meta;
+                    font-size: 11px;
+                    color: root.f.failed ? Theme.red-800 : Theme.subtle;
+                    overflow: elide;
+                }
+            }
+        }
+        area := TipArea {
+            enabled: root.f.can-open;
+            tip: root.f.failed ? "Try the download again" : "Open " + root.f.name;
+            clicked => {
+                root.open();
+            }
+        }
+    }
+}
+
 component Bubble {
     in property <PMsg> m;
     in property <length> max-w;
@@ -1323,7 +1440,7 @@ component Bubble {
     property <length> text-w: min(root.max-w - 2 * pad-x, root.jumbo ? m.jumbo.length * 52px - 4px : body.preferred-width);
     // "TO THE AI · 00:00" fits.
     property <length> label-w: thread ? 124px : 0px;
-    property <length> w: ai ? root.max-w : max(max(root.m.has-image ? root.m.img-w : 0px, label-w), max(text-w, root.m.has-audio ? 280px : root.m.failed && root.m.meta != "" ? 260px : root.m.has-reply || root.m.files != "" ? 220px : 60px)) + 2 * pad-x;
+    property <length> w: ai ? root.max-w : max(max(root.m.has-image ? root.m.img-w : 0px, label-w), max(text-w, root.m.has-audio ? 280px : root.m.failed && root.m.meta != "" ? 260px : root.m.has-files ? 260px : root.m.has-reply ? 220px : 60px)) + 2 * pad-x;
     height: lay.preferred-height;
     lay := HorizontalLayout {
         width: root.width;
@@ -1481,31 +1598,11 @@ component Bubble {
                         }
                     }
                 }
-                if root.m.files != "": Rectangle {
-                    height: ft.preferred-height + 8px;
-                    border-radius: 6px;
-                    background: Theme.fg.with-alpha(0.05);
-                    HorizontalLayout {
-                        padding-left: 8px;
-                        spacing: 6px;
-                        Glyph {
-                            icon: Icons.file;
-                            size: 14px;
-                            color: Theme.subtle;
-                        }
-                        ft := Text {
-                            text: root.m.files;
-                            font-size: 12px;
-                            color: Theme.fg;
-                            vertical-alignment: center;
-                            wrap: word-wrap;
-                        }
-                    }
-                    TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => {
-                            PersonsBus.open-file(root.m.id, 0);
-                        }
+                for f[i] in root.m.files: MsgFile {
+                    f: f;
+                    mine: root.m.mine;
+                    open => {
+                        PersonsBus.open-file(root.m.id, i);
                     }
                 }
                 if root.m.has-audio: AudioPlayer {

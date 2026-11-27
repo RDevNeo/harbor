@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { attachMeta, attachType, extOf, lengthText, sizeText } from "../src/tabs/persons/attachkind.ts";
+import { attachMeta, attachType, attachTypeOf, extOf, lengthText, sizeText } from "../src/tabs/persons/attachkind.ts";
+import { needsStill, restFiles } from "../src/tabs/persons/view.ts";
 
 describe("the composer's attachment tiles", () => {
   test("each file's kind by its extension, any case", () => {
@@ -42,5 +43,25 @@ describe("the composer's attachment tiles", () => {
     expect(attachMeta(attachType("a.pdf"), { size: 812 * 1024, pages: 3 })).toBe("PDF · 3 pages · 812 KB");
     expect(attachMeta(attachType("a.pdf"), { pages: 1 })).toBe("PDF · 1 page");
     expect(attachMeta(attachType("a.mp3"), { size: null, duration: null })).toBe("MP3");
+  });
+});
+
+describe("files in the chat's bubbles", () => {
+  test("a received file without an extension gets its type from its MIME type", () => {
+    expect(attachTypeOf("comprovante", "application/pdf").kind).toBe("pdf");
+    expect(attachTypeOf("comprovante", "application/pdf").ext).toBe("PDF");
+    expect(attachTypeOf("planilha", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet").ext).toBe("XLSX");
+    expect(attachTypeOf("a.pdf", "application/octet-stream").kind).toBe("pdf");
+    expect(attachTypeOf("x", null).kind).toBe("file");
+  });
+
+  test("file cards: every file that isn't a picture, a video or the bubble's audio", () => {
+    const f = (name: string, kind: string, o: Record<string, unknown> = {}) => ({ name, url: `/f/${name}`, raw: name, type: null, size: 1, width: null, height: null, kind, image: kind === "image", video: kind === "video", duration: null, ...o });
+    const files = [f("a.jpg", "image"), f("b.mp4", "video"), f("c.ogg", "audio"), f("d.pdf", "file"), f("e.mp3", "audio"), f("f.zip", "file")];
+    expect(restFiles({ files, voice: false }).map((x) => x.name)).toEqual(["d.pdf", "e.mp3", "f.zip"]);
+    expect(needsStill("IMG_1.HEIC")).toBe(true);
+    expect(needsStill("photo", "image/heic")).toBe(true);
+    expect(needsStill("a.jpg")).toBe(false);
+    expect(needsStill("a.pdf")).toBe(false);
   });
 });

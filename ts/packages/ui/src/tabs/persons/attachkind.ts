@@ -64,6 +64,44 @@ export function attachType(name: string): AttachType {
   return { kind: "file", ext, icon: hit?.[1] ?? "FILE", tint: hit?.[2] ?? GRAY, direct: false };
 }
 
+/** Extensions by MIME type, for files whose name has none (a WhatsApp document, an email part). */
+const MIME_EXT: Record<string, string> = {
+  "application/pdf": "pdf",
+  "application/zip": "zip",
+  "application/x-zip-compressed": "zip",
+  "application/vnd.rar": "rar",
+  "application/x-7z-compressed": "7z",
+  "application/msword": "doc",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+  "application/vnd.ms-excel": "xls",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+  "application/vnd.ms-powerpoint": "ppt",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+  "application/vnd.android.package-archive": "apk",
+  "text/csv": "csv",
+  "text/plain": "txt",
+  "application/json": "json",
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "image/gif": "gif",
+  "image/heic": "heic",
+  "image/heif": "heif",
+  "image/bmp": "bmp",
+  "video/mp4": "mp4",
+  "video/quicktime": "mov",
+  "video/webm": "webm",
+  "audio/mpeg": "mp3",
+  "audio/ogg": "ogg",
+};
+
+/** A received file's kind, icon and colour: by its name's extension, else by its MIME type. */
+export function attachTypeOf(name: string, mime?: string | null): AttachType {
+  if (extOf(name)) return attachType(name);
+  const e = MIME_EXT[(mime ?? "").split(";")[0]!.trim().toLowerCase()];
+  return attachType(e ? `file.${e}` : name);
+}
+
 /** A size as people read it: "980 B", "812 KB", "12.3 MB", "1.2 GB". */
 export function sizeText(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return "";

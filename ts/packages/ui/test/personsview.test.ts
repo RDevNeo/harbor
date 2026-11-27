@@ -131,7 +131,7 @@ describe("Persons chat rows", () => {
     const doc = { ...plain, name: "a.pdf", kind: "file", type: "application/pdf", size: 2048 };
     const r = chatRows(chat({ messages: [msg("ABC", "2026-11-24T10:00:00", false, { voice: true, text: "", files: [voice, doc] })] })).find((x) => x.kind === "msg")!;
     expect(r.audio).toEqual({ key: "wa1:ABC:0", account: "wa1", raw: "chwa://wa1/ABC", name: "voice-ABC.ogg", duration: 20, bars: [0.2, 1], played: false, transcript: "Oi, tudo bem?", transcribing: false, failed: false, voice: true });
-    expect(r.files).toBe("a.pdf · 2 KB");
+    expect(r.files).toEqual([{ url: doc.url, name: "a.pdf", type: "application/pdf", size: 2048 }]);
     // an audio file without a waveform: flat bars
     const mp3 = { ...voice, name: "song.mp3", type: "audio/mpeg", bars: null, played: true, transcript: null };
     const r2 = chatRows(chat({ messages: [msg("m", "2026-11-24T10:00:00", true, { files: [mp3] })] })).find((x) => x.kind === "msg")!;
@@ -166,12 +166,12 @@ describe("Persons chat rows", () => {
     const doc = { ...pic("a.pdf"), type: "application/pdf", size: 2048, width: null, height: null, kind: "file", image: false };
     // two screenshots sent together (the second one used to show as "📄 … · 764 KB")
     const two = chatRows(chat({ messages: [msg("m", "2026-11-24T10:00:00", true, { files: [pic("s1.jpg"), pic("s2.jpg")] })] })).find((x) => x.kind === "msg")!;
-    expect(two.files).toBe("");
+    expect(two.files).toEqual([]);
     expect(two.images.map((t) => [t.url, t.x, t.y, t.w, t.h])).toEqual([["/f/s1.jpg", 0, 0, 137, 180], ["/f/s2.jpg", 143, 0, 137, 180]]);
     expect([two.imgW, two.imgH]).toEqual([280, 180]);
     // three: the odd last one takes the width; other files still listed
     const three = chatRows(chat({ messages: [msg("m", "2026-11-24T10:00:00", false, { files: [pic("a.jpg"), doc, pic("b.jpg"), pic("c.jpg")] })] })).find((x) => x.kind === "msg")!;
-    expect(three.files).toBe("a.pdf · 2 KB");
+    expect(three.files.map((f) => [f.name, f.size])).toEqual([["a.pdf", 2048]]);
     expect(three.images.map((t) => [t.x, t.y, t.w])).toEqual([[0, 0, 137], [143, 0, 137], [0, 186, 280]]);
     expect(three.imgH).toBe(366);
     // one keeps its ratio; none: no box

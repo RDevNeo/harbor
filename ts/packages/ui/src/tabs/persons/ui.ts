@@ -13,13 +13,13 @@ import { sameRow, syncRows } from "../../modelsync.ts";
 import { loadQr } from "../../qr.ts";
 import { releaseBlocks } from "../../markdown.ts";
 import { aiSlintParts, type PPartData } from "./aiparts.ts";
-import { attachMeta, attachType } from "./attachkind.ts";
+import { attachMeta, attachType, attachTypeOf } from "./attachkind.ts";
 import { messageLinks } from "./links.ts";
-import { AttachPreviews } from "./attachprev.ts";
+import { type AttachInfo, AttachPreviews } from "./attachprev.ts";
 import { customEmojiUrl, emojiCategories, emojiRows, inlineLayout, insertAt, jumboEmoji, plainEmoji, searchEmoji, type EmojiEntry } from "./emoji.ts";
 import { aiMenu, blockedNote, composerHint, CONTACT_FIELD, failedMenu, messageMenu, moveEntries, placeOfRow, quoteInto, type MenuEntry, type MoveEntry } from "./menus.ts";
 import { fwdSubtitle, pickable, pickerRows, quoteMeta, stepPick, type FwdProject } from "./fwdproject.ts";
-import { aiFolds, LIST_SECTIONS, audioRow, blankRow, byRecent, CHAT_PAGE, chatRows, shownFor, discordLinks, friendButton, hhmm, shortAgo, listRows, matches, moveSection, nextSpeed, personSections, sectionOrder, servesSection, sideRows, srImageSize, srTimeline, type AiJson, type AudioRow, type AudioStateJson, type ChatJson, type ImgTile, type MsgRow, type PersonJson, type Row, type SrFileJson, type SrPaneJson, type StateJson, type UiState } from "./view.ts";
+import { aiFolds, LIST_SECTIONS, audioRow, blankRow, byRecent, CHAT_PAGE, chatRows, shownFor, discordLinks, friendButton, hhmm, shortAgo, listRows, matches, moveSection, nextSpeed, personSections, sectionOrder, servesSection, sideRows, srImageSize, srTimeline, restFiles, type AiJson, type AudioRow, type AudioStateJson, type ChatJson, type ImgTile, type MsgRow, type PersonJson, type Row, type SrFileJson, type SrPaneJson, type StateJson, type UiState } from "./view.ts";
 
 interface Pixels {
   width: number;
@@ -29,6 +29,9 @@ interface Pixels {
 const NO_PX: Pixels = { width: 1, height: 1, data: new Uint8ClampedArray(4) };
 /** A video tile asks for its poster by itself up to this size (the engine downloads the video for it); a larger one once opened. */
 const POSTER_AUTO = 48 << 20;
+/** A file card below a bubble (a PDF, an odd picture or video sent as a file) downloads by itself for its preview up
+ *  to this size (or of unknown size); a larger one gets it once opened. */
+const FILE_THUMB_AUTO = 25 << 20;
 /** The store owner's avatar colour behind their initials when the store has no icon (SrLogo's gray). */
 const SR_OWNER_COLOR = "#71717a";
 
@@ -234,6 +237,8 @@ class PersonsTab {
   /** The files going with the next message, as preview tiles over the composer (PAttach). */
   private tileModel = new slint.ArrayModel<Record<string, unknown>>([]);
   private previews: AttachPreviews;
+  /** The same for the chat's received and sent files (a PDF's first page, an odd picture's still), bigger. */
+  private bubblePreviews: AttachPreviews;
   /** An attached audio file playing here (its tile's play button): where it was paused, and since when it plays. */
   private tilePlay: TilePlay | null = null;
   private renderQueued = false;
@@ -257,6 +262,7 @@ class PersonsTab {
     this.bus = Reflect.get(ctx.win, "PersonsBus") as Bus;
     this.pics = new Pictures(() => this.render());
     this.previews = new AttachPreviews(() => this.render());
+    this.bubblePreviews = new AttachPreviews(() => this.render(), { still: 480, pdf: 560 });
     // What was typed before (the last run, a crash or an update's restart): every chat's draft and recipient.
     const kept = draftsFrom(ctx.kv?.get(DRAFTS_KEY) ?? null);
     this.drafts = kept.drafts;
@@ -333,7 +339,7 @@ class PersonsTab {
     });
     on("account_menu", ((x: number, y: number) => this.accountMenu(x, y)) as Cb);
     on("msg_menu", ((id: string, x: number, y: number) => this.msgMenu(id, x, y)) as Cb);
-    on("open_file", ((id: string) => void this.openFile(id)) as Cb);
+    on("open_file", ((id: string, i: number) => void this.openFile(id, i)) as Cb);
     on("open_image", ((id: string, i: number) => void this.openImage(id, i)) as Cb);
     on("attach", () => void (this.sr && !this.aiMode ? this.srAttach() : this.attach()));
     // the composer's emoji picker: the smiley button, a tab, the search, a pick (into the draft at its cursor)
@@ -851,6 +857,11 @@ class PersonsTab {
   private posters = new Map<string, string | null>();
   /** Videos being downloaded for the viewer (their tiles spin), by file route. */
   private videoLoading = new Set<string>();
+  /** Files below bubbles being downloaded on a click (their cards spin), and the ones whose download failed (why). */
+  private fileLoading = new Set<string>();
+  private fileFailed = new Map<string, string>();
+  /** Downloads asked of the engine and not answered yet, by file route (a click joins the preview's). */
+  private fetching = new Map<string, Promise<{ path: string | null; error: string }>>();
   /** The AI answers the user folded (true) or opened (false) with their chevron, by row id: kept for the session. */
   private aiFold = new Map<string, boolean>();
   /** The answers folded on screen now (what a chevron click turns around). */
@@ -1011,9 +1022,12 @@ class PersonsTab {
         return { image: px ?? NO_PX, x: t.x, y: t.y, w: t.w, h: t.h, video: true, dur: t.dur ?? "", loading: this.videoLoading.has(t.url) };
       }
       const known = this.localPath(t.url);
-      const px = known ? this.pics.get(known, 640) : null;
+      // HEIC, BMP and the like: an ffmpeg still of it (the decoder can't read them)
+      const src = known && t.still ? this.bubblePreviews.get(known, attachType("x.heic")).still : known;
+      const px = src ? this.pics.get(src, 640) : null;
       return { image: px ?? NO_PX, x: t.x, y: t.y, w: t.w, h: t.h, video: false, dur: "", loading: false };
     });
+    const files = this.filesJs(r);
     const em = this.emojiJs(r);
     const ln = this.linksOf(r.kind === "ai" ? "" : em.text);
     return {
@@ -1032,7 +1046,8 @@ class PersonsTab {
       has_image: images.length > 0,
       img_w: r.imgW,
       img_h: r.imgH,
-      files: r.files,
+      files,
+      has_files: files.length > 0,
       first: r.first,
       failed: r.failed,
       in_discord: r.inDiscord,
@@ -1126,13 +1141,60 @@ class PersonsTab {
 
   /** A file route's local path (the engine downloads it once). */
   private async fetchPath(url: string): Promise<string | null> {
+    return (await this.fetchFile(url)).path;
+  }
+
+  /** A file route's local path, or why the engine couldn't download it; one request per route at a time. */
+  private fetchFile(url: string): Promise<{ path: string | null; error: string }> {
+    const had = this.fetching.get(url);
+    if (had) return had;
     const u = new URL(url, "http://hub");
     const q: Record<string, string> = {};
     for (const [k, v] of u.searchParams) q[k] = v;
     q.path = "1";
-    const r = await this.ctx.call("GET", u.pathname.replace(/^\//, ""), q).catch(() => null);
-    const p = r && r.status === 200 ? (r.body as { path?: string }).path : undefined;
-    return p ?? null;
+    const p = this.ctx
+      .call("GET", u.pathname.replace(/^\//, ""), q)
+      .then(
+        (r) => {
+          const path = r.status === 200 ? (r.body as { path?: string } | null)?.path : undefined;
+          if (path) return { path, error: "" };
+          const why = (r.body as { error?: string } | null)?.error;
+          return { path: null, error: why || `the engine answered ${r.status}` };
+        },
+        (e: unknown) => ({ path: null, error: e instanceof Error ? e.message : String(e) }),
+      )
+      .finally(() => this.fetching.delete(url));
+    this.fetching.set(url, p);
+    return p;
+  }
+
+  /** A bubble's file cards (PFile): a PDF's first page and page count, an odd picture's or video's still, else the
+   *  type's icon and extension; the size. Previews download by themselves up to FILE_THUMB_AUTO (only the rows drawn
+   *  ask, and once: the still is cached on disk); the rest downloads on a click (the card spins). */
+  private filesJs(r: MsgRow): Record<string, unknown>[] {
+    return r.files.map((f) => {
+      const t = attachTypeOf(f.name, f.type);
+      const failed = f.url ? this.fileFailed.get(f.url) : undefined;
+      let info: AttachInfo | null = null;
+      if (f.url && !failed && (t.kind === "pdf" || t.kind === "image" || t.kind === "video")) {
+        const path = f.size == null || f.size <= FILE_THUMB_AUTO ? this.localPath(f.url) : (this.attachPaths.get(f.url) ?? null);
+        if (path) info = this.bubblePreviews.get(path, t);
+      }
+      const px = info?.still ? this.pics.get(info.still, 560) : null;
+      return {
+        name: f.name || "file",
+        kind: t.kind,
+        thumb: px ?? NO_PX,
+        has_thumb: !!px,
+        icon: GLYPHS[t.icon],
+        tint: t.tint,
+        ext: t.ext.length > 5 ? t.ext.slice(0, 4) : t.ext,
+        meta: failed ? "Couldn't download · click to try again" : attachMeta(t, { size: f.size ?? info?.size ?? null, pages: info?.pages ?? null, duration: info?.duration ?? null }),
+        loading: !!f.url && this.fileLoading.has(f.url),
+        failed: !!failed,
+        can_open: !!f.url,
+      };
+    });
   }
 
   private drawPanel(): void {
@@ -1573,18 +1635,45 @@ class PersonsTab {
     void this.api("POST", `chat/${encodeURIComponent(open.id)}/typing`, { section: open.section, account: this.chat?.account?.id, on: true });
   }
 
-  /** A file below the bubble (or the menu's Open attachment): its first file that isn't a picture, opened by the
-   * system; a message with only pictures shows them in the lightbox. */
-  private async openFile(id: string): Promise<void> {
+  /** A file card below the bubble (its `i`th; the menu's Open attachment: the first): downloaded first when it isn't
+   *  here yet (the card spins; a failure says why on the card and in a toast, and a click tries again), then a
+   *  picture or video in Hub's lightbox and the rest in the system's app for its type. A message with only pictures
+   *  shows them in the lightbox. */
+  private async openFile(id: string, i = 0): Promise<void> {
     const m = this.chat?.messages.find((x) => x.id === id);
-    const f = m?.files.find((x) => !x.image && !x.video);
+    if (!m) return;
+    const rest = restFiles(m);
+    const f = rest[i] ?? rest[0] ?? m.files.find((x) => !x.image && !x.video);
     if (!f) {
-      if (m?.files.some((x) => x.image || x.video)) await this.openImage(id, 0);
+      if (m.files.some((x) => x.image || x.video)) await this.openImage(id, 0);
       return;
     }
-    const path = await this.fetchPath(f.url);
-    if (path) this.ctx.openExternal(path);
-    else this.setToast("Couldn't download that file");
+    if (this.fileLoading.has(f.url)) return;
+    let path = this.attachPaths.get(f.url) ?? null;
+    if (path && !existsSync(path)) path = null;
+    if (!path) {
+      this.fileLoading.add(f.url);
+      this.fileFailed.delete(f.url);
+      this.render();
+      const got = await this.fetchFile(f.url);
+      this.fileLoading.delete(f.url);
+      if (!got.path) {
+        this.fileFailed.set(f.url, got.error);
+        this.render();
+        this.setToast(`Couldn't download ${f.name}: ${got.error}`);
+        return;
+      }
+      path = got.path;
+      this.attachPaths.set(f.url, path);
+      this.render();
+    }
+    const t = attachTypeOf(f.name, f.type);
+    if ((t.kind === "image" || t.kind === "video") && this.ctx.openImage) {
+      this.ctx.openImage(path, [path]);
+      return;
+    }
+    const why = await osDesktop.openFile(path);
+    if (why) this.setToast(`Couldn't open ${f.name}: ${why}`);
   }
 
   /** A picture or video in a bubble was clicked: Hub's lightbox (videos play there, natively), browsing every picture

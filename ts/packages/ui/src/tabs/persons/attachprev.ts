@@ -4,7 +4,7 @@
 // isn't installed leaves its part out: the tile shows the type's icon and what is known.
 import { statSync } from "node:fs";
 import { preview } from "@harbor/media";
-import { attachType } from "./attachkind.ts";
+import { type AttachType, attachType } from "./attachkind.ts";
 
 export interface AttachInfo {
   size: number | null;
@@ -16,12 +16,17 @@ export interface AttachInfo {
 
 export class AttachPreviews {
   private known = new Map<string, AttachInfo>();
-  constructor(private readonly changed: () => void) {}
+  /** `px`: the stills' size (a video's or odd picture's width, a PDF page's long side): small for the composer's
+   *  tiles, larger for a bubble's page preview. */
+  constructor(
+    private readonly changed: () => void,
+    private readonly px: { still: number; pdf: number } = { still: 320, pdf: 240 },
+  ) {}
 
-  get(path: string): AttachInfo {
+  /** `t`: the file's type when its path doesn't say it (a received file without an extension). */
+  get(path: string, t: AttachType = attachType(path)): AttachInfo {
     const hit = this.known.get(path);
     if (hit) return hit;
-    const t = attachType(path);
     let size: number | null = null;
     try {
       size = statSync(path).size;
@@ -32,8 +37,8 @@ export class AttachPreviews {
     this.known.set(path, info);
     const jobs: Promise<unknown>[] = [];
     if (t.kind === "video" || t.kind === "audio") jobs.push(preview.duration(path).then((d) => (info.duration = d)));
-    if (t.kind === "video" || (t.kind === "image" && !t.direct)) jobs.push(preview.still(path, 320).then((p) => (info.still = p)));
-    if (t.kind === "pdf") jobs.push(preview.pdfPage(path, 240).then((p) => (info.still = p)), preview.pdfPages(path).then((n) => (info.pages = n)));
+    if (t.kind === "video" || (t.kind === "image" && !t.direct)) jobs.push(preview.still(path, this.px.still).then((p) => (info.still = p)));
+    if (t.kind === "pdf") jobs.push(preview.pdfPage(path, this.px.pdf).then((p) => (info.still = p)), preview.pdfPages(path).then((n) => (info.pages = n)));
     if (jobs.length) void Promise.all(jobs.map((j) => j.catch(() => null))).then(() => this.changed());
     return info;
   }

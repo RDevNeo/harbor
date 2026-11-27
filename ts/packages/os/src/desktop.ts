@@ -20,6 +20,41 @@ export function opener(p = platform()): string[] {
   return ["xdg-open"];
 }
 
+/**
+ * Opens a local file with the desktop's default app and says why it couldn't: null when it opened (or the opener is
+ * still busy after `ms`, as some handlers wait for the app), else a sentence for a toast (the file is gone, no
+ * opener, or the opener failed: on Linux xdg-open exits non-zero when no app takes that type).
+ */
+export function openFile(file: string, ms = 4000): Promise<string | null> {
+  if (!existsSync(file)) return Promise.resolve("The file isn't there any more");
+  const [cmd, ...args] = opener();
+  if (cmd === undefined) return Promise.resolve("No app here opens files");
+  const ext = /\.([^./\\]+)$/.exec(file)?.[1]?.toUpperCase();
+  const what = ext ? `${ext} files` : "that file";
+  return new Promise((resolve) => {
+    let done = false;
+    const end = (v: string | null): void => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(v);
+    };
+    const timer = setTimeout(() => end(null), ms);
+    try {
+      const viaExplorer = /explorer\.exe$/i.test(cmd);
+      const p = viaExplorer
+        ? spawn(cmd, [`"${file.replaceAll('"', "%22")}"`], { stdio: "ignore", detached: true, windowsVerbatimArguments: true })
+        : spawn(cmd, [...args, file], { stdio: "ignore", detached: true });
+      p.on("error", () => end(`No app here opens ${what} (${cmd} is missing)`));
+      // Explorer exits 1 even when it opened the file
+      p.on("exit", (code) => end(code === 0 || code === null || viaExplorer ? null : `No app here opens ${what}`));
+      p.unref();
+    } catch {
+      end(`No app here opens ${what}`);
+    }
+  });
+}
+
 /** Opens a file or URL with the desktop's default app, without waiting; a missing opener is ignored. */
 export function open(target: string): void {
   const [cmd, ...args] = opener();

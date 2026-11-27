@@ -272,7 +272,7 @@ export class PersonsRoutes {
     const url = q(c, "url") ?? "";
     const name = q(c, "name") ?? "file";
     const f = await this.s.fetchAttachment(url, name, q(c, "account") ?? undefined);
-    if (!f) return err(404, "can't fetch that file");
+    if (!f) return err(404, "the account it came on isn't connected here");
     const size = statSync(f).size;
     if (q(c, "path") === "1") return ok({ path: f, name, size });
     if (size > 20 << 20) return err(413, "too large for the phone");

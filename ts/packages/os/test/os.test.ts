@@ -520,3 +520,8 @@ describe("folders", () => {
     }
   });
 });
+
+test("desktop.openFile says why a file that isn't there can't open", async () => {
+  const { desktop } = await import("../src/index.ts");
+  expect(await desktop.openFile("/nonexistent/harbor-test/a.pdf")).toBe("The file isn't there any more");
+});

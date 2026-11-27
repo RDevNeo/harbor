@@ -6,6 +6,17 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 ## [Unreleased]
 
 ### Changed
+- **Persons: files in chat messages show what they are and open (PC).** A file sent or received in a chat
+  (WhatsApp, Discord, Gmail) is a card under the message: a PDF shows the top of its first page and "PDF · 2 pages ·
+  65 KB"; a DOCX, XLSX, CSV, ZIP, APK… its type's icon, colour and extension with its size; a picture or video sent as
+  a file (HEIC, AVI…) its still. A click opens it: pictures and videos in Hub's lightbox, the rest in the system's app
+  for its type. Before, a click on a received document did nothing (Hub only opened web links that way) and only the
+  first file of a message could be opened. Files not on this PC yet download on the click (the card spins, says
+  "Downloading…"); a failed download says why on the card and in a toast, and a click tries again. Previews download
+  by themselves for files up to 25 MB, only for the rows on screen, and are cached on disk. Pictures in bubbles that
+  the decoder can't read (HEIC, BMP) now show through an ffmpeg still instead of an empty tile. Windows and macOS get
+  the same cards; without poppler (pdftoppm) a PDF shows its icon. The phone app is unchanged: it already downloads a
+  file and opens it in the phone's app on a tap; page previews there need a new APK.
 - **Persons: Open Site Request keeps the SpokPay agent's draft (PC and phone).** While the agent drafts (~10-20 s,
   the card says so) its card offers only Cancel; "Use the message" shows once the agent failed. Pressing it before
   (it used to be there all along) threw the agent's draft away and opened the raw message. If an older phone app still
