@@ -1,6 +1,8 @@
 // Pure parts of the Persons tab: the v1/persons JSON (API.md) turned into the sidebar's, the list's and the chat's
 // rows (Sidebar.tsx, App.tsx, Chat.tsx in Person Hub). No Slint here, so it is unit tested.
 
+import { plainEmoji } from "./emoji.ts";
+
 export type SectionId = "stores" | "creators" | "spokpay" | "personal";
 
 export interface RowJson {
@@ -535,7 +537,7 @@ export function chatRows(c: ChatJson, now = Date.now()): MsgRow[] {
     r.text = m.text || (m.embed ? "(embed)" : "");
     r.time = hhmm(m.at);
     r.meta = [m.edited ? "edited" : "", m.fromMe && m.status ? TICKS[m.status] ?? "" : ""].filter(Boolean).join(" · ");
-    if (m.reply) r.reply = `${m.reply.fromMe ? "You" : c.person.name}: ${m.reply.text || "…"}`;
+    if (m.reply) r.reply = `${m.reply.fromMe ? "You" : c.person.name}: ${plainEmoji(m.reply.text) || "…"}`;
     else if (m.forwarded) r.reply = "Forwarded";
     // every picture shown in the bubble (none of them again as a file below it)
     const imgs = m.files.filter((f) => f.image);

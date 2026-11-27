@@ -2,6 +2,7 @@ package dev.harbor.app;
 
 import android.app.Activity;
 import android.graphics.Bitmap;
+import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.text.Editable;
@@ -10,7 +11,10 @@ import android.text.SpannableStringBuilder;
 import android.text.Spanned;
 import android.text.TextUtils;
 import android.text.TextWatcher;
+import android.text.style.AbsoluteSizeSpan;
+import android.text.style.DynamicDrawableSpan;
 import android.text.style.ForegroundColorSpan;
+import android.text.style.ImageSpan;
 import android.text.style.RelativeSizeSpan;
 import android.text.util.Linkify;
 import android.view.Gravity;
@@ -570,7 +574,7 @@ final class PersonsChat {
             SpannableStringBuilder sb = new SpannableStringBuilder();
             sb.append(reply.optBoolean("fromMe") ? "You" : name());
             sb.setSpan(new Ui.Font(Ui.semi, 0), 0, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-            String rt = PersonsUi.s(reply, "text");
+            String rt = PersonsEmoji.plain(PersonsUi.s(reply, "text"));
             sb.append("  ").append(rt.isEmpty() ? "Attachment" : rt);
             TextView qt = Ui.text(a, sb, 13, Ui.G700);
             qt.setMaxLines(2);
@@ -582,18 +586,35 @@ final class PersonsChat {
         String text = PersonsUi.s(m, "text");
         List<JSONObject> fs = PersonsHome.objs(PersonsUi.arr(m, "files"));
         if (!text.isEmpty() || m.optBoolean("edited") || fs.isEmpty()) {
-            SpannableStringBuilder sb = new SpannableStringBuilder(text.isEmpty() && fs.isEmpty() ? "Empty message" : text);
+            // Discord's custom emoji show as :name: until their pictures are here; 1-3 emoji alone are drawn big
+            List<PersonsEmoji.Custom> emo = PersonsEmoji.customs(text);
+            boolean big = PersonsEmoji.jumbo(text, 3) > 0;
+            List<int[]> spots = new ArrayList<>();
+            SpannableStringBuilder sb = new SpannableStringBuilder();
+            if (text.isEmpty() && fs.isEmpty()) sb.append("Empty message");
+            else {
+                int last = 0;
+                for (PersonsEmoji.Custom c : emo) {
+                    sb.append(text, last, c.start);
+                    int s0 = sb.length();
+                    sb.append(":").append(c.name).append(":");
+                    spots.add(new int[] { s0, sb.length() });
+                    last = c.end;
+                }
+                sb.append(text.substring(last));
+            }
             if (text.isEmpty() && fs.isEmpty()) sb.setSpan(new ForegroundColorSpan(Ui.G600), 0, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
             if (m.optBoolean("edited")) {
                 int s = sb.length();
                 sb.append(" (edited)");
                 sb.setSpan(new ForegroundColorSpan(Ui.G600), s, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-                sb.setSpan(new RelativeSizeSpan(0.8f), s, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                sb.setSpan(big ? new AbsoluteSizeSpan(12, true) : new RelativeSizeSpan(0.8f), s, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
             }
-            TextView tv = Ui.text(a, sb, 15, Ui.FG);
+            TextView tv = Ui.text(a, sb, big ? 40 : 15, Ui.FG);
             tv.setMaxWidth(inner);
             tv.setLinkTextColor(Ui.BLUE);
             Linkify.addLinks(tv, Linkify.WEB_URLS | Linkify.EMAIL_ADDRESSES);
+            if (!emo.isEmpty()) emojiPictures(tv, sb, emo, spots, big ? Ui.dp(48) : Math.round(tv.getTextSize() * 1.375f));
             tv.setOnLongClickListener(v -> { menu(m); return true; });
             if (sb.length() > 0) b.addView(tv);
         }
@@ -609,6 +630,23 @@ final class PersonsChat {
         b.setOnLongClickListener(v -> { menu(m); return true; });
         wrap.addView(b, Ui.wrap());
         return wrap;
+    }
+
+    /** Discord's custom emoji in a message's text as their pictures, `px` high, each over its `:name:` once it's here
+     *  (through the PC's picture cache). */
+    private void emojiPictures(TextView tv, SpannableStringBuilder sb, List<PersonsEmoji.Custom> emo, List<int[]> spots, int px) {
+        int size = px > Ui.dp(32) ? 96 : 48;
+        for (int i = 0; i < emo.size(); i++) {
+            int[] at = spots.get(i);
+            PersonsUi.bitmap(a, p.hub, PersonsEmoji.route(emo.get(i), size), px, b -> {
+                if (b == null || b.getHeight() <= 0) return;
+                BitmapDrawable d = new BitmapDrawable(a.getResources(), b);
+                d.setBounds(0, 0, Math.max(1, px * b.getWidth() / b.getHeight()), px);
+                sb.setSpan(new ImageSpan(d, DynamicDrawableSpan.ALIGN_BOTTOM), at[0], at[1], Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                tv.setText(sb);
+                Linkify.addLinks(tv, Linkify.WEB_URLS | Linkify.EMAIL_ADDRESSES);
+            });
+        }
     }
 
     /** A message's channel kind when the page shows more than one chat ("" otherwise: no marks). */
@@ -1031,7 +1069,7 @@ final class PersonsChat {
         // the first email's subject, the reply or the forward, the photos
         subject.setVisibility(!toAi && note == null && needSubject() ? View.VISIBLE : View.GONE);
         if (!toAi && replyTo != null) {
-            String rt = PersonsUi.s(replyTo, "text");
+            String rt = PersonsEmoji.plain(PersonsUi.s(replyTo, "text"));
             replyText.setText(quote("Replying to", replyTo.optBoolean("fromMe") ? "You" : n, rt.isEmpty() ? "📎 attachment" : rt));
             replyBox.setVisibility(View.VISIBLE);
         } else replyBox.setVisibility(View.GONE);

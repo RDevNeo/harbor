@@ -125,6 +125,7 @@ export const GLYPHS = {
   PENCIL: "\u{e1f9}",
   HEART: "\u{e0f2}",
   STICKY_NOTE: "\u{e303}",
+  SMILE: "\u{e164}",
 } as const;
 
 export type GlyphName = keyof typeof GLYPHS;

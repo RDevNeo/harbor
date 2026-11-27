@@ -13,6 +13,7 @@ import { isImage } from "../../logic/images.ts";
 import { loadQr } from "../../qr.ts";
 import { releaseBlocks } from "../../markdown.ts";
 import { aiSlintParts, type PPartData } from "./aiparts.ts";
+import { customEmojiUrl, emojiCategories, emojiRows, inlineLayout, insertAt, jumboEmoji, plainEmoji, searchEmoji, type EmojiEntry } from "./emoji.ts";
 import { aiMenu, blockedNote, composerHint, CONTACT_FIELD, failedMenu, messageMenu, moveEntries, placeOfRow, quoteInto, type MenuEntry, type MoveEntry } from "./menus.ts";
 import { aiFolds, audioRow, blankRow, byRecent, chatRows, shortAgo, listRows, matches, moveSection, nextSpeed, personSections, sectionOrder, servesSection, sideRows, srImageSize, srTimeline, type AiJson, type AudioRow, type AudioStateJson, type ChatJson, type MsgRow, type PersonJson, type Row, type SrFileJson, type SrPaneJson, type StateJson, type UiState } from "./view.ts";
 
@@ -61,6 +62,10 @@ const SECTION_LABEL: Record<string, string> = { stores: "Stores", creators: "Cre
 const KIND_LABEL: Record<string, string> = { discord: "Discord", gmail: "Gmail", whatsapp: "WhatsApp", instagram: "Instagram" };
 /** One entry of a Persons menu (showMenu): `children` makes it open a submenu. */
 type MenuIn = { id?: string; label: string; icon?: string; sub?: string; hint?: string; danger?: boolean; sep?: boolean; header?: boolean; disabled?: boolean; checked?: boolean; children?: MenuIn[]; run?: () => void };
+
+/** The picker's Recent tab before anything was picked (Discord's frequently used). */
+const RECENT_START = ["👍", "❤️", "😂", "😮", "😢", "🙏", "🔥", "🎉", "✅", "👀", "😊", "😅", "🤔", "👏", "💯", "🚀", "😎", "🥲"];
+const EMOJI_COLS = 9;
 
 const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#06b6d4", "#ec4899", "#84cc16", "#f97316", "#8b5cf6", "#0ea5e9"];
 
@@ -215,6 +220,21 @@ class PersonsTab {
     on("open_file", ((id: string) => void this.openFile(id)) as Cb);
     on("open_image", ((id: string, i: number) => void this.openImage(id, i)) as Cb);
     on("attach", () => void (this.sr && !this.aiMode ? this.srAttach() : this.attach()));
+    // the composer's emoji picker: the smiley button, a tab, the search, a pick (into the draft at its cursor)
+    b.emoji_cats = [{ icon: "🕘", label: "Recent" }, ...emojiCategories().map((c) => ({ icon: c.icon, label: c.label }))];
+    on("emoji_toggle", ((x: number, y: number) => this.emojiToggle(x, y)) as Cb);
+    on("emoji_tab", ((i: number) => {
+      this.emojiTab = i;
+      b.emoji_query = "";
+      this.emojiGrid();
+    }) as Cb);
+    on("emoji_search", ((q: string) => this.emojiGrid(q)) as Cb);
+    on("emoji_pick", ((e: string) => this.emojiPick(e)) as Cb);
+    on("emoji_first", () => {
+      const q = String(b.emoji_query ?? "");
+      const first = q.trim() ? searchEmoji(q, 1)[0] : this.emojiList(this.emojiTab)[0];
+      if (first) this.emojiPick(first.e);
+    });
     // Ctrl+V / Shift+Insert in the composer: a picture on the clipboard joins the message (the text pastes as usual)
     on("paste", () => void this.pasteImage());
     on("clear_attached", () => {
@@ -593,6 +613,91 @@ class PersonsTab {
     this.render();
   }
 
+  private emojiTab = 0;
+  private emojiRecent: string[] = [];
+
+  /** The smiley button: the picker opens over it (Recent first, or the tab left last), or closes back to the field. */
+  private emojiToggle(x: number, y: number): void {
+    const b = this.bus;
+    if (b.emoji_open) {
+      b.emoji_open = false;
+      this.focusField();
+      return;
+    }
+    b.emoji_x = x;
+    b.emoji_y = y;
+    b.emoji_query = "";
+    this.emojiGrid();
+    b.emoji_open = true;
+  }
+
+  /** A tab's emoji (0: Recent, then Unicode's groups). */
+  private emojiList(tab: number): EmojiEntry[] {
+    if (tab > 0) return emojiCategories()[tab - 1]?.items ?? [];
+    const names = new Map(emojiCategories().flatMap((c) => c.items.map((x) => [x.e, x.name] as const)));
+    const list = [...this.emojiRecent, ...RECENT_START.filter((e) => !this.emojiRecent.includes(e))].slice(0, 4 * EMOJI_COLS);
+    return list.map((e) => ({ e, name: names.get(e) ?? "" }));
+  }
+
+  /** The grid: what the search finds, else the tab's emoji. */
+  private emojiGrid(q = ""): void {
+    const b = this.bus;
+    const found = q.trim() ? searchEmoji(q) : null;
+    b.emoji_cat = found ? -1 : this.emojiTab;
+    b.emoji_rows = emojiRows(found ?? this.emojiList(this.emojiTab), EMOJI_COLS).map((cells) => ({ cells }));
+    b.emoji_empty = found ? "No emoji found" : "";
+    b.emoji_rev = (Number(b.emoji_rev) || 0) + 1;
+  }
+
+  /** An emoji into the draft where the field's cursor is (over its selection); the picker closes, the field has the
+   *  focus with the cursor after the emoji. */
+  private emojiPick(e: string): void {
+    const b = this.bus;
+    const r = insertAt(String(b.draft ?? ""), Number(b.draft_anchor) || 0, Number(b.draft_cursor) || 0, e);
+    b.draft = r.text;
+    b.draft_cursor = r.cursor;
+    b.draft_anchor = r.cursor;
+    b.cursor_to = r.cursor;
+    b.cursor_rev = (Number(b.cursor_rev) || 0) + 1;
+    this.emojiRecent = [e, ...this.emojiRecent.filter((x) => x !== e)].slice(0, 4 * EMOJI_COLS);
+    b.emoji_open = false;
+    b.emoji_query = "";
+  }
+
+  /** A picture from the web (a Discord emoji), through the engine's picture cache; null until it's here. */
+  private urlPic(url: string, cap: number): Pixels | null {
+    const f = this.attachPaths.get(url);
+    if (f === undefined) {
+      this.attachPaths.set(url, null);
+      void this.ctx.call("GET", "v1/persons/img/url", { u: url, path: "1" }).then((r) => {
+        const path = r.status === 200 ? (r.body as { path?: string }).path ?? null : null;
+        this.attachPaths.set(url, path);
+        if (path) this.render();
+      }, () => {});
+    }
+    return f ? this.pics.get(f, cap) : null;
+  }
+
+  /** A message's text as drawn: Discord's custom emoji as pictures in it, or 1-3 emoji alone drawn big. */
+  private emojiJs(r: MsgRow): { text: string; emojis: Record<string, unknown>[]; jumbo: Record<string, unknown>[] } {
+    if ((r.kind !== "msg" && r.kind !== "out") || r.toAi || !r.text) return { text: r.text, emojis: [], jumbo: [] };
+    const big = jumboEmoji(r.text);
+    if (big) {
+      const jumbo = big.map((j) => {
+        if (j.kind === "unicode") return { image: NO_PX, has_image: false, custom: false, text: j.text, name: "", from: 0, to: 0 };
+        const px = this.urlPic(customEmojiUrl(j, 96), 96);
+        return { image: px ?? NO_PX, has_image: !!px, custom: true, text: "", name: j.name, from: 0, to: 0 };
+      });
+      return { text: r.text, emojis: [], jumbo };
+    }
+    const lay = inlineLayout(r.text);
+    const emojis = lay.emojis.map((e) => {
+      const px = this.urlPic(customEmojiUrl(e), 48);
+      return { image: px ?? NO_PX, has_image: !!px, custom: true, text: "", name: e.name, from: e.from, to: e.to };
+    });
+    return { text: lay.text, emojis, jumbo: [] };
+  }
+
   /** The composer's field takes the focus (Person Hub's switchTo / startReply). */
   private focusField(): void {
     this.bus.focus_rev = (Number(this.bus.focus_rev) || 0) + 1;
@@ -604,15 +709,18 @@ class PersonsTab {
       const px = known ? this.pics.get(known, 640) : null;
       return { image: px ?? NO_PX, x: t.x, y: t.y, w: t.w, h: t.h };
     });
+    const em = this.emojiJs(r);
     return {
       kind: r.kind,
       id: r.id,
       mine: r.mine,
-      text: r.text,
+      text: em.text,
       time: r.time,
       meta: r.meta,
       reply: r.reply,
       has_reply: r.reply !== "",
+      emojis: em.emojis,
+      jumbo: em.jumbo,
       images,
       has_image: images.length > 0,
       img_w: r.imgW,
@@ -1774,13 +1882,13 @@ class PersonsTab {
     const run: Record<string, () => void> = {
       reply: () => {
         this.setTo(false);
-        this.replyTo = { id: m.id, name: who, text: m.text.slice(0, 160) || (m.files.length ? "📎 attachment" : "") };
+        this.replyTo = { id: m.id, name: who, text: plainEmoji(m.text).slice(0, 160) || (m.files.length ? "📎 attachment" : "") };
         this.focusField();
         this.render();
       },
       forward: () => {
         // Person Hub's Forward to AI: the AI composer, with this message quoted, ready for a question
-        this.forwarded = { id: m.id, name: who, text: m.text.slice(0, 160) || (m.files[0] ? (m.voice ? "Voice message" : m.files[0].image ? "Photo" : m.files[0].name) : "Message") };
+        this.forwarded = { id: m.id, name: who, text: plainEmoji(m.text).slice(0, 160) || (m.files[0] ? (m.voice ? "Voice message" : m.files[0].image ? "Photo" : m.files[0].name) : "Message") };
         this.setTo(true);
         this.focusField();
         this.render();

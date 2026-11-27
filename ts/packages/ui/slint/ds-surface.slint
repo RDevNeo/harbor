@@ -326,6 +326,12 @@ export component ComposeField {
     in property <length> max-h: 192px;
     in property <int> focus-rev;
     out property <bool> focused: field.has-focus;
+    // The selection, in UTF-8 byte offsets (what an emoji picker inserts over); bump `cursor-rev` to focus the field with
+    // the cursor at `cursor-to` (after the caller put something into `text`).
+    out property <int> cursor: field.cursor-position-byte-offset;
+    out property <int> anchor: field.anchor-position-byte-offset;
+    in property <int> cursor-to;
+    in property <int> cursor-rev;
     callback submit();
     callback edited(string);
     callback escape() -> bool;
@@ -337,6 +343,10 @@ export component ComposeField {
     height: min(root.max-h, max(root.min-h, field.preferred-height + 10px));
     changed focus-rev => {
         field.focus();
+    }
+    changed cursor-rev => {
+        field.focus();
+        field.set-selection-offsets(root.cursor-to, root.cursor-to);
     }
     FocusScope {
         capture-key-pressed(e) => {

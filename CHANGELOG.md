@@ -6,6 +6,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 ## [Unreleased]
 
 ### Fixed
+- **Persons: emoji in chats.** Discord's custom emoji (`<:CatSou:1296…>`, animated `<a:…>`) showed as raw text; they
+  now show as their pictures inside the text (on the phone too; an animated one shows its first frame on the PC), and
+  as `:name:` in one-line quotes (replies, Reply/Forward chips). A message of nothing but 1-3 emoji, custom or Unicode,
+  is drawn big (48 px), as Discord does. The composer has an emoji button beside attach: a picker with search (Unicode
+  names and common shortcodes like `thumbsup`, `joy`), Recent and Unicode's categories; a click puts the emoji at the
+  cursor (over a selection), Enter in the search takes the first, Esc closes. Every channel (Discord, Gmail, WhatsApp,
+  Instagram), the AI note and site request replies. The phone app has no picker: the phone's keyboard has emoji.
 - **Persons: pictures attached to a message show as pictures over the composer**, as in Projects' composer (the same
   rounded 64 px tile, × on its corner, click for the lightbox), side by side, instead of one row of file names. Other
   files keep the one-line chip. Desktop only: the phone app's Persons composer is its own UI, unchanged.

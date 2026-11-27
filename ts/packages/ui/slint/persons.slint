@@ -2,8 +2,9 @@
 // everyone, a person's chat (Discord, Gmail, WhatsApp) with the Person AI's bubbles, and the person panel. Driven by
 // packages/ui/src/tabs/persons/ui.ts through PersonsBus; data from the engine's v1/persons routes.
 // Built on Hub's design system (ds.slint, DESIGN.md): rows, heads, panels, dialogs and menus are the shared ones.
-import { Theme, Icons, Ds, Glyph, TipArea, Btn, Variant, BtnSize, Ui, Input, SearchField, Spinner, Empty, MenuItem, MenuLabel, MenuSeparator, ListRow, SectionHead, FoldBar, ListNote, Avatar, ChannelMark, StatusDot, SideSurface, SideHead, ShowSideBtn, PageBar, PanelSurface, PanelSection, DialogFrame, DialogActions, Field, FieldLabel, TextBox, MenuPanel, Toast, Chip, PillSwitch, Card, ComposeField, Scroll } from "ds.slint";
+import { Theme, Icons, Ds, Glyph, TipArea, Btn, Variant, BtnSize, Ui, Input, SearchField, Spinner, Empty, MenuItem, MenuLabel, MenuSeparator, ListRow, SectionHead, FoldBar, ListNote, Avatar, ChannelMark, StatusDot, SideSurface, SideHead, ShowSideBtn, PageBar, PanelSurface, PanelSection, DialogFrame, DialogActions, Field, FieldLabel, TextBox, MenuPanel, Toast, Chip, PillSwitch, Card, ComposeField, Scroll, ScrollThumb, PopoverFrame } from "ds.slint";
 import { MdBlock, MdBlockView } from "markdown.slint";
+import { ListView } from "std-widgets.slint";
 import { ImageTile } from "composer.slint";
 
 export struct PRow {
@@ -50,6 +51,23 @@ export struct PImg {
     h: length,
 }
 
+// An emoji drawn as a picture or a glyph: a Discord custom emoji inside a message's text (its gap's UTF-8 offsets
+// `from`..`to` in the drawn text, emoji.ts inlineLayout), or one of a big emoji-only message's (`text`: a Unicode one).
+export struct PEmoji {
+    image: image,
+    has-image: bool,
+    custom: bool,
+    text: string,
+    name: string,
+    from: int,
+    to: int,
+}
+
+// The composer's emoji picker: a category tab, a grid row of emoji (with their names, the hover line).
+export struct PEmojiCat { icon: string, label: string }
+export struct PEmojiCell { e: string, name: string }
+export struct PEmojiRow { cells: [PEmojiCell] }
+
 export struct PMsg {
     kind: string, // msg | day | unread | subject | ai | out
     id: string,
@@ -59,6 +77,10 @@ export struct PMsg {
     meta: string, // "edited", ticks
     reply: string,
     has-reply: bool,
+    // Discord custom emoji inside `text` (drawn over their gaps) and, for a message of nothing but 1-3 emoji, those
+    // emoji drawn big instead of the text.
+    emojis: [PEmoji],
+    jumbo: [PEmoji],
     images: [PImg],
     has-image: bool,
     img-w: length,
@@ -181,6 +203,22 @@ export global PersonsBus {
     in property <string> fwd-name; // Forward to AI: the forwarded message's author and text ("" none)
     in property <string> fwd-text;
     in property <int> focus-rev; // bumps when the composer's field should take the focus (Reply, Forward, the switch)
+    // the field's selection (UTF-8 byte offsets), kept here for the emoji picker; `cursor-rev` bumps to put the cursor
+    // at `cursor-to` (after an emoji went in)
+    in-out property <int> draft-cursor;
+    in-out property <int> draft-anchor;
+    in property <int> cursor-to;
+    in property <int> cursor-rev;
+    // the emoji picker over the composer's smiley button (its corner at emoji-x, emoji-y, window coordinates)
+    in-out property <bool> emoji-open;
+    in property <length> emoji-x;
+    in property <length> emoji-y;
+    in property <[PEmojiCat]> emoji-cats;
+    in property <int> emoji-cat; // the tab shown (-1: search results)
+    in property <[PEmojiRow]> emoji-rows;
+    in property <string> emoji-empty;
+    in-out property <string> emoji-query;
+    in property <int> emoji-rev; // bumps when the grid's content changes: back to its top
     // panel
     in property <bool> panel;
     in property <string> p-name;
@@ -300,6 +338,11 @@ export global PersonsBus {
     callback open-image(string, int);
     callback cancel-reply();
     callback attach();
+    callback emoji-toggle(length, length); // the smiley button: opens (at its corner) or closes the picker
+    callback emoji-tab(int);
+    callback emoji-search(string);
+    callback emoji-pick(string); // an emoji into the draft at its cursor (draft-cursor / draft-anchor)
+    callback emoji-first(); // Enter in the search: the first emoji found
     callback paste(); // Ctrl+V in the composer: a picture on the clipboard joins the message
     callback clear-attached(); // drops the files that aren't pictures (each picture has its own ×)
     callback remove-attached(int); // a picture's ×, by its place among the tiles
@@ -1125,6 +1168,90 @@ component AudioPlayer {
 // A message, the user's note to the Person AI, or the AI's answer. The AI's thread has its own tint and a small
 // caps label with the time ("AI · 10:35", "TO THE AI · 10:33"); an answer is as wide as the column and draws its
 // markdown as Projects' chat does (markdown.slint), its ```reply drafts as DraftCards.
+// Discord's custom emoji inside a message's text: the text is drawn with a gap of no-break spaces in each one's place
+// (emoji.ts inlineLayout) and the picture goes over the gap, found where it's drawn as markdown.slint's LinkLayer finds
+// a link's words: from a hidden TextInput laid out as the text, where its cursor goes at the gap's ends.
+component EmojiLayer {
+    in property <string> plain;
+    in property <[PEmoji]> emojis;
+    in property <length> size;
+    property <length> line: one.preferred-height;
+    property <Point> at;
+    function where(offset: int) -> Point {
+        probe.set-selection-offsets(offset, offset);
+        return root.at;
+    }
+    one := Text {
+        visible: false;
+        text: "X";
+        font-size: root.size;
+        font-family: "Geist";
+    }
+    probe := TextInput {
+        visible: false;
+        enabled: false;
+        read-only: true;
+        width: root.width;
+        height: root.height;
+        text: root.plain;
+        font-size: root.size;
+        font-family: "Geist";
+        wrap: word-wrap;
+        cursor-position-changed(p) => {
+            root.at = p;
+        }
+    }
+    for e in root.emojis: spot := Rectangle {
+        property <Point> a;
+        property <Point> b;
+        property <bool> placed;
+        // Laid out again when any of these change.
+        property <length> w-now: root.width;
+        property <length> size-now: root.size;
+        property <string> text-now: root.plain;
+        property <int> from-now: e.from;
+        // its picture: a line high, centred on its gap (on the gap's last line when it starts at a line's end)
+        property <length> s: min(root.line * 1.1, root.size * 1.375);
+        property <bool> same: self.b.y == self.a.y;
+        function place() {
+            self.a = root.where(e.from);
+            self.b = root.where(e.to);
+            // Before the window can lay text out, every offset is at 0,0: try again shortly.
+            self.placed = root.width > 0 && (self.b.x != self.a.x || self.b.y != self.a.y);
+        }
+        init => {
+            self.place();
+        }
+        changed w-now => {
+            self.place();
+        }
+        changed size-now => {
+            self.place();
+        }
+        changed text-now => {
+            self.place();
+        }
+        changed from-now => {
+            self.place();
+        }
+        Timer {
+            interval: 100ms;
+            running: !spot.placed && root.width > 0;
+            triggered => {
+                spot.place();
+            }
+        }
+        if spot.placed && e.has-image: Image {
+            x: spot.same ? (spot.a.x + spot.b.x - spot.s) / 2 : max(0px, spot.b.x - spot.s);
+            y: (spot.same ? spot.a.y : spot.b.y) + (root.line - spot.s) / 2;
+            width: spot.s;
+            height: spot.s;
+            source: e.image;
+            image-fit: contain;
+        }
+    }
+}
+
 component Bubble {
     in property <PMsg> m;
     in property <length> max-w;
@@ -1135,7 +1262,9 @@ component Bubble {
     property <color> ai-ink: Theme.dark ? #b9a6ff : #6d4ad6;
     property <color> bg: ai ? (Theme.dark ? #1d1830 : #f3effe) : m.to-ai ? (Theme.dark ? #241d3b : #ebe4fd) : m.mine ? (Theme.dark ? #1f2a44 : #e6f0ff) : Theme.gray-100;
     property <length> pad-x: thread ? Ds.sp6 : 12px;
-    property <length> text-w: min(root.max-w - 2 * pad-x, body.preferred-width);
+    // A message of nothing but 1-3 emoji: drawn big (48px each, Discord's jumbo), not as text.
+    property <bool> jumbo: !ai && m.jumbo.length > 0;
+    property <length> text-w: min(root.max-w - 2 * pad-x, root.jumbo ? m.jumbo.length * 52px - 4px : body.preferred-width);
     // "TO THE AI · 00:00" fits.
     property <length> label-w: thread ? 124px : 0px;
     property <length> w: ai ? root.max-w : max(max(root.m.has-image ? root.m.img-w : 0px, label-w), max(text-w, root.m.has-audio ? 280px : root.m.has-reply || root.m.files != "" ? 220px : 60px)) + 2 * pad-x;
@@ -1282,13 +1411,48 @@ component Bubble {
                 if root.m.has-audio: AudioPlayer {
                     m: root.m;
                 }
-                body := Text {
-                    visible: !root.ai && root.m.text != "";
-                    height: self.visible ? self.preferred-height : 0px;
-                    text: root.ai ? "" : root.m.text;
-                    font-size: Ds.t-body;
-                    color: Theme.fg;
-                    wrap: word-wrap;
+                if root.jumbo: HorizontalLayout {
+                    height: 48px;
+                    spacing: 4px;
+                    alignment: start;
+                    for j in root.m.jumbo: Rectangle {
+                        width: 48px;
+                        height: 48px;
+                        if j.has-image: Image {
+                            width: 48px;
+                            height: 48px;
+                            source: j.image;
+                            image-fit: contain;
+                        }
+                        if !j.custom: Text {
+                            text: j.text;
+                            font-size: 40px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        if j.custom: TipArea {
+                            tip: ":" + j.name + ":";
+                        }
+                    }
+                }
+                Rectangle {
+                    visible: !root.ai && root.m.text != "" && !root.jumbo;
+                    height: self.visible ? body.preferred-height : 0px;
+                    body := Text {
+                        width: parent.width;
+                        height: parent.height;
+                        text: root.ai ? "" : root.m.text;
+                        font-size: Ds.t-body;
+                        color: Theme.fg;
+                        wrap: word-wrap;
+                    }
+                    if root.m.emojis.length > 0 && !root.ai: EmojiLayer {
+                        width: parent.width;
+                        height: parent.height;
+                        plain: root.m.text;
+                        emojis: root.m.emojis;
+                        size: Ds.t-body;
+                    }
                 }
                 // Folded: its first two lines (a click opens it) and its first draft on one line.
                 if root.ai && root.m.folded && root.m.preview != "": Rectangle {
@@ -1816,6 +1980,14 @@ component Composer inherits Rectangle {
                         text <=> PersonsBus.draft;
                         hint: PersonsBus.c-hint;
                         focus-rev: PersonsBus.focus-rev;
+                        cursor-to: PersonsBus.cursor-to;
+                        cursor-rev: PersonsBus.cursor-rev;
+                        changed cursor => {
+                            PersonsBus.draft-cursor = self.cursor;
+                        }
+                        changed anchor => {
+                            PersonsBus.draft-anchor = self.anchor;
+                        }
                         submit => {
                             PersonsBus.send();
                         }
@@ -1852,6 +2024,16 @@ component Composer inherits Rectangle {
                             tip: root.ai ? "Attach files for the AI" : "Attach files";
                             clicked => {
                                 PersonsBus.attach();
+                            }
+                        }
+                        emoji-btn := Btn {
+                            icon: Icons.smile;
+                            size: BtnSize.icon-sm;
+                            variant: PersonsBus.emoji-open ? Variant.ghost : Variant.ghost-muted;
+                            enabled: root.writes;
+                            tip: PersonsBus.emoji-open ? "" : "Emoji";
+                            clicked => {
+                                PersonsBus.emoji-toggle(self.absolute-position.x, self.absolute-position.y);
                             }
                         }
                         if root.ai: Btn {
@@ -3312,6 +3494,149 @@ component Dialog inherits DialogFrame {
     }
 }
 
+// The composer's emoji picker (over its smiley button): search on top (Enter takes the first, Esc closes), a tab per
+// category, the grid (only the rows on screen exist), and the hovered emoji's name under it. A click puts the emoji into
+// the draft at the cursor (over a selection) and closes it.
+component EmojiPicker inherits PopoverFrame {
+    property <length> cell: 36px;
+    property <PEmojiCell> hover;
+    property <int> rev: PersonsBus.emoji-rev;
+    changed rev => {
+        grid.content-y = 0;
+    }
+    width: 9 * root.cell + 2 * 8px + 6px;
+    height: 360px;
+    init => {
+        search.focus-field();
+    }
+    TouchArea { }
+    VerticalLayout {
+        padding: 8px;
+        spacing: 6px;
+        Rectangle {
+            height: 32px;
+            border-radius: Ds.radius-md;
+            background: Theme.gray-100;
+            search := SearchField {
+                x: 6px;
+                width: parent.width - 12px;
+                hint: "Search emoji";
+                text <=> PersonsBus.emoji-query;
+                edited(t) => {
+                    PersonsBus.emoji-search(t);
+                }
+                key(e) => {
+                    if e.text == Key.Escape {
+                        PersonsBus.emoji-toggle(0, 0);
+                        return accept;
+                    }
+                    if e.text == Key.Return {
+                        PersonsBus.emoji-first();
+                        return accept;
+                    }
+                    return reject;
+                }
+            }
+        }
+        HorizontalLayout {
+            height: 32px;
+            spacing: 2px;
+            for c[i] in PersonsBus.emoji-cats: Rectangle {
+                horizontal-stretch: 1;
+                border-radius: Ds.radius-md;
+                background: PersonsBus.emoji-cat == i ? Theme.gray-200 : tab.has-hover ? Theme.gray-100 : transparent;
+                Text {
+                    text: c.icon;
+                    font-size: 17px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    opacity: PersonsBus.emoji-cat == i || tab.has-hover ? 1 : 0.6;
+                }
+                tab := TipArea {
+                    tip: c.label;
+                    clicked => {
+                        PersonsBus.emoji-tab(i);
+                    }
+                }
+            }
+        }
+        Rectangle {
+            height: 1px;
+            background: Theme.border;
+        }
+        Rectangle {
+            vertical-stretch: 1;
+            if PersonsBus.emoji-rows.length == 0: Text {
+                text: PersonsBus.emoji-empty;
+                font-size: Ds.t-sm;
+                color: Theme.subtle;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            grid := ListView {
+                width: parent.width;
+                height: parent.height;
+                vertical-scrollbar-policy: always-off;
+                horizontal-scrollbar-policy: always-off;
+                for r in PersonsBus.emoji-rows: HorizontalLayout {
+                    height: root.cell;
+                    alignment: start;
+                    for c in r.cells: Rectangle {
+                        width: root.cell;
+                        height: root.cell;
+                        border-radius: Ds.radius-md;
+                        background: area.has-hover ? Theme.gray-200 : transparent;
+                        Text {
+                            text: c.e;
+                            font-size: 24px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        area := TouchArea {
+                            mouse-cursor: pointer;
+                            changed has-hover => {
+                                if self.has-hover {
+                                    root.hover = c;
+                                }
+                            }
+                            clicked => {
+                                PersonsBus.emoji-pick(c.e);
+                            }
+                        }
+                    }
+                }
+            }
+            ScrollThumb {
+                x: parent.width - self.width;
+                height: parent.height;
+                content-y: grid.content-y;
+                content-height: grid.content-height;
+                visible-height: grid.visible-height;
+                scroll-to(y) => {
+                    grid.content-y = y;
+                }
+            }
+        }
+        HorizontalLayout {
+            height: 24px;
+            spacing: 8px;
+            Text {
+                text: root.hover.e;
+                font-size: 18px;
+                vertical-alignment: center;
+            }
+            Text {
+                text: root.hover.e == "" ? "" : root.hover.name;
+                font-size: Ds.t-sm;
+                color: Theme.subtle;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+        }
+    }
+}
+
 // ---------- the page ----------
 
 export component PersonsPage {
@@ -3320,7 +3645,9 @@ export component PersonsPage {
     FocusScope {
         key-pressed(e) => {
             if e.text == Key.Escape {
-                if PersonsBus.menu-open {
+                if PersonsBus.emoji-open {
+                    PersonsBus.emoji-toggle(0, 0);
+                } else if PersonsBus.menu-open {
                     PersonsBus.menu-close();
                 } else if PersonsBus.dialog != "" {
                     PersonsBus.dialog-cancel();
@@ -3374,6 +3701,15 @@ export component PersonsPage {
         menu-w: PersonsBus.sub-w;
         x: root.menu-left + PersonsBus.menu-w + 2px + self.width <= root.width - 4px ? root.menu-left + PersonsBus.menu-w + 2px : max(4px, root.menu-left - self.width - 2px);
         y: max(0px, min(PersonsBus.sub-y - root.absolute-position.y - 4px, root.height - self.height - 8px));
+    }
+    if PersonsBus.emoji-open: TouchArea {
+        clicked => {
+            PersonsBus.emoji-toggle(0, 0);
+        }
+    }
+    if PersonsBus.emoji-open: EmojiPicker {
+        x: max(8px, min(PersonsBus.emoji-x - root.absolute-position.x, root.width - self.width - 8px));
+        y: max(8px, PersonsBus.emoji-y - root.absolute-position.y - self.height - 6px);
     }
     if PersonsBus.dialog != "": Dialog { }
     if PersonsBus.toast != "": Toast {
