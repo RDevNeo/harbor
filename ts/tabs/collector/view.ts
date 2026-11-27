@@ -151,7 +151,7 @@ export interface DetailView extends RowView {
   links: DetailLink[];
   /** "Open channel" (YouTube) or "Open profile". */
   openLabel: string;
-  /** "Sent an email on 3 Nov 2026 to a@b.c" when Send message reached them. */
+  /** "Sent an email on 3 Nov 2026 to a@b.c" (a WhatsApp, Discord or Instagram message) when Send message reached them. */
   contacted: string;
   /** Edit's fields as they are. */
   edit: { name: string; handle: string; bio: string; links: string };
@@ -160,6 +160,8 @@ export interface DetailView extends RowView {
   /** "Approved on 3 Nov 2026" / "… and added to Persons › Creators", "" when not approved. */
   approvedNote: string;
 }
+
+const SENT_WHAT: Record<string, string> = { gmail: "an email", whatsapp: "a WhatsApp message", discord: "a Discord message", instagram: "an Instagram message" };
 
 const STAT_LABELS: Record<string, [string, string, string, string]> = {
   youtube: ["Subscribers", "Videos", "Views", "eye"],
@@ -205,7 +207,7 @@ export function creatorDetail(c: CreatorRecord, pic: (url: string | null) => str
       return { title: linkTitle(l), url: l.url, brand: b.key, color: b.color };
     }),
     openLabel: c.platform === "youtube" ? "Open channel" : "Open profile",
-    contacted: ct ? `Sent ${ct.via === "gmail" ? "an email" : "a WhatsApp message"} on ${new Date(ct.at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} to ${ct.to}` : "",
+    contacted: ct ? `Sent ${SENT_WHAT[ct.via] ?? "a message"} on ${new Date(ct.at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} to ${ct.to}` : "",
     edit: { name: c.name, handle: c.handle ?? "", bio: c.description ?? "", links: linksText(c.links) },
     note: c.note ?? "",
     approvedNote: row.approved && c.approved ? `Approved on ${new Date(c.approved.at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}${c.approved.to === "persons" ? " and added to Persons › Creators" : ""}` : "",

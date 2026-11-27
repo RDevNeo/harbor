@@ -9,7 +9,7 @@ import * as slint from "slint-ui";
 import { readFileSync, statSync } from "node:fs";
 import { clipboard, images } from "@harbor/media";
 import type { TabCtx, TabUi } from "../api.ts";
-import { REACH_META, reachError, reachHref } from "../../../../../tabs/collector/lib/reach.ts";
+import { REACH_META, reachError } from "../../../../../tabs/collector/lib/reach.ts";
 import { compactCount } from "../../../../../tabs/collector/lib/format.ts";
 import { REACH_KINDS, type ReachKind } from "../../../../../tabs/collector/lib/types.ts";
 import type { DetailView } from "../../../../../tabs/collector/view.ts";
@@ -67,7 +67,7 @@ export interface CollectorView {
   history?: HistoryDay[];
   creators: Row[];
 }
-interface Compose {
+export interface Compose {
   id: string;
   name: string;
   templates: { id: string; name: string; description: string; builtin: boolean }[];
@@ -145,12 +145,27 @@ export function podium<T>(videos: T[]): { v: T | null; featured: boolean }[] {
 }
 
 /** What the Reach row shows for the kind picked and the text typed (pure: tested). */
-export function reachState(d: DetailView, kind: ReachKind, text: string): { error: string; canSave: boolean; help: string; hint: string } {
+export function reachState(d: DetailView, kind: ReachKind, text: string): { error: string; canSave: boolean; hint: string } {
   const t = text.trim();
   const error = t ? (reachError(kind, t) ?? "") : "";
-  const help = kind === "whatsapp" ? "Country code first, like +55 21 97570-9440 (a Brazilian number without it gets +55)." : kind === "discord" ? "Enable Developer Mode, right-click a user › Copy User ID." : "";
   const same = !!d.reach && d.reach === kind && d.reachValue === t;
-  return { error, canSave: !!t && !error && !same, help, hint: REACH_META[kind].placeholder };
+  return { error, canSave: !!t && !error && !same, hint: REACH_META[kind].placeholder };
+}
+
+/** Send message's destinations (the composer's To menu), from the compose answer (pure: tested): the brand for each
+ *  Persons › Creators channel, who they are there, and the account it goes from or why it can't. */
+export const DEST_META: Record<string, { glyph: string; color: string; app: string; hint: string }> = {
+  gmail: { glyph: "email", color: "#9aa4b2", app: "Gmail", hint: "their@email.com" },
+  whatsapp: { glyph: "whatsapp", color: "#25D366", app: "WhatsApp", hint: "+55 11 91234-5678" },
+  discord: { glyph: "discord", color: "#5865F2", app: "Discord", hint: "Discord user ID (17-20 digits)" },
+  instagram: { glyph: "instagram", color: "#E1306C", app: "Instagram", hint: "@handle" },
+};
+export function destRows(c: Compose): { value: string; kind: string; color: string; label: string; to: string; via: string; on: boolean; available: boolean }[] {
+  return c.channels.map((x) => {
+    const m = DEST_META[x.kind] ?? DEST_META.gmail!;
+    const from = `Creators ${m.app}${x.account ? ` · ${x.account}` : ""}`;
+    return { value: x.id, kind: m.glyph, color: m.color, label: x.label, to: x.to, via: x.connected ? (x.to ? from : `${from} · none yet: type it in To`) : x.why, on: x.id === c.channel, available: x.connected };
+  });
 }
 
 const initials = (name: string): string => {
@@ -419,9 +434,22 @@ export function createCollectorUi(): TabUi {
     set("s_title", `Send message to ${c.name}`);
     set("s_templates", new slint.ArrayModel(c.templates.map((t) => ({ id: t.id, name: t.name, description: t.description, on: t.id === c.template }))));
     const ch = c.channels.find((x) => x.id === c.channel);
-    set("s_channels", new slint.ArrayModel(c.channels.map((x) => ({ value: x.id, label: x.kind === "gmail" ? `Email${x.account ? ` · ${x.account}` : ""}` : `WhatsApp${x.account ? ` · ${x.account}` : ""}`, on: x.id === c.channel, available: x.connected, tip: x.why }))));
-    set("s_channel_why", !c.channels.length ? "Persons › Creators has no Gmail or WhatsApp: add one there (Creators › Connections)." : (ch?.why ?? ""));
-    set("s_is_email", (ch?.kind ?? c.kind) !== "whatsapp");
+    const kind = ch?.kind ?? c.kind;
+    const meta = DEST_META[kind] ?? DEST_META.gmail!;
+    const destSig = JSON.stringify([c.channels, c.channel]);
+    if (sigs.s_dests !== destSig) {
+      set("s_dests", new slint.ArrayModel(destRows(c)));
+      sigs.s_dests = destSig;
+    }
+    set("s_dest_kind", meta.glyph);
+    set("s_dest_color", meta.color);
+    set("s_dest_label", ch?.label ?? "Pick where it goes");
+    set("s_to_hint", meta.hint);
+    // the account it goes from; a channel that can't send says why (an empty To only until something is typed)
+    const why = !ch ? "Persons › Creators has no Gmail, WhatsApp, Discord or Instagram: add one there (Creators › Connections)." : !ch.connected ? ch.why : "";
+    set("s_channel_why", why);
+    set("s_from", why || `From ${ch?.account ? `${ch.account} · ` : ""}Creators ${meta.app}`);
+    set("s_is_email", kind === "gmail");
     const g = c.guard;
     // The daily limit shows only once it's reached (the user doesn't want the running count).
     set("s_guard", g && g.limit && g.sentToday >= g.limit ? `${g.limit} new emails in the last 24 h from this account already: try again later.` : "");
@@ -429,8 +457,9 @@ export function createCollectorUi(): TabUi {
     set("s_error", sendError);
     set("s_busy", sendBusy);
     set("s_confirm", sendConfirm);
-    const isEmail = (ch?.kind ?? c.kind) !== "whatsapp";
-    set("s_confirm_text", `A real ${isEmail ? "email" : "WhatsApp message"} goes to ${bus.s_to.trim()}${ch?.account ? ` from ${ch.account}` : ""}. ${c.name} becomes a person in Persons › Creators, and the message shows in that chat.`);
+    const isEmail = kind === "gmail";
+    const what = isEmail ? "email" : `${meta.app} message`;
+    set("s_confirm_text", `A real ${what} goes to ${bus.s_to.trim()}${ch?.account ? ` from ${ch.account}` : ""}. ${c.name} becomes a person in Persons › Creators, and the message shows in that chat.`);
     set("s_can_send", !!ch?.connected && bus.s_to.trim() !== "" && bus.s_text.trim() !== "" && (!isEmail || bus.s_subject.trim() !== ""));
     set("s_saved", saved);
   }
@@ -573,7 +602,6 @@ export function createCollectorUi(): TabUi {
     }
     set("d_bio", d.bio);
     set("d_bio_line", bioLine(d.bio));
-    set("d_contacted", d.contacted);
     const reachSig = `${reachKind}`;
     if (sigs.d_reaches !== reachSig) {
       b.d_reaches = new slint.ArrayModel(REACH_KINDS.map((k) => ({ kind: k, label: REACH_META[k].label, color: REACH_META[k].color, on: k === reachKind })));
@@ -581,13 +609,10 @@ export function createCollectorUi(): TabUi {
     }
     const st = reachState(d, reachKind, b.d_reach_text);
     set("d_reach_hint", st.hint);
-    set("d_reach_help", st.help);
     set("d_reach_error", reachErr || st.error);
     set("d_reach_can_save", st.canSave);
     set("d_reach_saved", !!d.reach);
     set("d_reach_busy", reachBusy);
-    set("d_reach_send", d.reachSend);
-    set("d_reach_send_kind", d.reach);
     set("d_url", d.url);
     set("d_open_label", d.openLabel);
     set("d_filling", filling);
@@ -673,20 +698,6 @@ export function createCollectorUi(): TabUi {
     }
   };
 
-  /** A saved Reach's action: Send message for email and WhatsApp, their profile for Discord and Instagram. */
-  const reachGo = (id: string, kind: string, value: string): void => {
-    if (kind === "email" || kind === "whatsapp") {
-      sendId = id;
-      sendConfirm = false;
-      compose = null;
-      void openCompose(view?.settings.lastTemplate ?? "", "", kind);
-      return;
-    }
-    const href = (REACH_KINDS as readonly string[]).includes(kind) ? reachHref({ kind: kind as ReachKind, value }) : null;
-    if (href) ctx?.openExternal(href);
-    else ctx?.toast("Nothing to open for that Reach.");
-  };
-
   /** The rows in place (a run adds one at a time: no full redraw of the list). */
   function sync(rows: Record<string, unknown>[]): void {
     const n = rowModel.rowCount();
@@ -698,15 +709,19 @@ export function createCollectorUi(): TabUi {
     }
   }
 
-  const openCompose = async (template = "", channel = "", kind = ""): Promise<void> => {
+  const openCompose = async (template = "", channel = "", kind = "", to = ""): Promise<void> => {
     if (!sendId || !bus) return;
     try {
       const c = (await call("GET", `v1/collector/compose?id=${encodeURIComponent(sendId)}&template=${encodeURIComponent(template)}&channel=${encodeURIComponent(channel)}&kind=${encodeURIComponent(kind)}`)) as Compose;
       const keepTo = compose && compose.id === c.id && compose.channel === c.channel ? bus.s_to : null;
+      // another destination keeps what was written (the same template); another template fills it again
+      const keep = !!compose && compose.id === c.id && compose.template === c.template && compose.channel !== c.channel;
+      const keepSubject = keep && bus.s_subject.trim() ? bus.s_subject : null;
+      const keepText = keep ? bus.s_text : null;
       compose = c;
-      bus.s_to = keepTo ?? c.to;
-      bus.s_subject = c.subject;
-      bus.s_text = c.text;
+      bus.s_to = keepTo ?? (to && (c.kind === kind || (kind === "email" && c.kind === "gmail")) ? to : c.to);
+      bus.s_subject = keepSubject ?? c.subject;
+      bus.s_text = keepText ?? c.text;
       sendError = "";
       saved = "";
       sendOpen = true;
@@ -925,10 +940,18 @@ export function createCollectorUi(): TabUi {
       saveReach(t);
     });
     on("reach_clear", () => saveReach(""));
-    on("reach_send", () => {
+    // the detail's Send message (the same for every Reach kind): the composer with the selected icon's channel picked,
+    // To filled with what that field holds
+    on("detail_send", () => {
       const d = detail;
-      if (d?.reach) reachGo(d.id, d.reach, d.reachValue);
+      if (!d) return;
+      sendId = d.id;
+      sendConfirm = false;
+      compose = null;
+      const typed = b.d_reach_text.trim();
+      void openCompose(view?.settings.lastTemplate ?? "", "", reachKind, typed && !reachError(reachKind, typed) ? typed : "");
     });
+    on("to_edited", () => renderSend());
     on("edit_show", () => {
       const d = detail;
       if (!d) return;

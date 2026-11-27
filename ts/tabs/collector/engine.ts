@@ -30,7 +30,9 @@
 //   GET  v1/collector/avatar?id=      a cached picture or thumbnail (the phone)
 //   GET  v1/collector/templates       the Send menu's templates; POST template {id?, name, description, subject, body};
 //                                     POST template-delete {id} (a built-in one is reset)
-//   GET  v1/collector/compose?id=&template=&channel=&kind=   the message for that lead: channels, to, subject, text, guard
+//   GET  v1/collector/compose?id=&template=&channel=&kind=   the message for that lead: channels (every Persons ›
+//                                     Creators connection: Gmail, WhatsApp, Discord, Instagram, with who they are
+//                                     there), to, subject (email), text, guard
 //   POST v1/collector/send            {id, channel, to, subject, text}: a real send (only on the user's click)
 //   POST v1/collector/session         {platform: "instagram", cookie}; POST session-clear {platform}
 //   GET  v1/collector/unread          {rev, unread}: finished runs not looked at yet (the tab's count, as Persons'
@@ -52,7 +54,7 @@ import { allKeys, linkedKeys, ownKeys, recordId } from "./lib/identity.ts";
 import { Instagram } from "./lib/instagram.ts";
 import { kindOf, mergeLinks, normalizeUrl, whatsappOf } from "./lib/links.ts";
 import { crmCreators, crmRecord } from "./lib/crm.ts";
-import { isReachKind, normalizeReach, parseLinks, reachError } from "./lib/reach.ts";
+import { isReachKind, normalizeReach, parseLinks, reachDrafts, reachError, whatsappDigits } from "./lib/reach.ts";
 import { sweepSocial, type SocialClient } from "./lib/social.ts";
 import { sweepYouTube, type Stats } from "./lib/sweep.ts";
 import { defaultTemplate, fillTemplate, loadTemplates, templatesToSave, type Template } from "./lib/templates.ts";
@@ -60,7 +62,21 @@ import { TikTok, TT_NOTE } from "./lib/tiktok.ts";
 import { APPROVE_TO, normalizePlatforms, SORT_MODES, type SortMode, defaultData, exportText, GAP_CHOICES, listOf, type ApproveTo, migrate, normalizeTarget, PLATFORM_LABEL, PLATFORMS, type CollectorData, type CreatorPlatform, type CreatorRecord, type LogLine, type RecentVideo } from "./lib/types.ts";
 import { YouTube } from "./lib/youtube.ts";
 import { keepRun, runRecord, type RunOutcome } from "./lib/history.ts";
-import { fakePersons, livePersons, type PersonsBridge } from "./persons-bridge.ts";
+import { fakePersons, livePersons, SEND_APP, SEND_KINDS, SEND_LABEL, type PersonsBridge, type SendKind } from "./persons-bridge.ts";
+
+/** Send message: why a channel has nobody to write to yet, and what Send asks for when To is empty. */
+const NO_TO: Record<SendKind, string> = {
+  gmail: "No email yet: type one.",
+  whatsapp: "No WhatsApp number in their bio: type one.",
+  discord: "No Discord user ID yet: type one (17-20 digits).",
+  instagram: "No Instagram handle yet: type one.",
+};
+const TYPE_TO: Record<SendKind, string> = {
+  gmail: "Type their email address.",
+  whatsapp: "Type their WhatsApp number.",
+  discord: "Type their Discord user ID.",
+  instagram: "Type their Instagram handle.",
+};
 import { buildView, creatorDetail, type SessionInfo, type SourceInfo } from "./view.ts";
 
 const LOG_KEEP = 400;
@@ -860,12 +876,33 @@ export class Collector {
     const c = this.find(id);
     if (!c) return null;
     const t = this.templates.find((x) => x.id === templateId) ?? this.templates.find((x) => x.id === this.data.settings.lastTemplate) ?? defaultTemplate(this.templates)!;
-    const chans = this.o.persons.channels().map((ch) => {
-      const to = ch.kind === "gmail" ? (c.email ?? "") : (c.whatsapp ?? "");
-      return { ...ch, to, why: !ch.connected ? `The Creators ${ch.kind === "gmail" ? "Gmail" : "WhatsApp"} isn't signed in (Persons › Creators).` : !to ? (ch.kind === "gmail" ? "No email yet: type one." : "No WhatsApp number in their bio: type one.") : "" };
-    });
-    const want = kind === "whatsapp" ? "whatsapp" : kind === "email" || kind === "gmail" ? "gmail" : "";
-    const pick = chans.find((x) => x.id === channelId) ?? (want ? (chans.find((x) => x.kind === want && x.connected) ?? chans.find((x) => x.kind === want)) : undefined) ?? chans.find((x) => x.connected && x.to) ?? chans.find((x) => x.connected) ?? chans[0] ?? null;
+    // Every way Persons › Creators can write to them: its connections (Gmail, WhatsApp, Discord, Instagram), each with
+    // who they are there (the email, the number, the Reach's Discord ID or Instagram handle); a kind Creators has no
+    // connection for is still listed, with why it can't send.
+    const drafts = reachDrafts(c);
+    const toOf = (k: SendKind): string => (k === "gmail" ? (c.email ?? "") : k === "whatsapp" ? (c.whatsapp ?? "") : k === "discord" ? drafts.discord : drafts.instagram);
+    const live = this.o.persons.channels();
+    const chans = [
+      ...live,
+      ...SEND_KINDS.filter((k) => !live.some((x) => x.kind === k)).map((k) => ({ id: `none-${k}`, kind: k, label: SEND_LABEL[k], account: null, connected: false, missing: true })),
+    ]
+      .sort((a, b) => SEND_KINDS.indexOf(a.kind) - SEND_KINDS.indexOf(b.kind))
+      .map((ch) => {
+        const to = toOf(ch.kind);
+        const why =
+          "missing" in ch
+            ? `Persons › Creators has no ${SEND_APP[ch.kind]}: add one there (Creators › Connections).`
+            : !ch.connected
+              ? `The Creators ${SEND_APP[ch.kind]} isn't signed in (Persons › Creators).`
+              : !to
+                ? NO_TO[ch.kind]
+                : "";
+        return { id: ch.id, kind: ch.kind, label: ch.label, account: ch.account, connected: ch.connected, to, why };
+      });
+    const want: SendKind | "" = kind === "email" || kind === "gmail" ? "gmail" : (SEND_KINDS as readonly string[]).includes(kind) ? (kind as SendKind) : "";
+    const reachKind: SendKind | "" = c.reach ? (c.reach.kind === "email" ? "gmail" : c.reach.kind) : "";
+    const byKind = (k: SendKind | ""): (typeof chans)[number] | undefined => (k ? (chans.find((x) => x.kind === k && x.connected) ?? chans.find((x) => x.kind === k)) : undefined);
+    const pick = chans.find((x) => x.id === channelId) ?? byKind(want) ?? (reachKind ? chans.find((x) => x.kind === reachKind && x.connected && x.to) : undefined) ?? chans.find((x) => x.connected && x.to) ?? chans.find((x) => x.connected) ?? chans[0] ?? null;
     const who = { name: c.name, handle: (c.handle ?? "").replace(/^@/, "") };
     return {
       id,
@@ -876,9 +913,9 @@ export class Collector {
       channel: pick?.id ?? "",
       kind: pick?.kind ?? "gmail",
       to: pick?.to ?? "",
-      subject: pick?.kind === "whatsapp" ? "" : fillTemplate(t.subject, who),
+      subject: pick && pick.kind !== "gmail" ? "" : fillTemplate(t.subject, who),
       text: fillTemplate(t.body, who),
-      guard: pick ? this.o.persons.guard(pick.id, pick.to) : null,
+      guard: pick && pick.connected ? this.o.persons.guard(pick.id, pick.to) : null,
       contacted: c.contacted ?? null,
     };
   }
@@ -889,12 +926,16 @@ export class Collector {
     if (!c) return { ok: false, error: "No such creator." };
     const channel = String(b.channel ?? "");
     const ch = this.o.persons.channels().find((x) => x.id === channel);
-    if (!ch) return { ok: false, error: "Pick a channel." };
+    if (!ch) {
+      const k = channel.replace(/^none-/, "");
+      return { ok: false, error: (SEND_KINDS as readonly string[]).includes(k) ? `Persons › Creators has no ${SEND_APP[k as SendKind]}: add one there (Creators › Connections).` : "Pick where it goes." };
+    }
     const to = String(b.to ?? "").trim();
     const text = String(b.text ?? "").trim();
     const subject = String(b.subject ?? "").trim();
-    if (!to) return { ok: false, error: ch.kind === "gmail" ? "Type their email address." : "Type their WhatsApp number." };
-    if (ch.kind === "gmail" && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(to)) return { ok: false, error: "That isn't an email address." };
+    if (!to) return { ok: false, error: TYPE_TO[ch.kind] };
+    const bad = reachError(ch.kind === "gmail" ? "email" : ch.kind, to);
+    if (bad) return { ok: false, error: bad };
     if (!text) return { ok: false, error: "The message is empty." };
     if (ch.kind === "gmail" && !subject) return { ok: false, error: "Add a subject." };
     const g = this.o.persons.guard(ch.id, to);
@@ -910,9 +951,15 @@ export class Collector {
         cur.email_source = "typed";
         cur.email_manual = true;
       }
+      if (ch.kind === "whatsapp" && !cur.whatsapp) {
+        cur.whatsapp = whatsappDigits(to);
+        cur.whatsapp_manual = true;
+      }
+      // a Discord ID or Instagram handle typed here is kept as their Reach when they have none
+      if ((ch.kind === "discord" || ch.kind === "instagram") && !cur.reach) cur.reach = { kind: ch.kind, value: normalizeReach(ch.kind, to) };
     }
     if (typeof b.template === "string") this.data.settings.lastTemplate = b.template;
-    this.logLine(`SENT ${ch.kind === "gmail" ? "email" : "WhatsApp"} to ${c.name} (${to}); they're in Persons › Creators.`, "ok");
+    this.logLine(`SENT ${ch.kind === "gmail" ? "email" : SEND_APP[ch.kind]} to ${c.name} (${to}); they're in Persons › Creators.`, "ok");
     return { ok: true, ...(r.person ? { person: r.person } : {}) };
   }
 

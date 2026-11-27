@@ -450,6 +450,39 @@ describe("collector", () => {
     expect(c.data.creators[0]!.contacted?.via).toBe("gmail");
     expect(c.data.settings.lastTemplate).toBe("padrao");
   });
+  it("Send message goes on every Persons › Creators channel (Gmail, WhatsApp, Discord, Instagram); a missing one says why", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "collector-"));
+    const sent: SendInput[] = [];
+    const persons = fakePersons({
+      sent,
+      channels: [
+        { id: "creators-gmail", kind: "gmail", label: "Email", account: "igor@spokpay.com", connected: true },
+        { id: "creators-discord", kind: "discord", label: "Discord", account: "spokpay", connected: true },
+      ],
+    });
+    const c = new Collector(dir, deps({ persons }));
+    c.data.creators.push(rec({ platform: "instagram", platform_id: "99", name: "Bia", handle: "@bia" }));
+    const call = caller(c);
+    await call("POST", "reach", { id: "instagram:99", kind: "discord", value: "123456789012345678" });
+    type M = { channel: string; kind: string; to: string; subject: string; channels: { id: string; kind: string; to: string; connected: boolean; why: string }[] };
+    const m = (await call("GET", "compose", null, [["id", "instagram:99"]]))!.body as M;
+    expect(m.channels.map((x) => [x.id, x.to, x.connected])).toEqual([
+      ["creators-gmail", "", true],
+      ["none-whatsapp", "", false],
+      ["creators-discord", "123456789012345678", true],
+      ["none-instagram", "@bia", false],
+    ]);
+    // the Reach's channel first, no subject off email
+    expect([m.channel, m.kind, m.to, m.subject]).toEqual(["creators-discord", "discord", "123456789012345678", ""]);
+    expect(m.channels[1]!.why).toContain("Persons › Creators has no WhatsApp");
+    expect(m.channels[0]!.why).toBe("No email yet: type one.");
+    expect((await call("POST", "send", { id: "instagram:99", channel: "creators-discord", to: "12", text: "Oi" }))!.status).toBe(409);
+    expect(((await call("POST", "send", { id: "instagram:99", channel: "none-instagram", to: "@bia", text: "Oi" }))!.body as { error: string }).error).toContain("has no Instagram");
+    expect((await call("POST", "send", { id: "instagram:99", channel: "creators-discord", to: "123456789012345678", text: "Oi Bia" }))!.status).toBe(200);
+    expect(sent.map((x) => [x.channel, x.to, x.subject, x.text])).toEqual([["creators-discord", "123456789012345678", "", "Oi Bia"]]);
+    expect(c.data.creators[0]!.contacted?.via).toBe("discord");
+    expect(((await call("GET", "creator", null, [["id", "instagram:99"]]))!.body as DetailView).contacted).toContain("Sent a Discord message on");
+  });
   it("Restrict keeps a lead out of Available and the export; Unrestrict brings it back", async () => {
     const dir = mkdtempSync(join(tmpdir(), "collector-"));
     const c = new Collector(dir, deps({}));
@@ -536,6 +569,41 @@ describe("collector", () => {
     expect(people[0]!.listIds).toEqual(["creators"]);
     expect([people.length, sends]).toEqual([2, 0]);
     expect(livePersons(() => null).add(rec({ platform: "youtube", platform_id: "x" }))).toMatchObject({ ok: false });
+  });
+  it("Send on Discord or Instagram makes the person with that id in Creators (an Instagram lead's own id, no lookup)", async () => {
+    type P = { id: string; name: string; discordId: string; instagram?: string; instagramUsername?: string; listIds: string[]; storeIds: string[] };
+    let people: P[] = [];
+    let n = 0;
+    const sends: [string, string, string][] = [];
+    const views = [
+      { id: "cd", kind: "discord", section: "creators", connected: true, state: { me: null }, convos: {} },
+      { id: "ci", kind: "instagram", section: "creators", connected: true, state: { me: null }, convos: {} },
+    ];
+    const svc = {
+      get data() {
+        return { people };
+      },
+      newId: () => `p_new${++n}`,
+      update: (f: (d: { people: P[] }) => { people: P[] }) => void (people = f({ people }).people),
+      updatePerson: (id: string, f: (p: P) => P) => void (people = people.map((p) => (p.id === id ? f(p) : p))),
+      deletePerson: (id: string) => void (people = people.filter((p) => p.id !== id)),
+      views: () => views,
+      view: (id: string) => views.find((v) => v.id === id),
+      lookup: async () => ({ matches: [] }),
+      send: async (pid: string, conn: string, text: string, o: { peer: string }) => (sends.push([pid, conn, o.peer]), void text, { ok: true }),
+    };
+    const bridge = livePersons(() => svc as never);
+    expect(bridge.channels().map((c) => c.kind)).toEqual(["discord", "instagram"]);
+    const r = await bridge.send({ rec: rec({ platform: "youtube", platform_id: "UC1", name: "Ana" }), channel: "cd", to: "123456789012345678", subject: "", text: "Oi" });
+    expect(r).toMatchObject({ ok: true, created: true });
+    expect(people[0]).toMatchObject({ name: "Ana", discordId: "123456789012345678", listIds: ["creators"] });
+    const ig = await bridge.send({ rec: rec({ platform: "instagram", platform_id: "4455", name: "Bia", handle: "@bia" }), channel: "ci", to: "@Bia", subject: "", text: "Oi" });
+    expect(ig).toMatchObject({ ok: true, created: true });
+    expect(people[1]).toMatchObject({ instagram: "4455", instagramUsername: "Bia" });
+    // someone else's handle is looked up through Persons' Instagram; not found: no send, nobody made
+    const miss = await bridge.send({ rec: rec({ platform: "youtube", platform_id: "UC2", name: "Cy" }), channel: "ci", to: "@cy", subject: "", text: "Oi" });
+    expect(miss.ok).toBe(false);
+    expect([people.length, sends.map((x) => x[2])]).toEqual([2, ["123456789012345678", "4455"]]);
   });
   it("remembers the lists' Sort and platforms; bad ones fall back", async () => {
     const dir = mkdtempSync(join(tmpdir(), "collector-"));

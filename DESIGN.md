@@ -112,8 +112,11 @@ Per tab:
   under it. Under the footer's row (Quick note Input, the
   "Approve to: …" trigger and its menu above it, Open channel / Edit) the review bar: three equal 56px cells with
   hairlines, Reject (red-900) / Skip (fg 60%) / Approve (green-900), icon + 15px/500 label + 16px outlined key caps,
-  the cell tinted 8% on hover; keys R S A, ← ↓ →, N (the note) only while no field has the focus. Send message is a DialogFrame (760): templates on the left, channel Chips, To, Subject, a
-  TextBox, the CRM's guard lines; Send… turns it into a 448 confirm ("Send it?") with Back / Send now. Phone: the title,
+  the cell tinted 8% on hover; keys R S A, ← ↓ →, N (the note) only while no field has the focus. Send message (the Reach section's one button) is a DialogFrame (760): templates on the left; on the right
+  Persons' composer frame (radius 12, hairline): a 48px To row (the destination pill, brand mark + name + chevron, whose
+  PopoverFrame lists Email / WhatsApp / Discord / Instagram as 46px rows: tinted brand mark, who they are there, the
+  account or why not in amber, a tick on the one picked; then the address Input), a hairline, Subject (email), a
+  TextBox, and "From …" with a primary sm Send…; Send… turns it into a 448 confirm ("Send it?") with Back / Send now. Phone: the title,
   three Chips (Collector, Available n, Restricted n), the same cards in one scrolling column (an email dialog), Send
   message as a screen over the tab.
 

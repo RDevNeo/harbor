@@ -61,8 +61,10 @@ the same content as a full-screen sheet:
   (and the export), not on screen.
 - **Reach**: one way to contact them (Email, Discord user ID, WhatsApp, Instagram handle; the CRM's checks), Save /
   Clear. Only ever typed: an email or WhatsApp Reach is also the address Send message uses, typed (never replaced by one
-  found later). The saved Reach's button: Send email / Send WhatsApp (Send message on that channel), Open in Discord /
-  Open Instagram. Exported as the CRM's `reach_kind` / `reach_value`.
+  found later). No help line under it: a value that doesn't fit says why (red) only once typed. Under it one **Send
+  message** button, the same whichever icon is picked: it opens the composer with that icon's channel picked in To and
+  To filled with the field's value (when it's valid). No per-channel "Send email" / "Open in Discord" buttons and no
+  "Approved on" line. Exported as the CRM's `reach_kind` / `reach_value`.
 - The **review bar** at the bottom, always under the content (the podium gives way in a short window; nothing reaches
   the bar) (a review queue's: three equal cells, the keys' caps after each label):
   **Reject** (R or ←) moves the lead to Restricted; **Skip** (S or ↓) leaves it as it is; **Approve** (A or →) marks
@@ -121,11 +123,21 @@ Example, "dress to impress", Last upload 30 days (Nov 2026): YouTube @callmehhal
   kept (TikTok's and Instagram's image links expire), one at a time behind the others (a CRM import queues hundreds).
   An opening detail's picture and thumbnails go first: `POST fill` fetches the missing ones itself (8 s at most)
   before it answers, and the PC's open detail is read again when more pictures come in.
-- **Send message**: a template (the SpokPay CRM's outreach emails, `{name}` / `{handle}` filled), the channel
-  (Persons › Creators' Gmail; its WhatsApp when their bio gives a number), To, Subject, the message, then Send… and a
-  second "Send now". The lead becomes a person in Persons › Creators and the message is in that chat. The CRM's guards:
-  30 new emails a rolling 24 h (shown only once reached), no second send to the same person within 2 minutes. `HUB_COLLECTOR_SEND=fake` records
-  instead of sending.
+- **Send message** (the detail's Reach, the card's Reach icon): Persons' composer as a dialog (the phone: a screen).
+  The templates on the left (the SpokPay CRM's outreach emails, `{name}` / `{handle}` filled); on the right a composer
+  card: **To** on top, a destination picker (a menu: every Persons › Creators connection, Email (Gmail), WhatsApp,
+  Discord, Instagram, each with who they are there — their email, number, the Reach's Discord ID or Instagram handle —
+  and the account it goes from, or why it can't: not signed in, or "Persons › Creators has no Discord: add one there")
+  and the address beside it (editable), then the Subject (email only), the message, and "From igor@… · Creators Gmail"
+  with Send… at the bottom; a second step asks "Send it?" (Back / Send now). Another destination keeps what was
+  written; another template fills it again. It opens on the channel asked for (the Reach icon picked), else the saved
+  Reach's, else the first that can send to someone. Sends go through Persons (`persons-bridge.ts`): the lead becomes
+  (or joins) a person in Persons › Creators with that identifier (email, WhatsApp number, Discord ID, Instagram id: an
+  Instagram lead's own id, else the handle looked up through Persons' Instagram) and the message is in that chat; a
+  Discord ID or Instagram handle sent to becomes their Reach when they have none. The CRM's guards: 30 new emails a
+  rolling 24 h (shown only once reached), no second send to the same person within 2 minutes.
+  `HUB_COLLECTOR_SEND=fake` records instead of sending (its fake Persons has Gmail, WhatsApp, Discord and a signed-out
+  Instagram).
 
 **SpokPay CRM import** (`POST v1/collector/import-crm {status?}`, default "Has Contact"; `lib/crm.ts`): the CRM's
 creators in that status, read-only through its board's public Convex queries (`creators:listCreatorStatuses`,

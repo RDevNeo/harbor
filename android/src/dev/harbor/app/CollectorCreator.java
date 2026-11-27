@@ -50,8 +50,9 @@ final class CollectorCreator {
 
     // ---------- Send message ----------
 
-    /** Send message: a template (the last used first), the channel (the Creators Gmail or WhatsApp in Persons; one
-     *  that can't send says why), To, Subject (email), the message, the CRM's guards (30 new emails a day, already
+    /** Send message, Persons' composer as a screen: To (where it goes: every Persons › Creators channel, Email,
+     *  WhatsApp, Discord, Instagram, each with who they are there; one that can't send says why) and the address, the
+     *  Subject (email), the message, the template it starts from, the CRM's guards (30 new emails a day, already
      *  written to). Send asks first, then POST /v1/collector/send: a real send, only on that tap. The creator then
      *  is a person in Persons › Creators. */
     static final class Compose implements Collector.Screen {
@@ -62,14 +63,19 @@ final class CollectorCreator {
         private JSONObject c;
         private EditText to, subject, text;
         private boolean sending;
-        /** "email" or "whatsapp": the channel it opens on (a lead's Reach), else the usual pick. */
+        /** "email", "whatsapp", "discord" or "instagram": the channel it opens on (the Reach picked), else the usual pick. */
         private final String kind;
+        /** What the Reach field held for that kind: To starts with it. */
+        private String typedTo;
 
-        Compose(Collector a, String id, String name) { this(a, id, name, ""); }
+        Compose(Collector a, String id, String name) { this(a, id, name, "", ""); }
 
-        Compose(Collector a, String id, String name, String kind) {
+        Compose(Collector a, String id, String name, String kind) { this(a, id, name, kind, ""); }
+
+        Compose(Collector a, String id, String name, String kind, String to) {
             this.a = a;
             this.kind = kind == null ? "" : kind;
+            this.typedTo = to == null ? "" : to.trim();
             this.h = a.hub;
             this.id = id;
             root = Ui.col(a);
@@ -90,7 +96,12 @@ final class CollectorCreator {
 
         private String template() { return c == null ? "" : c.optString("template"); }
         private String channel() { return c == null ? "" : c.optString("channel"); }
-        private boolean email() { return c == null || !"whatsapp".equals(c.optString("kind")); }
+        private String sendKind() { return c == null ? "gmail" : c.optString("kind", "gmail"); }
+        private boolean email() { return "gmail".equals(sendKind()); }
+
+        static String kindLabel(String k) {
+            return "whatsapp".equals(k) ? "WhatsApp" : "discord".equals(k) ? "Discord" : "instagram".equals(k) ? "Instagram" : "Email";
+        }
 
         /** GET compose: the message for this template and channel; keep = the typed message stays (a channel switch). */
         private void load(String template, String channel, boolean keep) {
@@ -100,6 +111,10 @@ final class CollectorCreator {
             Ui.bg(a, () -> h.get("/v1/collector/compose?id=" + Collector.q(id) + "&template=" + Collector.q(template) + "&channel=" + Collector.q(channel) + (channel.isEmpty() ? "&kind=" + Collector.q(kind) : "")), r -> {
                 c = r;
                 draw();
+                // the Reach field's value goes into To once, when the composer opens on its channel
+                String k = sendKind();
+                if (!typedTo.isEmpty() && to != null && (k.equals(kind) || ("email".equals(kind) && "gmail".equals(k)))) to.setText(typedTo);
+                typedTo = "";
                 if (keepText != null && text != null) text.setText(keepText);
                 if (keepSubject != null && subject != null && !keepSubject.isEmpty()) subject.setText(keepSubject);
             });
@@ -109,7 +124,57 @@ final class CollectorCreator {
             body.removeAllViews();
             to = subject = text = null;
             if (c == null) return;
-            // Template.
+            // To: where it goes (every Persons › Creators channel; one that can't send says why) and the address.
+            body.addView(head("TO"), Ui.fill());
+            HorizontalScrollView hs = new HorizontalScrollView(a);
+            hs.setHorizontalScrollBarEnabled(false);
+            LinearLayout chips = Ui.row(a);
+            JSONArray chs = c.optJSONArray("channels");
+            JSONObject picked = null;
+            for (int i = 0; chs != null && i < chs.length(); i++) {
+                JSONObject ch = chs.optJSONObject(i);
+                if (ch == null) continue;
+                final String cid = ch.optString("id");
+                boolean on = cid.equals(channel());
+                if (on) picked = ch;
+                boolean ok = ch.optBoolean("connected");
+                TextView chip = Ds.chip(a, kindLabel(ch.optString("kind")), on, on ? null : v -> load(template(), cid, true));
+                if (!ok) chip.setAlpha(0.45f);
+                chips.addView(chip, Ui.margins(Ui.wrap(), 0, 0, 6, 0));
+            }
+            hs.addView(chips);
+            body.addView(hs, Ui.fill());
+            if (chs == null || chs.length() == 0)
+                body.addView(Collector.pad(Ui.text(a, "Nothing to send on: connect Gmail, WhatsApp, Discord or Instagram in Persons › Creators.", 12.5f, Ui.AMBER), 2), Ui.fill());
+            if (picked != null) {
+                String acc = picked.optString("account", "");
+                boolean ok = picked.optBoolean("connected");
+                String app = "gmail".equals(picked.optString("kind")) ? "Gmail" : kindLabel(picked.optString("kind"));
+                if (ok) body.addView(Collector.pad(Ui.text(a, "From " + (!acc.isEmpty() && !"null".equals(acc) ? acc + " · " : "") + "Creators " + app, 12.5f, Ui.G700), 6), Ui.fill());
+                if (!picked.optString("why").isEmpty())
+                    body.addView(Collector.pad(Ui.text(a, picked.optString("why"), 12.5f, ok ? Ui.G600 : Ui.AMBER), 2), Ui.fill());
+            }
+            boolean em = email();
+            String sk = sendKind();
+            to = Ui.input(a, em ? "name@example.com" : "whatsapp".equals(sk) ? "+55 11 91234-5678" : "discord".equals(sk) ? "Discord user ID (17-20 digits)" : "@handle", false);
+            to.setInputType(em ? InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS : "whatsapp".equals(sk) ? InputType.TYPE_CLASS_PHONE : "discord".equals(sk) ? InputType.TYPE_CLASS_NUMBER : InputType.TYPE_CLASS_TEXT);
+            to.setTypeface(Ui.sans);
+            to.setText(c.optString("to"));
+            body.addView(to, Ui.margins(Ui.fill(), 0, 8, 0, 0));
+            if (em) {
+                body.addView(label("Subject"), Ui.fill());
+                subject = Ui.input(a, "Subject", false);
+                subject.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+                subject.setText(c.optString("subject"));
+                body.addView(subject, Ui.fill());
+            }
+            body.addView(label("Message"), Ui.fill());
+            text = Ui.input(a, "Write the message", true);
+            text.setMinLines(8);
+            text.setGravity(Gravity.TOP | Gravity.START);
+            text.setText(c.optString("text"));
+            body.addView(text, Ui.fill());
+            // The template the message starts from.
             body.addView(head("TEMPLATE"), Ui.fill());
             LinearLayout tl = Ds.card(a);
             tl.setPadding(Ui.dp(4), Ui.dp(4), Ui.dp(4), Ui.dp(4));
@@ -129,62 +194,6 @@ final class CollectorCreator {
                 tl.addView(r, Ui.fill());
             }
             body.addView(tl, Ui.fill());
-            // Channel.
-            body.addView(head("SEND ON"), Ui.fill());
-            HorizontalScrollView hs = new HorizontalScrollView(a);
-            hs.setHorizontalScrollBarEnabled(false);
-            LinearLayout chips = Ui.row(a);
-            JSONArray chs = c.optJSONArray("channels");
-            JSONObject picked = null;
-            for (int i = 0; chs != null && i < chs.length(); i++) {
-                JSONObject ch = chs.optJSONObject(i);
-                if (ch == null) continue;
-                final String cid = ch.optString("id");
-                boolean on = cid.equals(channel());
-                if (on) picked = ch;
-                boolean ok = ch.optBoolean("connected");
-                final String why = ch.optString("why");
-                String label = "whatsapp".equals(ch.optString("kind")) ? "WhatsApp" : "Email";
-                TextView chip = Ds.chip(a, label, on, on ? null : ok ? v -> load(template(), cid, true) : v -> Ui.toast(a, why));
-                if (!ok) chip.setAlpha(0.45f);
-                chips.addView(chip, Ui.margins(Ui.wrap(), 0, 0, 6, 0));
-            }
-            hs.addView(chips);
-            body.addView(hs, Ui.fill());
-            if (chs == null || chs.length() == 0)
-                body.addView(Collector.pad(Ui.text(a, "Nothing to send on: sign in to Gmail or WhatsApp in Persons › Creators.", 12.5f, Ui.AMBER), 2), Ui.fill());
-            if (chs != null) for (int i = 0; i < chs.length(); i++) {
-                JSONObject ch = chs.optJSONObject(i);
-                if (ch != null && !ch.optBoolean("connected") && !ch.optString("why").isEmpty())
-                    body.addView(Collector.pad(Ui.text(a, ch.optString("why"), 12.5f, Ui.G600), 6), Ui.fill());
-            }
-            if (picked != null) {
-                String acc = picked.optString("account", "");
-                if (!acc.isEmpty() && !"null".equals(acc)) body.addView(Collector.pad(Ui.text(a, "From " + acc, 12.5f, Ui.G700), 6), Ui.fill());
-                if (picked.optBoolean("connected") && !picked.optString("why").isEmpty())
-                    body.addView(Collector.pad(Ui.text(a, picked.optString("why"), 12.5f, Ui.AMBER), 2), Ui.fill());
-            }
-            // To, Subject, the message.
-            boolean em = email();
-            body.addView(label("To"), Ui.fill());
-            to = Ui.input(a, em ? "name@example.com" : "+55 11 91234-5678", false);
-            to.setInputType(em ? InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS : InputType.TYPE_CLASS_PHONE);
-            to.setTypeface(Ui.sans);
-            to.setText(c.optString("to"));
-            body.addView(to, Ui.fill());
-            if (em) {
-                body.addView(label("Subject"), Ui.fill());
-                subject = Ui.input(a, "Subject", false);
-                subject.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
-                subject.setText(c.optString("subject"));
-                body.addView(subject, Ui.fill());
-            }
-            body.addView(label("Message"), Ui.fill());
-            text = Ui.input(a, "Write the message", true);
-            text.setMinLines(8);
-            text.setGravity(Gravity.TOP | Gravity.START);
-            text.setText(c.optString("text"));
-            body.addView(text, Ui.fill());
             // The guards.
             JSONObject g = c.optJSONObject("guard");
             boolean blocked = false;
@@ -230,11 +239,12 @@ final class CollectorCreator {
             final String subj = subject == null ? "" : subject.getText().toString().trim();
             final String msg = text.getText().toString().trim();
             final boolean em = email();
-            if (dest.isEmpty()) { Ui.toast(a, em ? "Type their email address." : "Type their WhatsApp number."); return; }
+            final String sk = sendKind();
+            if (dest.isEmpty()) { Ui.toast(a, em ? "Type their email address." : "whatsapp".equals(sk) ? "Type their WhatsApp number." : "discord".equals(sk) ? "Type their Discord user ID." : "Type their Instagram handle."); return; }
             if (msg.isEmpty()) { Ui.toast(a, "The message is empty."); return; }
             if (em && subj.isEmpty()) { Ui.toast(a, "Add a subject."); return; }
             String preview = msg.length() > 280 ? msg.substring(0, 280) + "…" : msg;
-            Ui.dialog(a).setTitle(em ? "Send this email to " + dest + "?" : "Send this WhatsApp message to " + dest + "?")
+            Ui.dialog(a).setTitle(em ? "Send this email to " + dest + "?" : "Send this " + kindLabel(sk) + " message to " + dest + "?")
                     .setMessage((em ? "Subject: " + subj + "\n\n" : "") + preview)
                     .setPositiveButton("Send", (dlg, w) -> send(dest, subj, msg))
                     .setNegativeButton("Cancel", null)
@@ -810,7 +820,7 @@ final class CollectorCreator {
         }
 
         /** Contact: the email (where it was found; the pencil types one by hand, which a found one never replaces),
-         *  then Reach: the four kinds, the picked one's value, Save / Clear, and the saved Reach's Send. */
+         *  then Reach: the four kinds, the picked one's value, Save / Clear, and Send message (that kind's channel). */
         private void drawContact() {
             LinearLayout c = card(I_MAIL, "Contact", null, null);
             final String email = d.optString("email"), src = d.optString("emailSource");
@@ -858,15 +868,13 @@ final class CollectorCreator {
             String dv = drafts.get(kind);
             field.setText(dv == null ? "" : dv);
             c.addView(field, Ui.fill());
-            if ("whatsapp".equals(kind)) c.addView(Collector.pad(Ui.text(a, "Country code first, like +55 21 97570-9440 (a Brazilian number without it gets +55).", 12, Ui.G600), 4), Ui.fill());
-            if ("discord".equals(kind)) c.addView(Collector.pad(Ui.text(a, "Enable Developer Mode, long-press a user › Copy User ID.", 12, Ui.G600), 4), Ui.fill());
             LinearLayout btns = Ui.row(a);
-            btns.addView(Ui.rowButton(a, "Save", true, v -> save(field.getText().toString().trim())), Ui.wrap());
+            btns.addView(Ui.rowButton(a, "Save", false, v -> save(field.getText().toString().trim())), Ui.wrap());
             final String saved = d.optString("reach");
             if (!saved.isEmpty()) btns.addView(Ui.rowButton(a, "Clear", false, v -> save("")), Ui.margins(Ui.wrap(), 6, 0, 0, 0));
             btns.addView(new View(a), Ui.spacer());
-            String send = d.optString("reachSend");
-            if (!send.isEmpty()) btns.addView(Ui.rowButton(a, send, false, v -> go(saved, d.optString("reachValue"), d.optString("reachHref"))), Ui.wrap());
+            // Send message, the same whichever kind is picked: the composer with that channel picked in To
+            btns.addView(Ui.rowButton(a, "Send message", true, v -> a.push(new Compose(a, id, d.optString("name"), kind, field == null ? "" : field.getText().toString()))), Ui.wrap());
             c.addView(btns, Ui.margins(Ui.fill(), 0, 8, 0, 0));
         }
 
@@ -943,11 +951,6 @@ final class CollectorCreator {
                 Ui.toast(a, value.isEmpty() ? "Reach cleared" : "Reach saved: " + reachLabel(kind));
                 take(r, true);
             });
-        }
-
-        private void go(String k, String value, String href) {
-            if ("email".equals(k) || "whatsapp".equals(k)) a.push(new Compose(a, id, d.optString("name"), k));
-            else if (!href.isEmpty()) Ui.openUrl(a, href);
         }
 
         /** Edit: name, handle, bio and links typed by hand (a link a line: Title https://…). */

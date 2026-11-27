@@ -22,6 +22,9 @@ export struct ClDVid { url: string, title: string, meta: string, thumb: image, h
 export struct ClReach { kind: string, label: string, color: color, on: bool }
 export struct ClNav { id: string, label: string, count: int, on: bool }
 export struct ClTpl { id: string, name: string, description: string, on: bool }
+/** Where Send message can go: a Persons › Creators connection ("value": its id), the brand ("kind": email, whatsapp,
+ *  discord, instagram) and its colour, "Email", who they are there, the account it goes from or why it can't. */
+export struct ClDest { value: string, kind: string, color: color, label: string, to: string, via: string, on: bool, available: bool }
 /** The lists' Sort menu ("sep": a separator above it) and platform menu (brand colour, count on the list). */
 export struct ClSort { value: string, label: string, on: bool, sep: bool }
 export struct ClPlat { value: string, label: string, color: color, count: int, on: bool }
@@ -93,7 +96,14 @@ export global CollectorBus {
     in property <bool> send-open;
     in property <string> s-title;
     in property <[ClTpl]> s-templates;
-    in property <[ClChip]> s-channels;
+    in property <[ClDest]> s-dests;
+    /** The picked destination: its brand, colour and name (the To button). */
+    in property <string> s-dest-kind;
+    in property <color> s-dest-color;
+    in property <string> s-dest-label;
+    in property <string> s-to-hint;
+    /** "From igor@spokpay.com · Creators Gmail", or why it can't send. */
+    in property <string> s-from;
     in property <string> s-channel-why;
     in property <bool> s-is-email;
     in-out property <string> s-to;
@@ -122,17 +132,13 @@ export global CollectorBus {
     in property <string> d-bio;
     /** The bio on one paragraph (its line breaks and blank lines as " · "), for the dialog's three clamped lines. */
     in property <string> d-bio-line;
-    in property <string> d-contacted;
     in property <[ClReach]> d-reaches;
     in property <string> d-reach-hint;
-    in property <string> d-reach-help;
     in-out property <string> d-reach-text;
     in property <string> d-reach-error;
     in property <bool> d-reach-saved;
     in property <bool> d-reach-can-save;
     in property <bool> d-reach-busy;
-    in property <string> d-reach-send;
-    in property <string> d-reach-send-kind;
     in property <string> d-url;
     in property <string> d-open-label;
     in property <bool> d-filling;
@@ -181,6 +187,8 @@ export global CollectorBus {
     callback send-close();
     callback pick-template(string);
     callback pick-channel(string);
+    /** To, Subject or the message typed in: Send… follows. */
+    callback to-edited(string);
     callback send-ask();
     callback send-confirm();
     callback send-back();
@@ -191,8 +199,8 @@ export global CollectorBus {
     callback reach-edited(string);
     callback reach-save();
     callback reach-clear();
-    callback reach-send();
-    /** The Reach icon on a card: Send message (email, WhatsApp) or their Discord / Instagram. */
+    /** The detail's Send message: the composer for this lead. */
+    callback detail-send();
     callback edit-show();
     callback edit-save();
     callback edit-close();
@@ -1097,12 +1105,92 @@ component HistoryScreen inherits VerticalLayout {
     }
 }
 
+/** One place Send message can go (the composer's To menu): the brand's mark on its tint, "Email · a@b.com", and on a
+ *  second line the Persons › Creators account it goes from, or why it can't. */
+component DestRow inherits Rectangle {
+    in property <ClDest> d;
+    callback pick();
+    height: 46px;
+    border-radius: Ds.radius-md;
+    background: root.d.on ? Theme.gray-200 : ta.has-hover ? Theme.accent : transparent;
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.pick();
+        }
+    }
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 10px;
+        spacing: 10px;
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 28px;
+                height: 28px;
+                border-radius: Ds.radius-md;
+                background: root.d.color.with-alpha(root.d.available ? 0.14 : 0.06);
+                BrandGlyph {
+                    kind: root.d.kind;
+                    size: 14px;
+                    ink: root.d.available ? root.d.color : Theme.fg.with-alpha(0.4);
+                }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 1px;
+            horizontal-stretch: 1;
+            HorizontalLayout {
+                spacing: 6px;
+                Text {
+                    text: root.d.label;
+                    font-size: Ds.t-sm;
+                    font-weight: 500;
+                    color: root.d.available ? Theme.fg : Theme.fg.with-alpha(0.55);
+                    horizontal-stretch: 0;
+                }
+                Text {
+                    text: root.d.to;
+                    font-size: Ds.t-sm;
+                    color: root.d.available ? Theme.fg.with-alpha(0.7) : Theme.fg.with-alpha(0.4);
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+            }
+            Text {
+                text: root.d.via;
+                font-size: Ds.t-meta;
+                color: root.d.available ? Theme.gray-800 : Theme.amber-900;
+                overflow: elide;
+            }
+        }
+        if root.d.on: VerticalLayout {
+            alignment: center;
+            Glyph {
+                icon: Icons.check;
+                size: 14px;
+                color: Theme.fg;
+            }
+        }
+    }
+}
+
+/** Send message (Persons' composer, as a dialog): the templates on the left; on the right a composer card with To on
+ *  top (the destination picker: every way Persons › Creators can write to them, Email, WhatsApp, Discord, Instagram,
+ *  each with who they are there; the address beside it, editable), the subject when it's an email, the message, and
+ *  the account it goes from with Send… at the bottom. Send… asks first ("Send it?"), then Send now: the real send. */
 component SendDialog inherits DialogFrame {
     title: CollectorBus.s-confirm ? "Send it?" : CollectorBus.s-title;
     text: CollectorBus.s-confirm ? CollectorBus.s-confirm-text : "";
     box-w: CollectorBus.s-confirm ? 448px : 760px;
     scrim-dismisses: false;
+    property <bool> menu-open;
     dismiss => {
+        if root.menu-open {
+            root.menu-open = false;
+            return;
+        }
         CollectorBus.send-close();
     }
     if !CollectorBus.s-confirm: HorizontalLayout {
@@ -1162,59 +1250,149 @@ component SendDialog inherits DialogFrame {
         VerticalLayout {
             horizontal-stretch: 1;
             spacing: 10px;
-            VerticalLayout {
-                spacing: 6px;
-                FieldLabel {
-                    text: "Send through";
-                }
-                HorizontalLayout {
-                    spacing: 6px;
-                    alignment: start;
-                    for c in CollectorBus.s-channels: Chip {
-                        sm: true;
-                        text: c.label;
-                        on: c.on;
-                        enabled: c.available;
-                        tip: c.tip;
-                        clicked => {
-                            CollectorBus.pick-channel(c.value);
+            // The composer card (Persons' frame: radius 12, hairline, To on top).
+            Rectangle {
+                border-radius: Ds.radius-xl;
+                border-width: 1px;
+                border-color: Theme.border;
+                background: Theme.fg.with-alpha(0.02);
+                VerticalLayout {
+                    // To: where it goes (the picker) and to whom (the address, editable)
+                    HorizontalLayout {
+                        height: 48px;
+                        padding-left: 14px;
+                        padding-right: 8px;
+                        spacing: 10px;
+                        Text {
+                            text: "To";
+                            font-size: 13px;
+                            color: Theme.subtle;
+                            vertical-alignment: center;
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            dest-btn := Rectangle {
+                                height: 30px;
+                                width: dl.preferred-width;
+                                border-radius: 15px;
+                                background: root.menu-open ? Theme.gray-300 : dta.has-hover ? Theme.gray-300 : Theme.gray-200;
+                                dl := HorizontalLayout {
+                                    padding-left: 10px;
+                                    padding-right: 9px;
+                                    spacing: 7px;
+                                    VerticalLayout {
+                                        alignment: center;
+                                        BrandGlyph {
+                                            kind: CollectorBus.s-dest-kind;
+                                            size: 13px;
+                                            ink: CollectorBus.s-dest-color;
+                                        }
+                                    }
+                                    Text {
+                                        text: CollectorBus.s-dest-label;
+                                        font-size: 13px;
+                                        font-weight: 500;
+                                        color: Theme.fg;
+                                        vertical-alignment: center;
+                                    }
+                                    Glyph {
+                                        icon: Icons.down;
+                                        size: 12px;
+                                        color: Theme.fg.with-alpha(0.6);
+                                    }
+                                }
+                                dta := TipArea {
+                                    tip: root.menu-open ? "" : "Where it goes: their email, WhatsApp, Discord or Instagram, through Persons › Creators";
+                                    clicked => {
+                                        root.menu-open = !root.menu-open;
+                                    }
+                                }
+                            }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            horizontal-stretch: 1;
+                            Input {
+                                text <=> CollectorBus.s-to;
+                                hint: CollectorBus.s-to-hint;
+                                edited(t) => {
+                                    CollectorBus.to-edited(t);
+                                }
+                            }
+                        }
+                    }
+                    Rectangle {
+                        height: 1px;
+                        background: Theme.border;
+                    }
+                    VerticalLayout {
+                        padding: 10px;
+                        spacing: 8px;
+                        if CollectorBus.s-is-email: Input {
+                            text <=> CollectorBus.s-subject;
+                            hint: "Subject";
+                            edited(t) => {
+                                CollectorBus.to-edited(t);
+                            }
+                        }
+                        TextBox {
+                            min-h: 232px;
+                            text <=> CollectorBus.s-text;
+                            hint: "Write the message";
+                            edited(t) => {
+                                CollectorBus.to-edited(t);
+                            }
+                        }
+                        // the account it goes from, Send…
+                        HorizontalLayout {
+                            height: 32px;
+                            spacing: 8px;
+                            Text {
+                                text: CollectorBus.s-from;
+                                font-size: 12.5px;
+                                color: CollectorBus.s-channel-why != "" ? Theme.amber-900 : Theme.gray-800;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                horizontal-stretch: 1;
+                            }
+                            Btn {
+                                text: "Send…";
+                                icon: Icons.send;
+                                size: sm;
+                                variant: primary;
+                                enabled: CollectorBus.s-can-send;
+                                clicked => {
+                                    CollectorBus.send-ask();
+                                }
+                            }
                         }
                     }
                 }
-                if CollectorBus.s-channel-why != "": Hint {
-                    text: CollectorBus.s-channel-why;
-                    wrap: word-wrap;
+                // The To menu, over the card under its button (a click elsewhere on the card closes it; so do Esc and ×).
+                if root.menu-open: TouchArea {
+                    clicked => {
+                        root.menu-open = false;
+                    }
                 }
-            }
-            VerticalLayout {
-                spacing: 6px;
-                FieldLabel {
-                    text: CollectorBus.s-is-email ? "To (email)" : "To (WhatsApp number)";
-                }
-                Input {
-                    text <=> CollectorBus.s-to;
-                    hint: CollectorBus.s-is-email ? "their@email.com" : "55 11 99999-9999";
-                }
-            }
-            if CollectorBus.s-is-email: VerticalLayout {
-                spacing: 6px;
-                FieldLabel {
-                    text: "Subject";
-                }
-                Input {
-                    text <=> CollectorBus.s-subject;
-                    hint: "Subject";
-                }
-            }
-            VerticalLayout {
-                spacing: 6px;
-                FieldLabel {
-                    text: "Message";
-                }
-                TextBox {
-                    min-h: 220px;
-                    text <=> CollectorBus.s-text;
-                    hint: "Write the message";
+                if root.menu-open: PopoverFrame {
+                    x: 40px;
+                    y: 44px;
+                    width: min(parent.width - 48px, 400px);
+                    height: menu.preferred-height;
+                    menu := VerticalLayout {
+                        padding: 4px;
+                        spacing: 1px;
+                        MenuLabel {
+                            text: "Send through Persons › Creators";
+                        }
+                        for d in CollectorBus.s-dests: DestRow {
+                            d: d;
+                            pick => {
+                                root.menu-open = false;
+                                CollectorBus.pick-channel(d.value);
+                            }
+                        }
+                    }
                 }
             }
             if CollectorBus.s-already != "": Hint {
@@ -1233,24 +1411,8 @@ component SendDialog inherits DialogFrame {
         color: Theme.red-900;
         wrap: word-wrap;
     }
-    DialogActions {
-        if !CollectorBus.s-confirm: Btn {
-            text: "Cancel";
-            variant: outline;
-            clicked => {
-                CollectorBus.send-close();
-            }
-        }
-        if !CollectorBus.s-confirm: Btn {
-            text: "Send…";
-            icon: Icons.send;
-            variant: primary;
-            enabled: CollectorBus.s-can-send;
-            clicked => {
-                CollectorBus.send-ask();
-            }
-        }
-        if CollectorBus.s-confirm: Btn {
+    if CollectorBus.s-confirm: DialogActions {
+        Btn {
             text: "Back";
             variant: outline;
             enabled: !CollectorBus.s-busy;
@@ -1258,7 +1420,7 @@ component SendDialog inherits DialogFrame {
                 CollectorBus.send-back();
             }
         }
-        if CollectorBus.s-confirm: Btn {
+        Btn {
             text: CollectorBus.s-busy ? "Sending…" : "Send now";
             icon: Icons.send;
             variant: primary;
@@ -1936,30 +2098,19 @@ component DetailDialog inherits Rectangle {
                         color: Theme.red-900;
                         overflow: elide;
                     }
-                    if CollectorBus.d-reach-error == "" && CollectorBus.d-reach-help != "": Text {
-                        text: CollectorBus.d-reach-help;
-                        font-size: 11.5px;
-                        color: Theme.fg.with-alpha(0.3);
-                        overflow: elide;
-                    }
-                    if CollectorBus.d-reach-send != "" || CollectorBus.d-contacted != "" || CollectorBus.d-approved-note != "": HorizontalLayout {
+                    // Send message, the same whichever icon is picked: the composer with that channel picked in To
+                    HorizontalLayout {
                         spacing: 10px;
                         alignment: start;
-                        if CollectorBus.d-reach-send != "": Btn {
-                            text: CollectorBus.d-reach-send;
-                            icon: CollectorBus.d-reach-send-kind == "email" ? Icons.mail : CollectorBus.d-reach-send-kind == "whatsapp" ? Icons.send : Icons.external;
+                        Btn {
+                            text: "Send message";
+                            icon: Icons.send;
                             size: sm;
-                            variant: secondary;
+                            variant: primary;
+                            tip: "Write to them by email, WhatsApp, Discord or Instagram (they join Persons › Creators)";
                             clicked => {
-                                CollectorBus.reach-send();
+                                CollectorBus.detail-send();
                             }
-                        }
-                        if CollectorBus.d-contacted != "" || CollectorBus.d-approved-note != "": Text {
-                            text: CollectorBus.d-contacted != "" ? CollectorBus.d-contacted : CollectorBus.d-approved-note + ".";
-                            font-size: 11.5px;
-                            color: Theme.fg.with-alpha(0.4);
-                            vertical-alignment: center;
-                            overflow: elide;
                         }
                     }
                 }

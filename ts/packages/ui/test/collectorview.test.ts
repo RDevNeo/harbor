@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bioLine, formOf, historyItems, leadsOf, runHead, nextLead, platformCounts, sortRows, sortShort, podium, reachState, runLine, type CollectorView, type Row } from "../src/tabs/collector/ui.ts";
+import { bioLine, destRows, formOf, historyItems, leadsOf, runHead, nextLead, platformCounts, sortRows, sortShort, podium, reachState, runLine, type CollectorView, type Compose, type Row } from "../src/tabs/collector/ui.ts";
 import type { DetailView } from "../../../tabs/collector/view.ts";
 import { GAP_CHOICES, defaultSettings } from "../../../tabs/collector/lib/types.ts";
 
@@ -154,13 +154,37 @@ describe("collector lead detail", () => {
     expect(podium(["a"])).toEqual([{ v: null, featured: false }, { v: "a", featured: true }, { v: null, featured: false }]);
     expect(podium([])).toEqual([]);
   });
-  it("Reach: Save only for a valid, changed value; WhatsApp and Discord say what to type", () => {
+  it("Reach: Save only for a valid, changed value; no help line, only the error for a bad value", () => {
     const d = { reach: "email", reachValue: "a@b.co" } as DetailView;
     expect(reachState(d, "email", "a@b.co")).toMatchObject({ error: "", canSave: false });
     expect(reachState(d, "email", "x@y.com").canSave).toBe(true);
     expect(reachState(d, "email", "nope")).toMatchObject({ error: "That isn't an email address.", canSave: false });
-    expect(reachState(d, "whatsapp", "").help).toContain("Country code first");
+    expect("help" in reachState(d, "discord", "")).toBe(false);
     expect(reachState(d, "discord", "").hint).toBe("Discord user ID (17-20 digits)");
+    expect(reachState(d, "discord", "123").error).toContain("17-20 digits");
+  });
+  it("Send message's To menu: every Persons › Creators channel, who they are there, the account or why not", () => {
+    const c = {
+      id: "youtube:UC1",
+      name: "Ana",
+      templates: [],
+      template: "padrao",
+      channel: "creators-discord",
+      kind: "discord",
+      to: "123456789012345678",
+      subject: "",
+      text: "Oi",
+      guard: null,
+      channels: [
+        { id: "creators-gmail", kind: "gmail", label: "Email", account: "igor@spokpay.com", connected: true, to: "a@b.co", why: "" },
+        { id: "creators-whatsapp", kind: "whatsapp", label: "WhatsApp", account: null, connected: true, to: "", why: "No WhatsApp number in their bio: type one." },
+        { id: "creators-discord", kind: "discord", label: "Discord", account: "spokpay", connected: true, to: "123456789012345678", why: "" },
+        { id: "none-instagram", kind: "instagram", label: "Instagram", account: null, connected: false, to: "@ana", why: "Persons › Creators has no Instagram: add one there (Creators › Connections)." },
+      ],
+    } as Compose;
+    const r = destRows(c);
+    expect(r.map((x) => [x.kind, x.to, x.on, x.available])).toEqual([["email", "a@b.co", false, true], ["whatsapp", "", false, true], ["discord", "123456789012345678", true, true], ["instagram", "@ana", false, false]]);
+    expect(r.map((x) => x.via)).toEqual(["Creators Gmail · igor@spokpay.com", "Creators WhatsApp · none yet: type it in To", "Creators Discord · spokpay", "Persons › Creators has no Instagram: add one there (Creators › Connections)."]);
   });
 });
 

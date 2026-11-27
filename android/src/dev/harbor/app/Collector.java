@@ -1308,10 +1308,7 @@ public class Collector extends Base {
             reachBox.removeAllViews();
             if (!reach.isEmpty() && !"null".equals(reach)) {
                 View m = CollectorCreator.reachMark(c, reach);
-                m.setOnClickListener(v -> {
-                    if ("email".equals(reach) || "whatsapp".equals(reach)) push(new CollectorCreator.Compose(c, rid, nm, reach));
-                    else push(new CollectorCreator.Detail(c, rid, nm));
-                });
+                m.setOnClickListener(v -> push(new CollectorCreator.Compose(c, rid, nm, reach)));
                 reachBox.addView(m, new android.widget.FrameLayout.LayoutParams(-1, -1));
                 reachBox.setVisibility(View.VISIBLE);
             } else reachBox.setVisibility(View.GONE);

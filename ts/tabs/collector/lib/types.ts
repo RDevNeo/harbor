@@ -24,7 +24,7 @@ export interface CreatorLink {
 
 export interface Contacted {
   at: string;
-  /** "gmail", "whatsapp". */
+  /** "gmail", "whatsapp", "discord", "instagram". */
   via: string;
   to: string;
   /** The person it made in Persons › Creators. */
