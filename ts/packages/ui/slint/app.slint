@@ -1126,7 +1126,9 @@ export component AppWindow inherits Window {
                         property <bool> team-float: root.view == "chat" && root.team-enabled && root.team-pop;
                         property <bool> team-docked: team-float && self.width - 300px >= 440px;
                         // The panes' area: the centre left of the docked panel.
-                        property <length> area-w: self.width - (team-docked ? 300px : 0px);
+                        // The team handle's strip (12px, the panel's line on its right while open) keeps its own column.
+                        property <bool> team-handle-on: root.view == "chat" && root.team-enabled;
+                        property <length> area-w: self.width - (team-docked ? 300px + 11px : team-handle-on && !team-float ? 12px : 0px);
                         property <length> fx: split ? floor(root.split-fx * area-w / 1phx) * 1phx : 0px;
                         property <length> fy: split ? floor(root.split-fy * self.height / 1phx) * 1phx : 0px;
                         property <length> fw: split ? floor((root.split-fx + root.split-fw) * area-w / 1phx) * 1phx - fx : area-w;
@@ -1216,40 +1218,41 @@ export component AppWindow inherits Window {
                             z: 10;
                             height: parent.height;
                         }
-                        // The team's handle: a slim line with a chevron on the chat's right edge, at the panel's left edge
-                        // while it's open; low-contrast, brighter under the pointer; a click opens or closes the panel.
+                        // The team's handle: a full-height 1px line on the chat's right edge (the panel's own line while it's
+                        // open) with a chevron at its middle; the whole 12px strip is clickable and brightens under the
+                        // pointer; a click opens or closes the panel. Split and closed, it starts under the header row (SplitTools).
                         team-handle := Rectangle {
-                            visible: root.view == "chat" && root.team-enabled;
-                            width: 14px;
-                            height: 64px;
-                            x: (body.team-float ? floor((parent.width - 300px) / 1phx) * 1phx : parent.width) - self.width - 6px;
-                            y: round((parent.height - self.height) / 2 / 1phx) * 1phx;
+                            visible: body.team-handle-on;
+                            property <length> line-x: body.team-float ? 11px : 6px;
+                            property <bool> hot: handle-area.has-hover;
+                            width: 12px;
+                            x: body.team-float ? floor((parent.width - 300px) / 1phx) * 1phx - 11px : parent.width - 12px;
+                            y: body.split && !body.team-float ? body.top : 0px;
+                            height: parent.height - self.y;
                             z: 12;
-                            property <color> ink: handle-area.has-hover ? Theme.gray-900 : Theme.gray-500;
+                            background: self.hot ? #ffffff0a : transparent;
                             Rectangle {
-                                x: (parent.width - self.width) / 2;
+                                x: parent.line-x;
                                 y: 0;
-                                width: 2px;
-                                height: 20px;
-                                border-radius: 1px;
-                                background: parent.ink;
-                            }
-                            Glyph {
-                                x: 0;
-                                y: 22px;
-                                width: parent.width;
-                                height: 20px;
-                                icon: root.team-pop ? Icons.right : Icons.left;
-                                size: 13px;
-                                color: parent.ink;
+                                width: 1px;
+                                height: parent.height;
+                                background: parent.hot ? Theme.gray-900 : Theme.gray-600;
+                                opacity: parent.hot ? 1 : 0.6;
                             }
                             Rectangle {
-                                x: (parent.width - self.width) / 2;
-                                y: parent.height - self.height;
-                                width: 2px;
-                                height: 20px;
-                                border-radius: 1px;
-                                background: parent.ink;
+                                x: parent.line-x - 5px;
+                                y: round((parent.height - self.height) / 2 / 1phx) * 1phx;
+                                width: 11px;
+                                height: 22px;
+                                border-radius: 4px;
+                                background: Theme.bg100;
+                                border-width: 1px;
+                                border-color: parent.hot ? Theme.gray-700 : Theme.gray-500;
+                                Glyph {
+                                    icon: root.team-pop ? Icons.right : Icons.left;
+                                    size: 12px;
+                                    color: team-handle.hot ? Theme.gray-1000 : Theme.gray-900;
+                                }
                             }
                             handle-area := TipArea {
                                 tip: "Agents";
@@ -1534,11 +1537,6 @@ export component AppWindow inherits Window {
                             // 1px dividers: brighter and wider, with the resize cursor, under the pointer; dragged, they resize.
                             // The panes' right edge beside the docked Agents column: the same line, on top of the panes so
                             // nothing they redraw covers it, the whole height, on a whole physical pixel.
-                            if body.team-docked: VLine {
-                                at: floor(body.area-w / 1phx) * 1phx;
-                                y: 0;
-                                height: body.height;
-                            }
                             // Each divider's grab area is whole physical pixels around its line, so the line lands on one.
                             for d in root.split-divs: TouchArea {
                                 property <length> at: d.dir == "h" ? floor(d.at * body.area-w / 1phx) * 1phx : floor(d.at * body.height / 1phx) * 1phx;
