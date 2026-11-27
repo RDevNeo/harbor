@@ -112,6 +112,9 @@ public class Chat extends Base implements Images.Gallery {
      *  the view was (-1: none, the end as usual), and the composer's files and mentions still to
      *  come from the hub's copy of the draft. */
     private int liveSeq = -1, liveOff;
+    /** A live restart brings the keyboard back over a place it restored: the keyboard's first opening keeps that
+     *  place (its offset was measured with the keyboard up), rather than snapping a place near the end to the end. */
+    private boolean liveIme;
     private boolean liveDraft;
 
     @Override
@@ -151,6 +154,7 @@ public class Chat extends Base implements Images.Gallery {
         // its end in view when it was there, instead of new cards sliding under the bars.
         scroll.addOnLayoutChangeListener((v, l, top, r, bottom, ol, oldTop, or, oldBottom) -> {
             int was = oldBottom - oldTop, now = bottom - top;
+            if (liveIme && was > 0 && now < was) { liveIme = false; return; }
             if (now < was && scroll.getScrollY() + was >= content.getHeight() - Ui.dp(120)) scroll.post(() -> scroll.scrollTo(0, content.getHeight()));
         });
         // The transcript and the bars under it; the slash menu floats over their bottom.
@@ -283,7 +287,8 @@ public class Chat extends Base implements Images.Gallery {
         team.load();
         livePanel(b);
         if ("1".equals(Swap.state(this, b, "focus"))) {
-            // The keyboard was up on the composer: up again.
+            // The keyboard was up on the composer: up again (over the place restored, which stays put).
+            liveIme = liveSeq >= 0;
             composer.requestFocus();
             getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE
                     | android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);

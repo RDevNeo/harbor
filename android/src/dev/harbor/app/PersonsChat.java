@@ -67,6 +67,14 @@ final class PersonsChat {
     /** The finger is on the transcript, or let go of it in the last moment (a fling). */
     private long touchedAt;
     private boolean touching;
+    /** A restore brings the keyboard back over a place it restored: its first opening keeps that place (measured
+     *  with the keyboard up) instead of keeping the bottom in sight. */
+    private boolean liveIme;
+    /** Placed at a remembered message (placeFirst): for a moment it stays at that offset while what's above it lays
+     *  out (pictures, AI notes), until the finger moves the chat. */
+    private View holdView;
+    private int holdOff;
+    private long holdUntil;
     /** Their messages that came in while scrolled up, the first of them (the "↓" counts them and goes there). */
     private int unseen;
     private String firstUnseen = "";
@@ -125,7 +133,7 @@ final class PersonsChat {
         sv.addView(content, new FrameLayout.LayoutParams(-1, -2));
         sv.setOnTouchListener((v, e) -> {
             int act = e.getActionMasked();
-            if (act == android.view.MotionEvent.ACTION_DOWN || act == android.view.MotionEvent.ACTION_MOVE) touching = true;
+            if (act == android.view.MotionEvent.ACTION_DOWN || act == android.view.MotionEvent.ACTION_MOVE) { touching = true; holdView = null; }
             else if (act == android.view.MotionEvent.ACTION_UP || act == android.view.MotionEvent.ACTION_CANCEL) touching = false;
             touchedAt = android.os.SystemClock.uptimeMillis();
             return false;
@@ -139,12 +147,18 @@ final class PersonsChat {
         });
         // The content grew or shrank (a picture or an AI note laid out, a message in): at the end it stays there.
         content.addOnLayoutChangeListener((v, l, top, r, bottom, ol, oldTop, or, oldBottom) -> {
+            if (holdView != null && android.os.SystemClock.uptimeMillis() < holdUntil && holdView.getParent() == content) {
+                View hv = holdView;
+                sv.post(() -> { if (holdView == hv) sv.scrollTo(0, Math.max(0, hv.getTop() - holdOff)); });
+                return;
+            }
             if (!positioned || !stickEnd || bottom - top == oldBottom - oldTop) return;
             sv.post(() -> { if (stickEnd) sv.scrollTo(0, Math.max(0, content.getHeight() - sv.getHeight())); });
         });
         // The keyboard (or the composer growing) shrinks the transcript: what was at its bottom stays there.
         sv.addOnLayoutChangeListener((v, l, top, r, bottom, ol, oldTop, or, oldBottom) -> {
             int was = oldBottom - oldTop, now = bottom - top;
+            if (liveIme && was > 0 && now < was) { liveIme = false; return; }
             if (was > 0 && now != was && positioned) sv.post(() -> sv.scrollBy(0, was - now));
         });
         // The transcript, the day pill floating on its top and the "↓" over its lower right corner (ChatFlow).
@@ -342,7 +356,8 @@ final class PersonsChat {
             ChatFlow.place(posKey(), new ChatFlow.Pos(false, an, off, 0));
         }
         if ("1".equals(st.get("focus"))) {
-            // The keyboard was up on the composer: up again.
+            // The keyboard was up on the composer: up again (over the place restored, which stays put).
+            liveIme = an != null && !an.isEmpty();
             edit.requestFocus();
             a.getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE
                     | android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
@@ -870,6 +885,9 @@ final class PersonsChat {
         } else if (at != null) {
             stickEnd = false;
             sv.scrollTo(0, Math.max(0, at.getTop() - was.off));
+            holdView = at;
+            holdOff = was.off;
+            holdUntil = android.os.SystemClock.uptimeMillis() + 2_500;
         } else {
             stickEnd = true;
             sv.scrollTo(0, content.getHeight());
