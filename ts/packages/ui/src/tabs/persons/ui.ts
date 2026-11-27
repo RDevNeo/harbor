@@ -2,16 +2,18 @@
 // through ctx.call — the same routes Hub for Android uses). Pictures are local files the engine cached, decoded here.
 import * as slint from "slint-ui";
 import { readFileSync, statSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
 import { clipboard, images, picker } from "@harbor/media";
 import { GLYPHS, type GlyphName } from "@harbor/net";
-import { basename } from "node:path";
+import { dataDir } from "@harbor/store";
+import { basename, join } from "node:path";
 import type { TabCtx, TabUi } from "../api.ts";
 import { sameRow, syncRows } from "../../modelsync.ts";
 import { loadQr } from "../../qr.ts";
 import { releaseBlocks } from "../../markdown.ts";
 import { aiSlintParts, type PPartData } from "./aiparts.ts";
 import { aiMenu, blockedNote, composerHint, CONTACT_FIELD, failedMenu, messageMenu, moveEntries, placeOfRow, quoteInto, type MenuEntry, type MoveEntry } from "./menus.ts";
-import { aiFolds, audioRow, blankRow, byRecent, chatRows, shortAgo, listRows, matches, nextSpeed, personSections, servesSection, sideRows, srImageSize, srTimeline, type AiJson, type AudioRow, type AudioStateJson, type ChatJson, type MsgRow, type PersonJson, type Row, type SrFileJson, type SrPaneJson, type StateJson, type UiState } from "./view.ts";
+import { aiFolds, audioRow, blankRow, byRecent, chatRows, shortAgo, listRows, matches, moveSection, nextSpeed, personSections, sectionOrder, servesSection, sideRows, srImageSize, srTimeline, type AiJson, type AudioRow, type AudioStateJson, type ChatJson, type MsgRow, type PersonJson, type Row, type SrFileJson, type SrPaneJson, type StateJson, type UiState } from "./view.ts";
 
 interface Pixels {
   width: number;
@@ -177,6 +179,12 @@ class PersonsTab {
     on("toggle_store", ((id: string) => this.toggle(this.ui.stores, id)) as Cb);
     on("toggle_section", ((sec: string) => (sec.startsWith("settled:") ? this.toggle(this.ui.settledOpen, sec.slice(8)) : this.toggle(this.ui.closed, sec))) as Cb);
     on("section_menu", ((sec: string, x: number, y: number) => this.sectionMenu(sec, x, y)) as Cb);
+    // a section's head dragged onto another's: it takes that one's place (kept in folds.json)
+    on("section_drop", ((from: string, to: string) => {
+      b.drag_sec = "";
+      b.drag_over = "";
+      this.moveSectionTo(from, to);
+    }) as Cb);
     on("row_menu", ((id: string, sec: string, store: string, x: number, y: number) => this.rowMenu(id, sec, store, x, y)) as Cb);
     on("store_menu", ((id: string, x: number, y: number) => this.storeMenu(id, x, y)) as Cb);
     on("edited_query", ((q: string) => {
@@ -203,6 +211,8 @@ class PersonsTab {
     on("open_file", ((id: string) => void this.openFile(id)) as Cb);
     on("open_image", ((id: string, i: number) => void this.openImage(id, i)) as Cb);
     on("attach", () => void (this.sr && !this.aiMode ? this.srAttach() : this.attach()));
+    // Ctrl+V / Shift+Insert in the composer: a picture on the clipboard joins the message (the text pastes as usual)
+    on("paste", () => void this.pasteImage());
     on("clear_attached", () => {
       if (this.aiMode) this.aiFiles = [];
       else if (this.sr) this.srFiles = [];
@@ -819,8 +829,52 @@ class PersonsTab {
     void this.loadChat(false);
   }
 
+  /** The file picker, its failure (no picker on this PC…) said in a toast: media's own toast is shown nowhere here. */
+  private async pickFiles(o: picker.Opts): Promise<string[]> {
+    const before = picker.toast()?.msg;
+    const got = await picker.pick(o).catch(() => [] as string[]);
+    const err = picker.toast()?.msg;
+    if (!got.length && err && err !== before) this.setToast(err);
+    return got;
+  }
+
+  /** A picture on the clipboard (Ctrl+V in the composer) joins the next message, as in Projects' composer: saved
+   * under Hub's pastes folder, then attached like a picked file (to the AI, to the person, or a site request's reply). */
+  private async pasteImage(): Promise<void> {
+    if (!this.ui.open && !this.sr) return;
+    const clip = await clipboard.read().catch(() => null);
+    if (clip?.type !== "image" || this.noFiles()) return;
+    const png = clip.bytes[0] === 0x89 && clip.bytes[1] === 0x50;
+    const dir = join(dataDir(), "pastes");
+    const path = join(dir, `pasted-${Date.now()}.${png ? "png" : "jpg"}`);
+    try {
+      await mkdir(dir, { recursive: true });
+      await writeFile(path, clip.bytes);
+    } catch {
+      return this.setToast("Couldn't keep the pasted picture");
+    }
+    if (this.aiMode) this.aiFiles = [...this.aiFiles, path].slice(0, 10);
+    else if (this.sr) {
+      if (this.srFiles.length >= 5) return this.setToast("SpokPay takes up to 5 pictures a message");
+      if (clip.bytes.length > 10 << 20) return this.setToast("The picture is over 10 MB");
+      this.srFiles = [...this.srFiles, path];
+    } else {
+      if (clip.bytes.length > 25 << 20) return this.setToast("The picture is over 25 MB");
+      this.files = [...this.files, path].slice(0, 10);
+    }
+    this.render();
+  }
+
+  /** The chat the composer sends on takes no files (Instagram's connector sends text only): said, true. */
+  private noFiles(): boolean {
+    if (this.aiMode || this.sr || this.chat?.account?.kind !== "instagram") return false;
+    this.setToast("Pictures and files can't be sent to Instagram from here yet: send the text alone");
+    return true;
+  }
+
   private async attach(): Promise<void> {
-    const got = await picker.pick({ title: "Attach files", multiple: true }).catch(() => [] as string[]);
+    if (this.noFiles()) return;
+    const got = await this.pickFiles({ title: "Attach files", multiple: true });
     const ok: string[] = [];
     for (const f of got) {
       try {
@@ -1120,6 +1174,12 @@ class PersonsTab {
       if (c.kind === "instagram") return this.sessionDialog(c.id);
       void this.api("POST", `connections/${encodeURIComponent(c.id)}/connect`);
     };
+    const order = this.sections();
+    const at = order.indexOf(sec);
+    const moves = [
+      ...(at > 0 ? [{ label: "Move up", run: () => this.moveSectionTo(sec, order[at - 1]!) }] : []),
+      ...(at >= 0 && at < order.length - 1 ? [{ label: "Move down", run: () => this.moveSectionTo(sec, order[at + 1]!) }] : []),
+    ];
     this.showMenu(x, y, [
       sec === "stores" ? { label: "New store", icon: "", run: () => this.storeDialog(null) } : personal ? { label: "Add contact", run: () => this.contactDialog() } : { label: `Add to ${SECTION_LABEL[sec]}`, run: () => this.personDialog(null, sec) },
       ...(sec === "stores" ? [{ label: "Add person", run: () => this.personDialog(null, sec) }] : []),
@@ -1142,6 +1202,7 @@ class PersonsTab {
           if (k === "instagram" && id) this.sessionDialog(id);
         })(),
       })),
+      ...(moves.length ? [{ sep: true, label: "" }, ...moves] : []),
     ]);
   }
 
@@ -1582,7 +1643,7 @@ class PersonsTab {
 
   /** Pictures for the reply (SpokPay takes up to 5 images of 10 MB each). */
   private async srAttach(): Promise<void> {
-    const got = await picker.pick({ title: "Add pictures", multiple: true, filter: ["Images", ["*.png", "*.jpg", "*.jpeg", "*.gif", "*.webp"]] }).catch(() => [] as string[]);
+    const got = await this.pickFiles({ title: "Add pictures", multiple: true, filter: ["Images", ["*.png", "*.jpg", "*.jpeg", "*.gif", "*.webp"]] });
     const ok: string[] = [];
     for (const f of got) {
       try {
@@ -2018,10 +2079,25 @@ class PersonsTab {
     this.ui.closed = new Set(f.closed);
     this.ui.stores = new Set(f.stores);
     this.ui.settledOpen = new Set(f.settledOpen);
+    this.ui.order = f.order;
+  }
+
+  /** The sidebar's sections top first, as shown (Stores and the engine's lists, in the order the user dragged them). */
+  private sections(): string[] {
+    return sectionOrder(["stores", ...(this.state?.lists ?? []).map((l) => l.id)], this.ui.order);
+  }
+
+  /** Section `from` takes section `to`'s place in the sidebar (a drag, or the section menu's Move up / Move down). */
+  private moveSectionTo(from: string, to: string): void {
+    const next = moveSection(this.sections(), from, to);
+    if (!next) return this.render();
+    this.ui.order = next;
+    this.render();
+    this.saveFolds();
   }
 
   private saveFolds(): void {
-    const body = { closed: [...this.ui.closed], stores: [...this.ui.stores], settledOpen: [...this.ui.settledOpen] };
+    const body = { closed: [...this.ui.closed], stores: [...this.ui.stores], settledOpen: [...this.ui.settledOpen], order: this.ui.order ?? [] };
     void this.ctx.call("POST", "v1/persons/folds", undefined, body).catch(() => {});
   }
 
@@ -2058,8 +2134,8 @@ function srAiBusy(ai: readonly AiJson[]): boolean {
 }
 
 /** The engine's folds reply (GET v1/persons/folds), anything odd left out. */
-export function foldsOf(v: unknown): { closed: string[]; stores: string[]; settledOpen: string[] } {
+export function foldsOf(v: unknown): { closed: string[]; stores: string[]; settledOpen: string[]; order: string[] } {
   const o = v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
   const ids = (x: unknown): string[] => (Array.isArray(x) ? x.filter((y): y is string => typeof y === "string") : []);
-  return { closed: ids(o.closed), stores: ids(o.stores), settledOpen: ids(o.settledOpen) };
+  return { closed: ids(o.closed), stores: ids(o.stores), settledOpen: ids(o.settledOpen), order: ids(o.order) };
 }

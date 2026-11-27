@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { type Rows, sameRow, syncRows } from "../src/modelsync.ts";
-import { aiFolds, aiPreview, chatRows, srTimeline, FLAT_BARS, fitImage, imageTiles, listRows, nextSpeed, shortAgo, sideRows, srImageSize, type ChatJson, type PersonJson, type SrListJson, type SrRowJson, type StateJson, type UiState } from "../src/tabs/persons/view.ts";
+import { aiFolds, aiPreview, chatRows, srTimeline, FLAT_BARS, fitImage, imageTiles, listRows, moveSection, nextSpeed, sectionOrder, shortAgo, sideRows, srImageSize, type ChatJson, type PersonJson, type SrListJson, type SrRowJson, type StateJson, type UiState } from "../src/tabs/persons/view.ts";
 
 const row = (lastAt: string | null, unread = 0) => ({ lastAt, unread, presence: null, status: null, channel: "discord", typing: null });
 const person = (id: string, name: string, o: Partial<PersonJson> = {}, lastAt: string | null = null): PersonJson => ({
@@ -61,6 +61,19 @@ describe("Persons sidebar", () => {
     const rows = sideRows(state(), ui({ closed: new Set(["spokpay"]), open: { id: "m", section: "stores", store: "s2" }, stores: new Set(["s2"]) }));
     expect(rows.at(-1)).toMatchObject({ kind: "section", section: "spokpay", expanded: false });
     expect(rows.filter((r) => r.active).map((r) => r.id)).toEqual(["m"]);
+  });
+
+  test("sections in the order they were dragged; new ones after, gone ones dropped", () => {
+    const heads = (o?: string[]): string[] => sideRows(state(), ui({ closed: new Set(["stores", "creators", "spokpay"]), ...(o ? { order: o } : {}) })).filter((r) => r.kind === "section").map((r) => r.section);
+    expect(heads()).toEqual(["stores", "creators", "spokpay"]);
+    expect(heads(["spokpay", "stores"])).toEqual(["spokpay", "stores", "creators"]);
+    expect(heads(["gone", "creators"])).toEqual(["creators", "stores", "spokpay"]);
+    expect(sectionOrder(["a", "b", "c"], ["c", "c", "x"])).toEqual(["c", "a", "b"]);
+    // dropped on a section: it takes that one's place (above it dragged up, below it dragged down)
+    expect(moveSection(["stores", "creators", "spokpay", "personal"], "personal", "creators")).toEqual(["stores", "personal", "creators", "spokpay"]);
+    expect(moveSection(["stores", "creators", "spokpay", "personal"], "stores", "spokpay")).toEqual(["creators", "spokpay", "stores", "personal"]);
+    expect(moveSection(["stores", "creators"], "stores", "stores")).toBeNull();
+    expect(moveSection(["stores", "creators"], "stores", "")).toBeNull();
   });
 
   test("All people: search over names and ids, newest first", () => {

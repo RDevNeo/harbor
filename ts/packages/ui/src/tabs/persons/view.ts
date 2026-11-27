@@ -137,6 +137,26 @@ export interface UiState {
   allActive: boolean;
   /** The site request last opened from the list (its row shows as current); "sr" in `closed` folds the list. */
   srOpen?: string | null;
+  /** The sections top first as last dragged (`sectionOrder`); [] = Stores, then the lists as the engine has them. */
+  order?: string[];
+}
+
+/** The sections in the order the user dragged them: those in `order` first, as there, then the rest as they come. */
+export function sectionOrder(ids: readonly string[], order: readonly string[] = []): string[] {
+  const known = new Set(ids);
+  const first = [...new Set(order)].filter((id) => known.has(id));
+  return [...first, ...ids.filter((id) => !first.includes(id))];
+}
+
+/** Section `from` dropped on section `to` (shown in the order `ids`): it takes `to`'s place (dragged up it goes above
+ *  `to`, dragged down below it). The whole new order, or null when nothing moves. */
+export function moveSection(ids: readonly string[], from: string, to: string): string[] | null {
+  const i = ids.indexOf(from);
+  const j = ids.indexOf(to);
+  if (i < 0 || j < 0 || i === j) return null;
+  const out = ids.filter((id) => id !== from);
+  out.splice(j, 0, from);
+  return out;
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -262,8 +282,10 @@ export function sideRows(s: StateJson, ui: UiState): Row[] {
       if (so) for (const p of [...settled].sort((a, b) => a.name.localeCompare(b.name))) out.push({ ...personRow(p, sec, storeOf?.(p) ?? "", 0, ui.open), dim: true });
     }
   };
+  // each section's rows, written in the order the user dragged them (sectionOrder)
+  const emit = new Map<string, () => void>();
   const storePeople = s.people.filter((p) => p.storeIds.length > 0 || s.stores.some((st) => st.ownerId === p.id));
-  sectionRows("stores", SECTION_NAMES.stores!, storePeople, () => {
+  emit.set("stores", () => sectionRows("stores", SECTION_NAMES.stores!, storePeople, () => {
     if (!s.stores.length) out.push({ ...base("empty"), name: "No stores yet." });
     for (const st of [...s.stores].sort((a, b) => a.name.localeCompare(b.name))) {
       const owner = st.ownerId ? byId.get(st.ownerId) : undefined;
@@ -277,18 +299,22 @@ export function sideRows(s: StateJson, ui: UiState): Row[] {
       if (shownOwner) out.push({ ...personRow(shownOwner, "stores", st.id, 1, ui.open), owner: true });
       for (const p of members) out.push(personRow(p, "stores", st.id, 1, ui.open));
     }
-  }, storePeople.filter((p) => settledIn(p, "stores")), (p) => p.storeIds[0] ?? s.stores.find((st) => st.ownerId === p.id)?.id ?? "");
+  }, storePeople.filter((p) => settledIn(p, "stores")), (p) => p.storeIds[0] ?? s.stores.find((st) => st.ownerId === p.id)?.id ?? ""));
   for (const l of s.lists) {
-    const sec = l.id as SectionId;
-    const all = s.people.filter((p) => p.listIds.includes(l.id)).sort(byRecent);
-    const settled = all.filter((p) => settledIn(p, sec));
-    const members = all.filter((p) => !settledIn(p, sec));
-    sectionRows(sec, l.name.toUpperCase(), all, () => {
-      if (sec === "spokpay" && s.siteRequests) out.push(...siteRequestRows(s.siteRequests, ui));
-      if (!all.length) out.push({ ...base("empty"), name: "No one yet." });
-      for (const p of members) out.push(personRow(p, sec, "", 0, ui.open));
-    }, settled);
+    if (emit.has(l.id)) continue;
+    emit.set(l.id, () => {
+      const sec = l.id as SectionId;
+      const all = s.people.filter((p) => p.listIds.includes(l.id)).sort(byRecent);
+      const settled = all.filter((p) => settledIn(p, sec));
+      const members = all.filter((p) => !settledIn(p, sec));
+      sectionRows(sec, l.name.toUpperCase(), all, () => {
+        if (sec === "spokpay" && s.siteRequests) out.push(...siteRequestRows(s.siteRequests, ui));
+        if (!all.length) out.push({ ...base("empty"), name: "No one yet." });
+        for (const p of members) out.push(personRow(p, sec, "", 0, ui.open));
+      }, settled);
+    });
   }
+  for (const id of sectionOrder([...emit.keys()], ui.order)) emit.get(id)!();
   return out;
 }
 

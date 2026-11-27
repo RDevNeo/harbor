@@ -329,6 +329,8 @@ export component ComposeField {
     callback submit();
     callback edited(string);
     callback escape() -> bool;
+    /** Ctrl+V or Shift+Insert, before the text pastes (it still does): the caller may take a picture off the clipboard. */
+    callback paste();
     public function focus-field() {
         field.focus();
     }
@@ -344,6 +346,9 @@ export component ComposeField {
             }
             if e.text == Key.Escape && root.escape() {
                 return accept;
+            }
+            if (e.modifiers.control && !e.modifiers.alt && (e.text == "v" || e.text == "V")) || (e.modifiers.shift && e.text == Key.Insert) {
+                root.paste();
             }
             return reject;
         }

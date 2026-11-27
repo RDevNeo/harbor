@@ -165,3 +165,12 @@ export function pickerCommand(o: import("./win32/picker.ts").PickOptions): strin
   if (platform() !== "win32") return null;
   return (require("./win32/picker.ts") as typeof import("./win32/picker.ts")).pickerCommand(o);
 }
+
+/**
+ * Where the desktop's tools aren't there (Linux without zenity or kdialog): the command that shows the desktop's own
+ * picker through the XDG portal, with pickerCommand's output and exit codes (3: no portal); null elsewhere.
+ */
+export function portalPickerCommand(o: import("./win32/picker.ts").PickOptions): string[] | null {
+  if (platform() !== "linux") return null;
+  return (require("./linux-picker.ts") as typeof import("./linux-picker.ts")).portalPickerCommand(o);
+}

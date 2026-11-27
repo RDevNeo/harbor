@@ -1,5 +1,6 @@
 // The PC's Persons sidebar folds (sections folded shut, stores unfolded, Settled folds open, "sr" = SpokPay › Site
-// requests folded), kept in <persons>/folds.json so the sidebar comes back as it was left: after switching tabs, a
+// requests folded) and the sections' order as dragged (`order`: section ids, top first; sections not in it follow in
+// their own order), kept in <persons>/folds.json so the sidebar comes back as it was left: after switching tabs, a
 // reopen or a restart. The phone keeps its own (SharedPreferences "persons": closed, stores, settled_open).
 import { readFileSync } from "node:fs";
 import { rename, writeFile } from "node:fs/promises";
@@ -9,6 +10,8 @@ export interface Folds {
   closed: string[];
   stores: string[];
   settledOpen: string[];
+  /** The sidebar's sections top first, as last dragged ([] = Stores, then the lists as the engine has them). */
+  order: string[];
 }
 
 const ids = (v: unknown): string[] =>
@@ -17,7 +20,7 @@ const ids = (v: unknown): string[] =>
 /** Anything read or sent, as folds (unknown fields dropped, odd values left out). */
 export function normFolds(v: unknown): Folds {
   const o = v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
-  return { closed: ids(o.closed), stores: ids(o.stores), settledOpen: ids(o.settledOpen) };
+  return { closed: ids(o.closed), stores: ids(o.stores), settledOpen: ids(o.settledOpen), order: ids(o.order) };
 }
 
 export const foldsFile = (dir: string): string => join(dir, "folds.json");

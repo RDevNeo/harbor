@@ -88,5 +88,19 @@ export async function pick(o: Opts): Promise<string[]> {
     const out = new Uint8Array(await new Response(proc.stdout as ReadableStream).arrayBuffer());
     return (await proc.exited) === 0 ? paths(out) : [];
   }
+  // Neither (Hyprland, Sway…): the desktop's own picker through the XDG portal, when there is one.
+  const portal = osDesktop.portalPickerCommand(o);
+  if (portal !== null) {
+    try {
+      const proc = Bun.spawn(portal, { env: process.env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+      const out = new Uint8Array(await new Response(proc.stdout as ReadableStream).arrayBuffer());
+      const code = await proc.exited;
+      if (code === 0) return paths(out);
+      if (code === 1) return [];
+      if (code !== 3) return fail(`Couldn't open the file picker: ${(await new Response(proc.stderr as ReadableStream).text()).trim().split("\n").pop() || `exit ${code}`}`);
+    } catch (e) {
+      if (!(e instanceof Error && "code" in e && e.code === "ENOENT")) return fail(`Couldn't open the file picker: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
   return fail(NO_PICKER);
 }

@@ -6,6 +6,15 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 ## [Unreleased]
 
 ### Fixed
+- **Attach opens a file picker on Linux desktops without zenity or kdialog.** Every attach button (Projects' and
+  Persons' composers, site requests' pictures, icons, uploads) ran zenity, then kdialog, and with neither (Hyprland,
+  Sway) returned nothing, its "no file picker found" toast shown nowhere: the click did nothing. It now falls back to
+  the desktop's own picker through the XDG portal (org.freedesktop.portal.FileChooser, via python3's GLib bindings),
+  and Persons says in a toast when no picker can be opened. Linux only: Windows has its own dialog, macOS and the phone
+  app are unchanged.
+- **Persons: a picture pasted into the composer (Ctrl+V) joins the message**, as in Projects' composer: to the person,
+  to their AI, or a site request's reply. An Instagram contact says at once that files can't go to Instagram from here
+  (its connector sends text only), instead of failing on Send.
 - **Hub no longer reads 140 MB from the disk every minute.** Claude's model list comes from the CLI's bundle, found
   through `claude` on the PATH; with mise that is a shim linked to mise itself, which has no model table, so nothing
   was kept and the whole file was read again each minute (on a PC short on memory, that pushed everything else out of
@@ -39,6 +48,9 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
   their whole conversation, not only what arrives after.
 
 ### Added
+- **Persons: the sidebar's sections can be reordered.** Drag a section's head (Stores, Creators, SpokPay, Personal…)
+  onto another section to put it in that one's place, or use Move up / Move down in its + menu; the order is kept with
+  the folds (`folds.json`, `order`). The phone app keeps its own fixed order (its sidebar is its own; not changed here).
 - Hub Persons: **Personal**, a section for the user's own contacts (PC and Android), after SpokPay. Its + menu (PC) or
   its **Add contact** row (phone) asks for the platform (Discord, WhatsApp, Instagram) and one field: their WhatsApp
   number, or their Discord or Instagram username. Persons finds them there first (a number that is on WhatsApp, the exact
