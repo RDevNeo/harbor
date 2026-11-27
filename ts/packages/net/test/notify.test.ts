@@ -335,7 +335,7 @@ describe("notify", () => {
     // on the wire only when false
     const wired = notes.since(0)[0].map((x) => (noteJson(x) as { phone?: boolean }).phone);
     expect(wired).toEqual([undefined, false, false, undefined, false, false, undefined]);
-    expect(parseNotes(notes.since(0)[0].map(noteJson)).map((x) => x.phone)).toEqual(got.map((x) => x[1]));
+    expect(parseNotes(notes.since(0)[0].map(noteJson)).map((x) => x.phone)).toEqual(got.map((x) => x[1] as boolean));
   });
 
   test("a person's messages: one note per burst, each line kept, phones only, not relayed to the mesh", () => {
