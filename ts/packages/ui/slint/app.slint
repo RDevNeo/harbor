@@ -1126,9 +1126,9 @@ export component AppWindow inherits Window {
                         property <bool> team-float: root.view == "chat" && root.team-enabled && root.team-pop;
                         property <bool> team-docked: team-float && self.width - 300px >= 440px;
                         // The panes' area: the centre left of the docked panel.
-                        // The team handle's strip (12px, the panel's line on its right while open) keeps its own column.
+                        // The team handle's strip (12px, its line on the panel's while open) keeps its own column.
                         property <bool> team-handle-on: root.view == "chat" && root.team-enabled;
-                        property <length> area-w: self.width - (team-docked ? 300px + 11px : team-handle-on && !team-float ? 12px : 0px);
+                        property <length> area-w: self.width - (team-docked ? 300px + 6px : team-handle-on && !team-float ? 12px : 0px);
                         property <length> fx: split ? floor(root.split-fx * area-w / 1phx) * 1phx : 0px;
                         property <length> fy: split ? floor(root.split-fy * self.height / 1phx) * 1phx : 0px;
                         property <length> fw: split ? floor((root.split-fx + root.split-fw) * area-w / 1phx) * 1phx - fx : area-w;
@@ -1218,43 +1218,44 @@ export component AppWindow inherits Window {
                             z: 10;
                             height: parent.height;
                         }
-                        // The team's handle: a full-height 1px line on the chat's right edge (the panel's own line while it's
-                        // open) with a chevron at its middle; the whole 12px strip is clickable and brightens under the
-                        // pointer; a click opens or closes the panel. Split and closed, it starts under the header row (SplitTools).
+                        // The team's handle: a full-height 1px line on the chat's right edge (on the panel's own line while it's
+                        // open) with the chevron centred on it; static (no hover look); the whole 12px strip is clickable.
+                        // Split and closed, it starts under the header row (SplitTools).
                         team-handle := Rectangle {
                             visible: body.team-handle-on;
-                            property <length> line-x: body.team-float ? 11px : 6px;
-                            property <bool> hot: handle-area.has-hover;
                             width: 12px;
-                            x: body.team-float ? floor((parent.width - 300px) / 1phx) * 1phx - 11px : parent.width - 12px;
+                            x: body.team-float ? floor((parent.width - 300px) / 1phx) * 1phx - 6px : parent.width - 12px;
                             y: body.split && !body.team-float ? body.top : 0px;
                             height: parent.height - self.y;
                             z: 12;
-                            background: self.hot ? #ffffff0a : transparent;
                             Rectangle {
-                                x: parent.line-x;
+                                x: 6px;
                                 y: 0;
                                 width: 1px;
                                 height: parent.height;
-                                background: parent.hot ? Theme.gray-900 : Theme.gray-600;
-                                opacity: parent.hot ? 1 : 0.6;
+                                background: Theme.gray-600;
+                                opacity: 0.6;
                             }
                             Rectangle {
-                                x: parent.line-x - 5px;
+                                x: 0;
                                 y: round((parent.height - self.height) / 2 / 1phx) * 1phx;
-                                width: 11px;
-                                height: 22px;
-                                border-radius: 4px;
+                                width: 13px;
+                                height: 20px;
                                 background: Theme.bg100;
-                                border-width: 1px;
-                                border-color: parent.hot ? Theme.gray-700 : Theme.gray-500;
-                                Glyph {
-                                    icon: root.team-pop ? Icons.right : Icons.left;
-                                    size: 12px;
-                                    color: team-handle.hot ? Theme.gray-1000 : Theme.gray-900;
+                                // Drawn, not a lucide glyph: the font's chevrons sit off their box's centre.
+                                Path {
+                                    x: 3.5px;
+                                    y: 5px;
+                                    width: 6px;
+                                    height: 10px;
+                                    viewbox-width: 6;
+                                    viewbox-height: 10;
+                                    commands: root.team-pop ? "M 1.5 1 L 4.5 5 L 1.5 9" : "M 4.5 1 L 1.5 5 L 4.5 9";
+                                    stroke: Theme.gray-900;
+                                    stroke-width: 1.5px;
                                 }
                             }
-                            handle-area := TipArea {
+                            TipArea {
                                 tip: "Agents";
                                 clicked => {
                                     root.team-pop = !root.team-pop;
