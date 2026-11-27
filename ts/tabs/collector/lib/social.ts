@@ -2,7 +2,9 @@
 // searches the term for videos (TikTok's video search; Instagram's search page, reels first, on the user's session) and
 // hands their creators in the order the platform ranked the videos; each new one is read (profile, 3 newest videos),
 // dropped when it hasn't posted within the window, enriched (links, email) and kept. Same rules as YouTube: never twice,
-// drops don't count.
+// drops don't count. TikTok keeps only Brazilian creators: a video with nothing Portuguese about it is skipped unread,
+// the rest are kept only when their video was made in Brazil (its page's `locationCreated`; a video that doesn't say
+// passes only when TikTok itself tags it Portuguese).
 import { handleKey } from "./identity.ts";
 import { daysSince, formatUploadAge, type Stats } from "./sweep.ts";
 import type { CreatorLink, CreatorRecord, RecentVideo } from "./types.ts";
@@ -36,6 +38,9 @@ export interface Hit {
   latestAt?: number | null;
   /** The search result (video or post) that led to them. */
   videoUrl?: string;
+  /** TikTok: how Portuguese that video is ("clear": TikTok tags its caption or speech pt; "caption": its words read
+   *  Portuguese); absent = nothing Portuguese. */
+  pt?: "clear" | "caption";
 }
 
 export interface DiscoverOpts {
@@ -48,6 +53,9 @@ export interface DiscoverOpts {
 export interface SocialClient {
   profile(handle: string): Promise<Profile>;
   discover(query: string, o: DiscoverOpts): AsyncIterable<Hit[]>;
+  /** Where a found video was made (an ISO country, "BR"; null when it doesn't say). A client that has it (TikTok)
+   *  keeps only Brazilian creators. */
+  madeIn?(videoUrl: string): Promise<string | null>;
 }
 
 export interface SocialSweepCtx {
@@ -72,6 +80,8 @@ export const PROFILE_DELAY_MS = 1200;
 export const BLOCKED_LIMIT = 5;
 
 const LABEL = { tiktok: "TikTok", instagram: "Instagram" } as const;
+/** A refusal (not a missing page): enough of these in a row and the sweep stops. */
+const isBlocked = (msg: string): boolean => /blocked|refused|429|401|403|captcha|verify|challenge/i.test(msg);
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 /** A profile as Collector's record (the userscript's fields: followers in subscriber_count, likes in view_count). */
@@ -108,8 +118,10 @@ export async function sweepSocial(c: SocialSweepCtx): Promise<Stats> {
   const reached = (): boolean => c.target > 0 && c.count() >= c.target;
   const seenNow = new Set<string>();
   let blocked = 0;
+  const brazil = typeof c.client.madeIn === "function";
   c.log(c.target > 0 ? `Searching ${label} videos for "${c.query}" - target ${c.target} lead(s).` : `Searching ${label} videos for "${c.query}" - no target, collecting everything.`);
   c.log(c.gapDays > 0 ? `Dropping any account with no post in the last ${c.gapDays} days.` : "No freshness filter - collecting accounts whenever they last posted.");
+  if (brazil) c.log("Keeping only Brazilian creators: a video in Portuguese, made in Brazil.");
   try {
     for await (const batch of c.client.discover(c.query, { stopped: () => c.stopped() || reached(), sleep: c.sleep, log: (t) => c.log(t), maxQueries: c.target > 0 ? Math.min(200, 30 + c.target * 4) : 200 })) {
       if (c.stopped() || reached()) break;
@@ -119,15 +131,48 @@ export async function sweepSocial(c: SocialSweepCtx): Promise<Stats> {
         seenNow.add(k);
         return true;
       });
-      const todo = fresh.filter((h) => !c.isKnown([handleKey(c.platform, h.handle)!, ...(h.id ? [`${c.platform}:${h.id}`] : [])]));
+      let todo = fresh.filter((h) => !c.isKnown([handleKey(c.platform, h.handle)!, ...(h.id ? [`${c.platform}:${h.id}`] : [])]));
       stats.known += fresh.length - todo.length;
       stats.discovered += todo.length;
+      if (brazil) {
+        const pt = todo.filter((h) => h.pt);
+        const skipped = todo.length - pt.length;
+        if (skipped) {
+          stats.dropped += skipped;
+          c.log(`Skipped ${skipped} creator${skipped === 1 ? "" : "s"} whose video isn't in Portuguese.`, "drop");
+        }
+        todo = pt;
+      }
       c.progress(stats);
       for (const h of todo) {
         if (c.stopped() || reached()) break;
         const who = `@${h.handle.replace(/^@/, "")}`;
         stats.considered++;
         c.log(`Checking ${who}…`);
+        // TikTok: where the video that found them was made (a Portuguese video from Portugal or a non-Brazilian creator
+        // is dropped before their profile is read).
+        let where: string | null = null;
+        if (brazil) {
+          try {
+            where = h.videoUrl ? await c.client.madeIn!(h.videoUrl) : null;
+            blocked = 0;
+          } catch (e) {
+            const msg = errText(e);
+            c.log(`${who}: couldn't read where their video was made (${msg}).`);
+            if (isBlocked(msg) && ++blocked >= BLOCKED_LIMIT) {
+              c.log(`${label} refused ${blocked} reads in a row - stopping here to go easy on it. Try again later.`, "error");
+              return stats;
+            }
+          }
+          const why = where && where !== "BR" ? `not Brazilian - their video was made in ${where}.` : !where && h.pt !== "clear" ? "no country on their video, and only its words look Portuguese." : "";
+          await c.sleep(PROFILE_DELAY_MS);
+          if (why) {
+            stats.dropped++;
+            c.log(`DROP ${who}: ${why}`, "drop");
+            c.progress(stats);
+            continue;
+          }
+        }
         // A post seen in discovery inside the window is enough; else the profile's newest post decides.
         let p: Profile;
         try {
@@ -138,7 +183,7 @@ export async function sweepSocial(c: SocialSweepCtx): Promise<Stats> {
           stats.dropped++;
           c.log(`SKIP ${who}: ${msg}`, "skip");
           c.progress(stats);
-          if (/blocked|refused|429|401|403|captcha|verify/i.test(msg) && ++blocked >= BLOCKED_LIMIT) {
+          if (isBlocked(msg) && ++blocked >= BLOCKED_LIMIT) {
             c.log(`${label} refused ${blocked} reads in a row - stopping here to go easy on it. Try again later.`, "error");
             return stats;
           }
@@ -170,6 +215,7 @@ export async function sweepSocial(c: SocialSweepCtx): Promise<Stats> {
           }
         }
         let rec = profileRecord(p, c.query, at, h.videoUrl);
+        if (where === "BR") rec.country = "Brazil";
         if (!rec.last_upload_at && newest) rec.last_upload_at = new Date(newest).toISOString();
         if (!rec.avatar_url && h.avatarUrl) rec.avatar_url = h.avatarUrl;
         rec = await c.enrich(rec, `${label} bio`);

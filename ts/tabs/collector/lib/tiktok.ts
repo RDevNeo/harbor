@@ -54,6 +54,8 @@ export interface Hit {
   latestAt?: number | null;
   /** The search result (video or post) that led to them. */
   videoUrl?: string;
+  /** TikTok: how Portuguese that video is (`ttPtSignal`); absent = nothing Portuguese about it. */
+  pt?: PtSignal;
 }
 
 /** What `discover()` needs from its caller. */
@@ -66,7 +68,7 @@ export interface DiscoverOpts {
 
 export const TT_RECENT_LIMIT = 3;
 /** How TikTok searches, for the form. */
-export const TT_NOTE = "Searches the videos under the term's hashtag (dress to impress → #dresstoimpress, as tiktok.com/tag shows them), then opens each video's creator. No login needed.";
+export const TT_NOTE = "Searches the videos under the term's hashtag (dress to impress → #dresstoimpress, as tiktok.com/tag shows them) and keeps only Brazilian creators: a video in Portuguese, made in Brazil. No login needed.";
 export const TT_ORIGIN = "https://www.tiktok.com";
 const UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36";
 
@@ -105,14 +107,16 @@ export type TtDetail = { status: "ok" | "private" | "not_found"; profile: Profil
 
 /**
  * A profile page's `webapp.user-detail`. statusCode 10222 = private (the profile, when the page still carries the user),
- * 10221 or no user = not found. Null when the page has no rehydration data (a challenge, a layout change).
+ * 10221 or no user = not found. Null when the page has no rehydration data (a challenge, a layout change) or no
+ * `webapp.user-detail` at all: TikTok sends the page without it for a while after many reads (a missing account still
+ * gets one, with 10221).
  */
 export function ttParseUserDetail(html: string): TtDetail | null {
   const blob = scriptJson(html, "__UNIVERSAL_DATA_FOR_REHYDRATION__");
   const scope = isObj(blob) && isObj(blob.__DEFAULT_SCOPE__) ? blob.__DEFAULT_SCOPE__ : null;
   if (!scope) return null;
   const d = scope["webapp.user-detail"];
-  if (!isObj(d)) return { status: "not_found", profile: null };
+  if (!isObj(d)) return null;
   const code = num(d.statusCode) ?? 0;
   const info = isObj(d.userInfo) ? d.userInfo : null;
   const u = info && isObj(info.user) ? info.user : null;
@@ -163,6 +167,8 @@ export interface TtEmbed {
   newest: number | null;
   /** Rounded. */
   followers: number | null;
+  /** The account as the embed shows it (rounded counts, no video count or bio link); null without a user. */
+  profile: Profile | null;
 }
 
 /** `/embed/@<handle>`'s `__FRONTITY_CONNECT_STATE__` → `source.data["/embed/@<handle>"]`; null when it isn't there. */
@@ -174,7 +180,7 @@ export function ttParseEmbed(html: string, handle: string): TtEmbed | null {
   const key = Object.keys(data).find((k) => k.toLowerCase() === `/embed/@${h}`.toLowerCase());
   const page = key ? data[key] : null;
   if (!isObj(page)) return null;
-  const user = isObj(page.userInfo) ? page.userInfo : {};
+  const user: Obj = isObj(page.userInfo) ? page.userInfo : {};
   const videos: (RecentVideo & { t: number })[] = [];
   for (const v of Array.isArray(page.videoList) ? page.videoList : []) {
     if (!isObj(v) || v.privateItem === true) continue;
@@ -194,12 +200,25 @@ export function ttParseEmbed(html: string, handle: string): TtEmbed | null {
     });
   }
   videos.sort((a, b) => b.t - a.t);
-  return {
-    error: page.isError === true,
-    recent: videos.slice(0, TT_RECENT_LIMIT).map(({ t: _t, ...v }) => v),
-    newest: videos[0]?.t ?? null,
-    followers: num(user.followerCount),
-  };
+  const recent = videos.slice(0, TT_RECENT_LIMIT).map(({ t: _t, ...v }) => v);
+  const newest = videos[0]?.t ?? null;
+  const uid = str(user.uniqueId);
+  const profile: Profile | null = uid
+    ? {
+        ...emptyProfile(uid),
+        platform_id: str(user.id) ?? "",
+        name: str(user.nickname) ?? uid,
+        avatar_url: str(user.avatarThumbUrl) ?? str(user.avatarMediumUrl) ?? str(user.avatarLargerUrl),
+        followers: num(user.followerCount),
+        likes: num(user.heartCount),
+        bio: str(user.signature),
+        last_post_at: newest ? new Date(newest).toISOString() : null,
+        recent,
+        private: user.privateAccount === true,
+        precision: "rounded",
+      }
+    : null;
+  return { error: page.isError === true, recent, newest, followers: num(user.followerCount), profile };
 }
 
 /** The search box's suggestions: accounts (`sug_type` "account" / "certified_account") and the other phrases. */
@@ -344,7 +363,51 @@ export function ttWebParams(deviceId: string, extra: Record<string, string>): Re
   };
 }
 
-/** A hashtag page's videos (`itemList`) as creators, in TikTok's order: one per creator, with the video and its time. */
+/**
+ * How Portuguese a found video is, from what the hashtag page already sends (no request): "clear" when TikTok tags its
+ * caption `pt` (`textLanguage`) or its speech Portuguese (`claInfo.originalLanguageInfo`, the original-audio caption,
+ * the ASR subtitles); "caption" when the caption reads Portuguese by its words (`ptCaption`: TikTok often tags a short
+ * Portuguese caption "en" or "un"); null when nothing is Portuguese (the creator is skipped unread).
+ */
+export type PtSignal = "clear" | "caption";
+
+/** Words only Portuguese uses (2 points) and common Portuguese words other languages rarely share (1 point). */
+const PT_STRONG = new Set("você vocês voce voces vc vcs não nao tô tá né também tambem então entao obrigado obrigada brasil brasileiro brasileira brasileiros brasileiras fypbrasil viralbrasil foryoubrasil paravoce pravoce".split(" "));
+const PT_WEAK = new Set("muito muita muitos muitas pra pro gente agora isso esse essa esses essas com meu minha meus minhas sou estou quero já vou vamos ficou fiz nós hoje ontem melhor pior coisa coisas tudo quando onde quem bem foi fazer olha nossa demais nunca sempre br novo nova".split(" "));
+
+/** Whether a caption reads Portuguese: ã/õ (-ção, -ões), "kkk", or Portuguese words scoring 2 (links left out). */
+export function ptCaption(text: string): boolean {
+  const t = text.toLowerCase().replace(/https?:\/\/\S+|\S+\.(com|net|br)\S*/g, " ");
+  let score = 0;
+  for (const w of t.split(/[^\p{L}\p{N}]+/u)) {
+    if (!w) continue;
+    if (/[ãõ]|^k{3,}$|^(rs){2,}$/.test(w) || PT_STRONG.has(w)) score += 2;
+    else if (PT_WEAK.has(w)) score += 1;
+    if (score >= 2) return true;
+  }
+  return false;
+}
+
+const isPt = (code: unknown): boolean => typeof code === "string" && /^(pt|por)(\b|[-_])/i.test(code);
+
+/** A hashtag-page video's Portuguese signal (see `PtSignal`). */
+export function ttPtSignal(it: Obj): PtSignal | null {
+  if (isPt(it.textLanguage)) return "clear";
+  const v = isObj(it.video) ? it.video : {};
+  const cla = isObj(v.claInfo) ? v.claInfo : {};
+  const orig = isObj(cla.originalLanguageInfo) ? cla.originalLanguageInfo : {};
+  if (isPt(orig.languageCode) || isPt(orig.language)) return "clear";
+  for (const c of Array.isArray(cla.captionInfos) ? cla.captionInfos : []) if (isObj(c) && c.isOriginalCaption === true && (isPt(c.languageCode) || isPt(c.language))) return "clear";
+  for (const sub of Array.isArray(v.subtitleInfos) ? v.subtitleInfos : []) if (isObj(sub) && sub.Source === "ASR" && isPt(sub.LanguageCodeName)) return "clear";
+  return ptCaption(str(it.desc) ?? "") ? "caption" : null;
+}
+
+const PT_RANK = { clear: 2, caption: 1 } as const;
+
+/**
+ * A hashtag page's videos (`itemList`) as creators, in TikTok's order: one per creator (their most Portuguese video on
+ * the page, else the first), with the video, its time and its Portuguese signal.
+ */
 export function ttParseItemList(json: unknown): Hit[] {
   const out: Hit[] = [];
   for (const it of isObj(json) && Array.isArray(json.itemList) ? json.itemList : []) {
@@ -352,7 +415,18 @@ export function ttParseItemList(json: unknown): Hit[] {
     const a = it.author;
     const handle = str(a.uniqueId);
     const vid = str(it.id) ?? (typeof it.id === "number" ? String(it.id) : null);
-    if (!handle || !vid || out.some((h) => h.handle.toLowerCase() === handle.toLowerCase())) continue;
+    if (!handle || !vid) continue;
+    const pt = ttPtSignal(it);
+    const t = (num(it.createTime) ?? 0) * 1000 || ttTimeFromId(vid);
+    const prev = out.find((h) => h.handle.toLowerCase() === handle.toLowerCase());
+    if (prev) {
+      if (pt && PT_RANK[pt] > (prev.pt ? PT_RANK[prev.pt] : 0)) {
+        prev.pt = pt;
+        prev.videoUrl = `${TT_ORIGIN}/@${handle}/video/${vid}`;
+      }
+      if (t && t > (prev.latestAt ?? 0)) prev.latestAt = t;
+      continue;
+    }
     const hit: Hit = { handle, avatarUrl: str(a.avatarLarger) ?? str(a.avatarMedium) ?? str(a.avatarThumb), videoUrl: `${TT_ORIGIN}/@${handle}/video/${vid}` };
     const id = str(a.id);
     if (id) hit.id = id;
@@ -361,11 +435,25 @@ export function ttParseItemList(json: unknown): Hit[] {
     const st = isObj(it.authorStats) ? it.authorStats : {};
     const f = num(st.followerCount);
     if (f !== null) hit.followers = f;
-    const t = (num(it.createTime) ?? 0) * 1000 || ttTimeFromId(vid);
     if (t) hit.latestAt = t;
+    if (pt) hit.pt = pt;
     out.push(hit);
   }
   return out;
+}
+
+/**
+ * Where a video was made: its page's `webapp.video-detail` → `itemStruct.locationCreated` (an ISO country, "BR").
+ * `undefined` when the page has no video data (a challenge, a layout change), null when the video doesn't say.
+ */
+export function ttParseVideoCountry(html: string): string | null | undefined {
+  const blob = scriptJson(html, "__UNIVERSAL_DATA_FOR_REHYDRATION__");
+  const scope = isObj(blob) && isObj(blob.__DEFAULT_SCOPE__) ? blob.__DEFAULT_SCOPE__ : null;
+  const d = scope ? scope["webapp.video-detail"] : null;
+  if (!isObj(d)) return undefined;
+  const it = isObj(d.itemInfo) && isObj(d.itemInfo.itemStruct) ? d.itemInfo.itemStruct : null;
+  const loc = it ? str(it.locationCreated) : null;
+  return loc ? loc.toUpperCase() : null;
 }
 
 /** TikTok over plain HTTPS: browser UA, Brazil (pt-BR), one cookie jar (WAF + ttwid) for the session. */
@@ -428,6 +516,18 @@ export class TikTok {
     return ttParseEmbed(r.body, h);
   }
 
+  /** Where the video at `videoUrl` was made ("BR"); null when its page doesn't say. */
+  async madeIn(videoUrl: string): Promise<string | null> {
+    const u = new URL(videoUrl, TT_ORIGIN);
+    if (u.origin !== TT_ORIGIN || !/^\/@[^/]+\/video\/\d+$/.test(u.pathname)) throw new Error("not a TikTok video link");
+    const r = await this.get(u.toString());
+    if (r.status === 404) return null;
+    if (r.status >= 400) throw new Error(`TikTok video HTTP ${r.status}`);
+    const c = ttParseVideoCountry(r.body);
+    if (c === undefined) throw new Error("could not read the TikTok video page");
+    return c;
+  }
+
   async profile(handle: string): Promise<Profile> {
     const h = bare(handle);
     if (!h) throw new Error("not found");
@@ -435,7 +535,13 @@ export class TikTok {
     if (r.status === 404) throw new Error("not found");
     if (r.status >= 400) throw new Error(`TikTok HTTP ${r.status}`);
     const d = ttParseUserDetail(r.body);
-    if (!d) throw new Error("could not read TikTok profile data");
+    if (!d) {
+      // The page came without the account (TikTok holds it back for a while after many reads, while its embed and
+      // video pages still answer): the embed page has the rest (bio, rounded counts, the newest videos).
+      const e = await this.embed(h).catch(() => null);
+      if (e?.profile && !e.error) return e.profile;
+      throw new Error("could not read TikTok profile data");
+    }
     if (d.status === "not_found") throw new Error("not found");
     if (d.status === "private") return d.profile ?? { ...emptyProfile(h), private: true };
     const p = d.profile!;
@@ -540,7 +646,7 @@ export class TikTok {
             seen.add(k);
             return true;
           });
-          o.log(`TikTok #${tag}, page ${pages}: ${hits.length} creators, ${fresh.length} new.`);
+          o.log(`TikTok #${tag}, page ${pages}: ${hits.length} creators, ${fresh.length} new, ${fresh.filter((h) => h.pt).length} in Portuguese.`);
           if (fresh.length) yield fresh;
           cursor = next;
         }

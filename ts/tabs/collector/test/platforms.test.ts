@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { TikTok, solveWaf, ttWebParams, ttParseEmbed, ttParseItemList, ttParseSuggest, ttParseUserDetail, ttTagOf, ttTimeFromId, xBogus, type Hit } from "../lib/tiktok.ts";
+import { TikTok, ptCaption, solveWaf, ttWebParams, ttParseEmbed, ttParseItemList, ttParseSuggest, ttParseUserDetail, ttParseVideoCountry, ttPtSignal, ttTagOf, ttTimeFromId, xBogus, type Hit } from "../lib/tiktok.ts";
 import { Instagram, igCleanLink, igCollectMedia, igHashtagFromQuery, igParseChunks, igParseCrawlerHtml, igParseProfileJson, igRecentFromFeed, igTimeFromShortcode, igTopSerpCursor } from "../lib/instagram.ts";
 
 const fixture = (name: string): string => readFileSync(join(import.meta.dir, "fixtures", name), "utf8");
@@ -167,6 +167,18 @@ describe("tiktok client", () => {
     expect((await new TikTok(g, noSleep).profile("roblox")).recent).toEqual([]);
   });
 
+  it("reads the profile from the embed when TikTok sends the profile page without the account", async () => {
+    // TikTok's page with everything but webapp.user-detail (it does that for a while after many reads)
+    const held = `<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application/json">${JSON.stringify({ __DEFAULT_SCOPE__: { "webapp.app-context": { region: "BR" } } })}</script>`;
+    const f = fakeFetch((url) => (url.includes("/embed/") ? html(fixture("tt-embed.html")) : html(held)));
+    const p = await new TikTok(f, noSleep).profile("roblox");
+    expect([p.handle, p.precision, p.private, p.recent.length, p.last_post_at]).toEqual(["@roblox", "rounded", false, 3, "2026-11-25T17:00:19.000Z"]);
+    expect(p.followers).toBeGreaterThan(0);
+    expect(ttParseUserDetail(held)).toBeNull();
+    const g = fakeFetch((url) => (url.includes("/embed/") ? html("Bad Request", 400) : html(held)));
+    await expect(new TikTok(g, noSleep).profile("roblox")).rejects.toThrow("could not read TikTok profile data");
+  });
+
   it("throws not found, returns private, and gives up on an unsolved challenge", async () => {
     const page = (detail: unknown): Response => html(`<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application/json">${JSON.stringify({ __DEFAULT_SCOPE__: { "webapp.user-detail": detail } })}</script>`);
     await expect(new TikTok(fakeFetch(() => page({ statusCode: 10221 })), noSleep).profile("gone")).rejects.toThrow("not found");
@@ -195,10 +207,47 @@ describe("tiktok client", () => {
   it("reads a hashtag page's videos as creators, in order, one each, with the video", () => {
     const item = (id: string, u: string, t: number) => ({ id, createTime: t, desc: "x", author: { id: `a-${u}`, uniqueId: u, nickname: u.toUpperCase(), avatarLarger: `https://p/${u}.jpg` }, authorStats: { followerCount: 1200 } });
     expect(ttParseItemList({ itemList: [item("7001", "ana", 1795600000), item("7002", "beto", 1795500000), item("7003", "ana", 1795700000)] })).toEqual([
-      { handle: "ana", id: "a-ana", name: "ANA", avatarUrl: "https://p/ana.jpg", followers: 1200, latestAt: 1795600000 * 1000, videoUrl: "https://www.tiktok.com/@ana/video/7001" },
+      { handle: "ana", id: "a-ana", name: "ANA", avatarUrl: "https://p/ana.jpg", followers: 1200, latestAt: 1795700000 * 1000, videoUrl: "https://www.tiktok.com/@ana/video/7001" },
       { handle: "beto", id: "a-beto", name: "BETO", avatarUrl: "https://p/beto.jpg", followers: 1200, latestAt: 1795500000 * 1000, videoUrl: "https://www.tiktok.com/@beto/video/7002" },
     ]);
     expect(ttParseItemList({})).toEqual([]);
+  });
+
+  it("tells a Portuguese video: TikTok's caption or speech tag is clear, the caption's own words are a hint, else nothing", () => {
+    expect(ttPtSignal({ textLanguage: "pt", desc: "x" })).toBe("clear");
+    expect(ttPtSignal({ textLanguage: "en", desc: "x", video: { claInfo: { originalLanguageInfo: { language: "por-PT", languageCode: "pt" } } } })).toBe("clear");
+    expect(ttPtSignal({ textLanguage: "un", video: { claInfo: { captionInfos: [{ isOriginalCaption: true, languageCode: "pt" }] } } })).toBe("clear");
+    expect(ttPtSignal({ textLanguage: "en", video: { subtitleInfos: [{ Source: "ASR", LanguageCodeName: "por-PT" }] } })).toBe("clear");
+    // a translated subtitle or a translated caption isn't the video's own language
+    expect(ttPtSignal({ textLanguage: "en", desc: "hair combo tutorial", video: { subtitleInfos: [{ Source: "MT", LanguageCodeName: "por-PT" }], claInfo: { captionInfos: [{ isOriginalCaption: false, languageCode: "pt" }] } } })).toBeNull();
+    expect(ttPtSignal({ textLanguage: "en", desc: "Entrei na Trend DTI, agora com as bolsas mais raras do DTI!" })).toBe("caption");
+    expect(ttPtSignal({ textLanguage: "un", desc: "#dti #roblox #pravoce" })).toBe("caption");
+    expect(ttPtSignal({ textLanguage: "es", desc: "INTENTÓ HUMILLARME 😏 #roblox" })).toBeNull();
+    expect([ptCaption("KKKKKKKK #dti"), ptCaption("Vocês viram?"), ptCaption("gente olha isso"), ptCaption("Ação de graças"), ptCaption("NÃO acredito")]).toEqual([true, true, true, true, true]);
+    expect([ptCaption("Ranking FUNNY Roblox GAME Moments"), ptCaption("found the main character 💀"), ptCaption("check youtube.com/com"), ptCaption("bossa nova"), ptCaption("")]).toEqual([false, false, false, false, false]);
+  });
+
+  it("keeps each creator's most Portuguese video on a page", () => {
+    const item = (id: string, u: string, lang: string, t = 1795600000) => ({ id, createTime: t, textLanguage: lang, desc: "x", author: { uniqueId: u } });
+    const hits = ttParseItemList({ itemList: [item("7001", "ana", "en"), item("7002", "beto", "en"), item("7003", "ana", "pt", 1795500000), item("7004", "ana", "en", 1795700000)] });
+    expect(hits.map((h) => [h.handle, h.pt ?? null, h.videoUrl, h.latestAt])).toEqual([
+      ["ana", "clear", "https://www.tiktok.com/@ana/video/7003", 1795700000 * 1000],
+      ["beto", null, "https://www.tiktok.com/@beto/video/7002", 1795600000 * 1000],
+    ]);
+  });
+
+  it("reads where a video was made from its page", async () => {
+    const vpage = (item: unknown): string => `<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application/json">${JSON.stringify({ __DEFAULT_SCOPE__: { "webapp.video-detail": { statusCode: 0, itemInfo: { itemStruct: item } } } })}</script>`;
+    expect(ttParseVideoCountry(vpage({ id: "1", locationCreated: "br" }))).toBe("BR");
+    expect(ttParseVideoCountry(vpage({ id: "1" }))).toBeNull();
+    expect(ttParseVideoCountry("<html></html>")).toBeUndefined();
+    const f = fakeFetch((url) => (url.endsWith("/video/7001") ? html(vpage({ locationCreated: "PT" })) : url.endsWith("/video/7002") ? html("", 404) : html("<html></html>")));
+    const tt = new TikTok(f, noSleep);
+    expect(await tt.madeIn("https://www.tiktok.com/@ana/video/7001")).toBe("PT");
+    expect(await tt.madeIn("https://www.tiktok.com/@ana/video/7002")).toBeNull();
+    await expect(tt.madeIn("https://www.tiktok.com/@ana/video/7003")).rejects.toThrow("could not read");
+    await expect(tt.madeIn("https://evil.example/@ana/video/7001")).rejects.toThrow("not a TikTok video");
+    expect(f.calls).toHaveLength(3);
   });
 
   it("discovers through the term's hashtag videos (signed, paged), then suggested hashtags", async () => {

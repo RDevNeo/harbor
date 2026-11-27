@@ -249,6 +249,74 @@ function deps(over: Partial<CollectorDeps> = {}): CollectorDeps {
 const caller = (c: Collector) => (method: string, path: string, body: unknown = null, query: [string, string][] = []) =>
   collectorRoute(c, { method, path: ["v1", "collector", ...path.split("/").filter(Boolean)], query, body, token: "", device: "", global: false } as never);
 
+describe("tiktok's Brazil filter", () => {
+  it("skips videos with nothing Portuguese unread, keeps creators whose video was made in Brazil, as Brazil", async () => {
+    const made: Record<string, string | null> = { ana: "BR", beto: "PT", carla: null, dani: null, eva: "BR" };
+    const reads: string[] = [];
+    const looked: string[] = [];
+    const client: SocialClient = {
+      async profile(h) {
+        reads.push(h);
+        return { platform: "tiktok", platform_id: `id-${h}`, name: h, handle: `@${h}`, profile_url: `https://www.tiktok.com/@${h}`, avatar_url: null, followers: 100, posts: 5, likes: 9, bio: null, links: [], email: null, country: null, last_post_at: new Date(NOW - DAY).toISOString(), recent: [], private: false, precision: "exact" };
+      },
+      async *discover() {
+        yield [
+          { handle: "ana", pt: "caption", videoUrl: "https://www.tiktok.com/@ana/video/1" },
+          { handle: "beto", pt: "clear", videoUrl: "https://www.tiktok.com/@beto/video/2" },
+          { handle: "carla", pt: "caption", videoUrl: "https://www.tiktok.com/@carla/video/3" },
+          { handle: "dani", pt: "clear", videoUrl: "https://www.tiktok.com/@dani/video/4" },
+          { handle: "zed", videoUrl: "https://www.tiktok.com/@zed/video/5" },
+          { handle: "eva", pt: "clear", videoUrl: "https://www.tiktok.com/@eva/video/6" },
+        ];
+      },
+      async madeIn(url) {
+        const h = url.split("/@")[1]!.split("/")[0]!;
+        looked.push(h);
+        return made[h] ?? null;
+      },
+    };
+    const kept: CreatorRecord[] = [];
+    const logs: string[] = [];
+    const st = await sweepSocial({ platform: "tiktok", client, query: "q", target: 0, gapDays: 30, isKnown: () => false, enrich: async (r) => r, add: (r) => void kept.push(r) ?? null, count: () => kept.length, stopped: () => false, log: (t) => void logs.push(t), progress: () => {}, sleep: async () => {}, now: () => NOW });
+    expect(looked).toEqual(["ana", "beto", "carla", "dani", "eva"]);
+    expect(reads).toEqual(["ana", "dani", "eva"]);
+    expect(kept.map((r) => [r.handle, r.country])).toEqual([["@ana", "Brazil"], ["@dani", null], ["@eva", "Brazil"]]);
+    expect([st.kept, st.dropped]).toEqual([3, 3]);
+    expect(logs).toContain("Skipped 1 creator whose video isn't in Portuguese.");
+    expect(logs).toContain("DROP @beto: not Brazilian - their video was made in PT.");
+  });
+
+  it("without an answer from a video page keeps only clear Portuguese; stops when TikTok refuses reads in a row; other platforms aren't filtered", async () => {
+    let reads = 0;
+    let refuse = false;
+    const base = {
+      async profile(h: string): Promise<Profile> {
+        reads++;
+        if (refuse) throw new Error("TikTok HTTP 403");
+        return { platform: "tiktok", platform_id: h, name: h, handle: `@${h}`, profile_url: "", avatar_url: null, followers: 1, posts: 1, likes: null, bio: null, links: [], email: null, country: null, last_post_at: new Date(NOW).toISOString(), recent: [], private: false, precision: "exact" };
+      },
+    };
+    const many = Array.from({ length: 8 }, (_, i) => ({ handle: `u${i}`, pt: i % 2 ? ("caption" as const) : ("clear" as const), videoUrl: `https://www.tiktok.com/@u${i}/video/${i}` }));
+    const client: SocialClient = { ...base, async *discover() { yield many; }, async madeIn() { throw new Error("TikTok video HTTP 403"); } };
+    const logs: string[] = [];
+    const kept: string[] = [];
+    const ctx = { platform: "tiktok" as const, query: "q", target: 0, gapDays: 0, isKnown: () => false, enrich: async (r: CreatorRecord) => r, add: (r: CreatorRecord) => void kept.push(r.handle) ?? null, count: () => kept.length, stopped: () => false, log: (t: string) => void logs.push(t), progress: () => {}, sleep: async () => {}, now: () => NOW };
+    await sweepSocial({ ...ctx, client });
+    expect(kept).toEqual(["@u0", "@u2", "@u4", "@u6"]);
+    refuse = true;
+    reads = 0;
+    kept.length = 0;
+    await sweepSocial({ ...ctx, client });
+    expect(logs.some((l) => l.includes("refused 5 reads in a row"))).toBe(true);
+    expect(reads).toBe(2); // u0's video and profile, u1's video, u2's video and profile: the 5th refusal in a row
+    reads = 0;
+    refuse = false;
+    const ig: SocialClient = { ...base, async *discover() { yield [{ handle: "a" }, { handle: "b" }]; } };
+    const st = await sweepSocial({ ...ctx, platform: "instagram", client: ig });
+    expect([reads, st.kept]).toEqual([2, 2]);
+  });
+});
+
 describe("collector", () => {
   it("exports JSONL, one record per line, with the email and without Hub's own fields", () => {
     const d = defaultData();
