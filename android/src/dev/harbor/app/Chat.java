@@ -331,6 +331,8 @@ public class Chat extends Base implements Images.Gallery {
         super.onResume();
         if (hub == null) return;
         front = true;
+        // On screen: its notifications go (the PC hears it opened and tells its other phones and its desktop).
+        Notes.clearChat(this, hub.id, chatId);
         Update.shown(this, hub.id, chatId);
         load(!loaded);
         refreshState();

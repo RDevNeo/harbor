@@ -106,14 +106,40 @@ final class Notes {
         if (r == null || !r.has("last")) return;
         prefs(c).edit().putLong("s." + h.id + "/" + v, r.optLong("last")).apply();
         JSONArray a = r.optJSONArray("notes");
-        if (a == null || a.length() == 0 || Base.resumed > 0 || !allowed(c)) return;
-        boolean quiet = quietNow(c);
+        if (a == null || a.length() == 0) return;
+        boolean post = Base.resumed == 0 && allowed(c), quiet = quietNow(c);
+        // In order: a "seen" (the chat or person was looked at, here or on a PC) takes away what came before it, even
+        // with Hub in front; what comes after it posts again.
         for (int i = 0; i < a.length(); i++) {
             JSONObject n = a.optJSONObject(i);
             if (n == null) continue;
-            if (!n.optBoolean("phone", true) || !on(c, n.optString("kind")) || quiet) continue;
+            if ("seen".equals(n.optString("kind"))) { seen(c, h, n.optString("key")); continue; }
+            if (!post || !n.optBoolean("phone", true) || !on(c, n.optString("kind")) || quiet) continue;
             try { show(c, h, v, n); } catch (Exception ignored) { }
         }
+    }
+
+    /** A "seen" note's key: `seen:chat:<gid>` (its agent's question or a key asked for: opened or answered on a PC
+     *  or here) or `seen:person:<id>` (their messages read): its notification goes, as WhatsApp's do. */
+    static void seen(Context c, Hub h, String key) {
+        if (key.startsWith("seen:chat:")) clearChat(c, h.id, key.substring(10));
+        else if (key.startsWith("seen:person:")) clearPerson(c, h.id, key.substring(12));
+    }
+
+    /** Chat `gid`'s notifications (an agent needs you, a key asked for) are gone: it's on screen here, or it was
+     *  seen on a PC. Android drops its group's summary itself once nothing is left under it. */
+    static void clearChat(Context c, String hubId, String gid) {
+        if (hubId == null || gid == null || gid.isEmpty()) return;
+        NotificationManager nm = c.getSystemService(NotificationManager.class);
+        if (nm == null) return;
+        String tag = hubId + "|chat:" + gid, secrets = hubId + "|secret:" + gid + ":";
+        try {
+            nm.cancel(tag, 1);
+            for (android.service.notification.StatusBarNotification s : nm.getActiveNotifications()) {
+                String t = s.getTag();
+                if (t != null && t.startsWith(secrets)) nm.cancel(t, s.getId());
+            }
+        } catch (RuntimeException ignored) { }
     }
 
     private static void channels(NotificationManager nm) {

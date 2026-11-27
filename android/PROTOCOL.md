@@ -296,6 +296,7 @@ rest is the desktop's and older phones'):
 | `ci` | checks fail on one of the user's open PRs (once per head commit; `url` = the PR) | `ci:<repo>#<n>` | no |
 | `discord`, `whatsapp`, `collector`, `routine` | a tab's or app's news (a captcha, a link ended, a run finished) | `<tab>:<…>` | no |
 | `test` | Settings › Notifications › Send a test on the PC | `test` | no (the PC's popup only) |
+| `seen` | a chat a phone was told about (`input` above) was opened on a PC or a phone, or written to; a person's messages were all read (on a PC, a phone, Mark as read, a reply). Only when such a note came after the last `seen` of that key; a person's stays on its PC (not the mesh's) | `seen:chat:<gid>`, `seen:person:<person id>` | **takes away** that chat's notifications (`chat:<gid>`, `secret:<gid>:…`) or that person's conversation, also while Hub is in front; never posts anything. Older phones skip the kind |
 
 A note: `{id, at, kind, key, title, body, chat?, url?, act?, count, away, reply, from?, phone?, person?}`.
 Notes with one `key` within 90 s are one: the newer replaces the older with `count` summed (and
@@ -353,7 +354,8 @@ The app (`Notes.java`, `Alive.java`, `Listen.java`, `NoteAction.java`):
 
 The desktop shows its own notes with notify-send (click opens the chat) only while Harbor's window
 isn't in front, per Settings › Notifications (kinds, "only when I'm away", quiet hours); a key
-pops up at most every 30 s, else its notification is replaced quietly.
+pops up at most every 30 s, else its notification is replaced quietly. A chat opened (on the PC or a phone) or
+written to closes its popups there too (`CloseNotification` over D-Bus; macOS and Windows remove their own).
 
 ## Revisions
 

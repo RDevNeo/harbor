@@ -20,6 +20,8 @@ export interface TabEngineCtx {
   notify?(key: string, title: string, body: string): void;
   /** A person wrote (Persons): the phones' conversation notification (kind "person"), never a desktop popup. */
   notePerson?(p: NotePerson): void;
+  /** A person's messages were all read (here, on a phone, or by a reply): the phones' notification for them goes. */
+  seenPerson?(id: string): void;
 }
 
 export interface TabEngine {

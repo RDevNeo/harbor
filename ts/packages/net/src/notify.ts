@@ -317,12 +317,37 @@ export class Notes {
     return this.next;
   }
 
+  /** Chat `gid` was looked at (opened on a PC or a phone, or written to): when a note phones post for it (an agent
+   *  needs you, a key asked for) came after the last such, a "seen" note (`seen:chat:<gid>`) tells them to take its
+   *  notification away. Returns it, or null when there was nothing to take away. */
+  seenChat(gid: string): Note | null {
+    if (gid === "") return null;
+    const key = `seen:chat:${gid}`;
+    return this.seen(key, (n) => n.chat === gid && n.phone && (n.key === `chat:${gid}` || n.key.startsWith(`secret:${gid}:`)));
+  }
+
+  /** A person's messages were read (here, on a phone, or by a reply): the phones' conversation for them goes
+   *  (`seen:person:<id>`), when one was posted since the last such. */
+  seenPerson(id: string): Note | null {
+    if (id === "") return null;
+    return this.seen(`seen:person:${id}`, (n) => n.kind === "person" && n.person?.id === id);
+  }
+
+  private seen(key: string, posted: (n: Note) => boolean): Note | null {
+    for (let j = this.list.length - 1; j >= 0; j--) {
+      const o = this.list[j] as Note;
+      if (o.key === key) return null;
+      if (posted(o)) return this.push(newNote({ kind: "seen", key, chat: key.startsWith("seen:chat:") ? key.slice(10) : "" }));
+    }
+    return null;
+  }
+
   /** This PC's own notes newer than `since`, for the other PCs of the mesh (`from` empty; nor PCs going offline, which
    *  each PC says itself; nor a person's messages: the PC whose Persons got them tells its phones, and a Reply has to
    *  go back through that PC). */
   ownSince(since: number): [Note[], number] {
     const [all, last] = this.since(since);
-    return [all.filter((n) => n.from === "" && n.kind !== "pc" && n.kind !== "person"), last];
+    return [all.filter((n) => n.from === "" && n.kind !== "pc" && n.kind !== "person" && !n.key.startsWith("seen:person:")), last];
   }
 
   /** Notes another PC of the mesh had (`from` its name): kept for phones, never shown here. */
@@ -527,6 +552,9 @@ export interface DesktopOptions {
   localMinute?: () => number;
   /** Called when a notification was clicked and its chat waits in `takeOpen`. */
   onOpen?: () => void;
+  /** Takes a shown notification away by the id `send` printed (default: the notification server's CloseNotification,
+   *  or macOS's / Windows' own). */
+  close?: (id: number) => void;
 }
 
 /** This PC's own notifications (notify-send), shown only while Harbor's window isn't in front. */
@@ -541,6 +569,7 @@ export class Desktop {
   private readonly mono: () => number;
   private readonly minute: () => number;
   private readonly onOpen: () => void;
+  private readonly close: (id: number) => void;
   private readonly shown = new Map<string, Shown>();
   private opened: string[] = [];
   private pending = new Set<Promise<void>>();
@@ -557,6 +586,22 @@ export class Desktop {
         return d.getHours() * 60 + d.getMinutes();
       });
     this.onOpen = o.onOpen ?? (() => {});
+    this.close = o.close ?? ((id) => (osNotify.available() ? osNotify.remove(`harbor-${id}`) : osNotify.closeFreedesktop(id)));
+  }
+
+  /** Chat `gid` was looked at (here or on a phone): its popups (an agent needs you, a key asked for) go. */
+  dismissChat(gid: string): void {
+    if (gid === "") return;
+    for (const [key, s] of [...this.shown]) {
+      if (key !== `chat:${gid}` && !key.startsWith(`secret:${gid}:`)) continue;
+      this.shown.delete(key);
+      if (s.pid > 0) s.kill();
+      try {
+        this.close(s.id);
+      } catch {
+        // the notification server is gone: nothing shows
+      }
+    }
   }
 
   /** The user is at this PC: Harbor's window is in front and was used within AWAY_S. */
@@ -709,6 +754,18 @@ export class Notifier {
   /** A note for an event here: kept for phones, and shown on this desktop when the settings say. */
   post(kind: string, key: string, title: string, body: string, chat: string, reply: boolean): void {
     this.push(newNote({ kind, key, title, body, chat, reply, phone: phoneWants(kind, key) }), true);
+  }
+
+  /** Chat `gid` was looked at (opened here or on a phone, or written to): its notifications go, on phones (a
+   *  "seen" note) and on this desktop. */
+  seenChat(gid: string): void {
+    this.notes.seenChat(gid);
+    this.desktop?.dismissChat(gid);
+  }
+
+  /** A person's messages were read: the phones' conversation notification for them goes. */
+  seenPerson(id: string): void {
+    this.notes.seenPerson(id);
   }
 
   /** A person wrote (Persons got new messages from them): the phones' conversation notification, never this

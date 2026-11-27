@@ -78,6 +78,9 @@ export interface EngineHost {
   adoptMedia?(text: string, cwd: string, chatId: number): string;
   /** A finished turn worth a notification (net's notify.rs). */
   noteTurn?(chatId: number, sub: boolean, failed: boolean, said: string): void;
+  /** The chat was looked at (opened on a PC or a phone) or the user wrote to it: its notifications go (net's notify.ts
+   *  `seenChat`, phones too). */
+  seen?(chatId: number): void;
   /** The chat is on screen with the window focused. */
   visible?(chatId: number): boolean;
   /** `harbor://chat/<gid>?pc=<PC>` (net's chatlink.ts `chatLink`). */
@@ -1317,6 +1320,8 @@ export class Engine {
       return;
     }
     this.host.adopt?.(id, opts.from ?? null);
+    // Someone wrote to it (here, a phone or another PC): what it asked is answered, its notifications go.
+    this.host.seen?.(id);
     this.unsettle(id);
     this.resumeAuto(id);
     // Context another app handed the chat with its link goes with this message (to the agent only).
@@ -2120,6 +2125,7 @@ export class Engine {
 
   /** A phone or window opened the chat: its blue dot and failed mark go. True when it had either. */
   opened(id: number): boolean {
+    this.host.seen?.(id);
     const a = this.unread.delete(id);
     const b = this.failed.delete(id);
     return a || b;

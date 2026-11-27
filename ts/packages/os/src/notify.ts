@@ -1,5 +1,6 @@
 // Desktop notifications where Harbor shows them itself: macOS, from inside Harbor.app (UNUserNotificationCenter),
 // and Windows (toasts). Linux's go through notify-send (net/src/notify.ts).
+import { spawn } from "node:child_process";
 import { platform } from "./platform.ts";
 
 export type { Post } from "./darwin-notify.ts";
@@ -31,4 +32,16 @@ export function post(p: import("./darwin-notify.ts").Post): void {
 
 export function remove(id: string): void {
   native()?.remove(id);
+}
+
+/** Linux (and other freedesktop desktops): takes notification `id` (what `notify-send -p` printed) away through the
+ *  notification server's CloseNotification. Quiet when there's no session bus or no server. */
+export function closeFreedesktop(id: number): void {
+  if (platform() === "win32" || platform() === "darwin" || !Number.isInteger(id) || id <= 0) return;
+  try {
+    const c = spawn("dbus-send", ["--session", "--type=method_call", "--dest=org.freedesktop.Notifications", "/org/freedesktop/Notifications", "org.freedesktop.Notifications.CloseNotification", `uint32:${id}`], { stdio: "ignore" });
+    c.on("error", () => {});
+  } catch {
+    // no dbus-send: the notification times out by itself
+  }
 }

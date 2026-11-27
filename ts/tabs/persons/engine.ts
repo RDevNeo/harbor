@@ -86,15 +86,25 @@ export const personsEngine: TabEngine = {
       log: (...a) => ctx.log(a.map(String).join(" ")),
     });
     routes = new PersonsRoutes(service, { agent, sites, board, audio, ...(voice ? { voice } : {}), ai: new PersonAi(service.dir, async (m, p, q, b) => ctx.call(m, p, q, b)), socials: panelSocials as never, qr: async (t) => (await qrRows(t))?.rows ?? null });
+    // People the phones were told about (a notification each): once nothing of theirs is unread any more (read here
+    // or on a phone, Mark as read, a reply), the phones take it away.
+    const told = new Set<string>();
     service.onChange(() => {
       ctx.changed();
       voice?.kick();
+      for (const id of [...told]) {
+        const p = svc.person(id);
+        if (p && svc.rowInfo(p, null).unread > 0) continue;
+        told.delete(id);
+        ctx.seenPerson?.(id);
+      }
     });
     // A person wrote: Hub for Android's conversation notification (kind "person", android/PROTOCOL.md "Notifications").
     const rt = routes;
-    service.onIncoming((m) =>
-      ctx.notePerson?.({ id: m.person.id, name: personLabel(m.person), section: m.section, account: m.account, channel: m.channel, pic: rt.pictureRef(m.person) ?? "", color: colorOf(m.person.id), lines: m.lines }),
-    );
+    service.onIncoming((m) => {
+      told.add(m.person.id);
+      ctx.notePerson?.({ id: m.person.id, name: personLabel(m.person), section: m.section, account: m.account, channel: m.channel, pic: rt.pictureRef(m.person) ?? "", color: colorOf(m.person.id), lines: m.lines });
+    });
     await service.start();
   },
   async route(call: Call): Promise<Reply | null> {

@@ -53,6 +53,10 @@ export class Data {
         hub.changed?.(id);
       },
       visible: (id) => this.visible(id),
+      seen: (id) => {
+        const gid = this.chat(id)?.gid ?? "";
+        if (gid !== "") this.notifier.seenChat(gid);
+      },
       slashPrompt: (id, text, files) => this.slashPrompt(id, text, files),
       noteTurn: (id, sub, failed, said) => {
         const c = this.chat(id);

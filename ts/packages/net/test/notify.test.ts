@@ -222,6 +222,45 @@ describe("notify", () => {
     return { runs, send };
   }
 
+  test("seen: a chat looked at or a person read takes their notifications away, on phones and this desktop", async () => {
+    const { runs, send } = fakeSend();
+    const closed: number[] = [];
+    const d = new Desktop({ send, close: (id) => closed.push(id), localMinute: () => 12 * 60 });
+    const notes = new Notes({ clock: () => 1000 });
+    const notifier = new Notifier({ notes, desktop: d });
+    // nothing was posted for it: nothing to take away
+    notifier.seenChat("g");
+    expect(notes.since(0)[0].map((n) => n.kind)).toEqual([]);
+    notifier.post("input", "chat:g", "api needs you", "Which one?", "g", true);
+    runs[0]?.say("7");
+    await new Promise((r) => setTimeout(r, 0));
+    notifier.post("input", "secret:g:k1", "api asks for a key", "", "g", false);
+    runs[1]?.say("8");
+    await new Promise((r) => setTimeout(r, 0));
+    notifier.post("input", "chat:other", "other needs you", "", "other", true);
+    runs[2]?.say("9");
+    await new Promise((r) => setTimeout(r, 0));
+    notifier.seenChat("g");
+    expect(closed.sort()).toEqual([7, 8]);
+    expect(runs[0]?.killed && runs[1]?.killed).toBe(true);
+    expect(runs[2]?.killed).toBe(false);
+    const seen = notes.since(0)[0].filter((n) => n.kind === "seen");
+    expect(seen.map((n) => [n.key, n.chat])).toEqual([["seen:chat:g", "g"]]);
+    // opened again (every frame it's on screen): no second note until something new is posted for it
+    notifier.seenChat("g");
+    expect(notes.since(0)[0].filter((n) => n.kind === "seen").length).toBe(1);
+    // a person: their conversation goes once read; it stays on this PC (not the mesh's)
+    notifier.seenPerson("p1");
+    notifier.notePerson({ id: "p1", name: "Ana", section: "personal", account: "a:1", channel: "whatsapp", pic: "", color: "#000000", lines: [{ id: "m1", text: "hi", at: 1 }] });
+    notifier.seenPerson("p1");
+    notifier.seenPerson("p1");
+    expect(notes.since(0)[0].filter((n) => n.kind === "seen").map((n) => n.key)).toEqual(["seen:chat:g", "seen:person:p1"]);
+    expect(notes.ownSince(0)[0].map((n) => n.key)).not.toContain("seen:person:p1");
+    expect(notes.ownSince(0)[0].map((n) => n.key)).toContain("seen:chat:g");
+    for (const r of runs) r.end();
+    await d.idle();
+  });
+
   test("the desktop popup: settings, replacing quietly, a click opens the chat", async () => {
     const { runs, send } = fakeSend();
     let t = 0;

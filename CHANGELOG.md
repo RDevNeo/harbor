@@ -6,6 +6,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 ## [Unreleased]
 
 ### Changed
+- **A notification goes once its chat is seen, on every device, like WhatsApp.** Opening a Projects chat (on the
+  phone or the PC) or writing to it takes its "needs you" / key notifications away on the phone and its popup on the
+  PC; a person's conversation notification goes once their messages are read anywhere (the PC's Persons tab, the
+  phone, Mark as read, a reply). The PC tells its phones with a new note kind `seen` (`seen:chat:<gid>`,
+  `seen:person:<id>`) over the same long-poll, so a read on the PC clears the phone within a second, Hub open or not;
+  older phones skip it. Desktop popups close through the notification server (D-Bus `CloseNotification`; macOS and
+  Windows remove their own).
 - **Hub's tab bars count on every tab, like WhatsApp.** The phone's bottom bar now shows Persons' unread messages
   (the drawer's section counts summed) and Routine's goals still to do today beside Projects' and Collector's counts,
   in the same pill, refreshed every 5 s while Hub is in front and at once from the Persons tab. The PC's tab row gets

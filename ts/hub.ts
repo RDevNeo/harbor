@@ -1250,6 +1250,10 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     noteLimit: (id, account, waits, note) => notifier.noteLimit(eng().chat(id) ?? null, account, eng().accountLabel(account), waits, note),
     noteResumed: (id, account, text) => notifier.noteResumed(eng().chat(id) ?? null, account, eng().accountLabel(account), text, eng().limits.limitSettings().notify),
     notify: (kind, key, title, body, chat) => notifier.post(kind, key, title, body, chat ?? "", false),
+    seen: (id) => {
+      const gid = eng().chat(id)?.gid ?? "";
+      if (gid !== "") notifier.seenChat(gid);
+    },
   };
   const voicePeers: dictate.Mesh<dictate.MeshPeer & { dest: Dest }> = {
     on: () => hub.mesh.on,
@@ -1535,7 +1539,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
         const post = engine?.host.notify ?? own.notify;
         post?.(t.id, `${t.id}:${key}`, title, body);
       };
-      await t.start?.({ store, dir, env, changed: () => hub.touch(null, true), log: (line) => console.error(`hub: ${t.id}: ${line}`), call: callHere, notify, notePerson: (p) => notifier.notePerson(p) });
+      await t.start?.({ store, dir, env, changed: () => hub.touch(null, true), log: (line) => console.error(`hub: ${t.id}: ${line}`), call: callHere, notify, notePerson: (p) => notifier.notePerson(p), seenPerson: (id) => notifier.seenPerson(id) });
     } catch (e) {
       console.error(`hub: the ${t.id} tab didn't start: ${e instanceof Error ? e.message : String(e)}`);
     }
