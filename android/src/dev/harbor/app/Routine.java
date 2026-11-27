@@ -525,7 +525,7 @@ public class Routine extends Base {
             TextView t = Ui.bold(this, "  " + lastAlarm, 16, Ui.FG);
             r.addView(t, Ui.weight());
             r.addView(Ds.chip(this, "Open Clock", false, v -> {
-                try { startActivity(new Intent(AlarmClock.ACTION_SHOW_ALARMS)); } catch (Exception e) { Ui.toast(this, "No Clock app"); }
+                if (!openClock()) Ui.toast(this, "Couldn't find the Clock app. Open it from the home screen.");
             }));
             c.addView(r);
             addCard(c);
@@ -566,21 +566,74 @@ public class Routine extends Base {
         }
         Ui.dialog(this).setTitle("Wake me up at…").setItems(items, (d, i) -> {
             JSONObject o = w.optJSONObject(i);
-            Intent a = new Intent(AlarmClock.ACTION_SET_ALARM)
-                    .putExtra(AlarmClock.EXTRA_HOUR, o.optInt("hour"))
-                    .putExtra(AlarmClock.EXTRA_MINUTES, o.optInt("minute"))
-                    .putExtra(AlarmClock.EXTRA_MESSAGE, "Routine · " + o.optInt("cycles") + " cycles")
-                    .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
-                    .putExtra(AlarmClock.EXTRA_VIBRATE, true);
-            try {
-                startActivity(a);
-                lastAlarm = o.optString("time") + " · " + o.optInt("cycles") + " cycles";
-                Ui.toast(this, "Alarm set for " + o.optString("time") + " (" + o.optInt("cycles") + " cycles). Good night!");
-            } catch (Exception e) {
-                Ui.toast(this, "Could not create the alarm: " + e.getMessage());
+            String time = o.optString("time");
+            int cycles = o.optInt("cycles");
+            lastAlarm = time + " · " + cycles + " cycles";
+            if (setAlarm(o.optInt("hour"), o.optInt("minute"), "Routine · " + cycles + " cycles")) {
+                Ui.toast(this, "Alarm set for " + time + " (" + cycles + " cycles). Good night!");
+            } else {
+                setInClock(time, cycles);
             }
             draw();
         }).show();
+    }
+
+    // Shell 6's manifest has no com.android.alarm.permission.SET_ALARM, and the Clock apps
+    // (Samsung's, Google's, AOSP's) take ACTION_SET_ALARM and ACTION_SHOW_ALARMS only from apps
+    // that hold it ("Permission Denial"). Nor does it hold an exact-alarm or full-screen
+    // permission for a ringing alarm of its own. So: set the alarm when the permission is there
+    // (the next shell declares it), else open the Clock app and say which time to set.
+    private static final String SET_ALARM = "com.android.alarm.permission.SET_ALARM";
+    private static final String[] CLOCKS = {
+        "com.sec.android.app.clockpackage", "com.google.android.deskclock", "com.android.deskclock",
+        "com.oneplus.deskclock", "com.android.alarmclock", "com.coloros.alarmclock", "com.huawei.deskclock",
+        "com.miui.clock", "com.motorola.timeweatherwidget",
+    };
+
+    private boolean canSetAlarms() {
+        return checkSelfPermission(SET_ALARM) == android.content.pm.PackageManager.PERMISSION_GRANTED;
+    }
+
+    private boolean setAlarm(int hour, int minute, String label) {
+        if (!canSetAlarms()) return false;
+        try {
+            startActivity(new Intent(AlarmClock.ACTION_SET_ALARM)
+                    .putExtra(AlarmClock.EXTRA_HOUR, hour)
+                    .putExtra(AlarmClock.EXTRA_MINUTES, minute)
+                    .putExtra(AlarmClock.EXTRA_MESSAGE, label)
+                    .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+                    .putExtra(AlarmClock.EXTRA_VIBRATE, true));
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private void setInClock(String time, int cycles) {
+        Ui.dialog(this).setTitle("Set your alarm for " + time)
+                .setMessage("Hub can't add alarms on this phone until its next app update. Open Clock and add an alarm for "
+                        + time + " (" + cycles + " cycles of sleep).")
+                .setPositiveButton("Open Clock", (d, x) -> {
+                    if (!openClock()) Ui.toast(this, "Couldn't find the Clock app. Open it from the home screen and set " + time + ".");
+                })
+                .setNegativeButton("Close", null)
+                .show();
+    }
+
+    /** Opens the phone's Clock app: its alarms screen when allowed, else its launcher screen. */
+    private boolean openClock() {
+        if (canSetAlarms()) {
+            try { startActivity(new Intent(AlarmClock.ACTION_SHOW_ALARMS)); return true; } catch (Exception ignored) { }
+        }
+        for (String p : CLOCKS) {
+            try {
+                startActivity(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).setPackage(p)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                return true;
+            } catch (Exception ignored) { }
+        }
+        try { startActivity(new Intent(AlarmClock.ACTION_SHOW_ALARMS)); return true; } catch (Exception ignored) { }
+        return false;
     }
 
     // ---- Goals ----

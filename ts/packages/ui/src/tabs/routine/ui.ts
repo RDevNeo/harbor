@@ -348,7 +348,7 @@ export function createRoutineUi(): TabUi {
         const opts = wakeOptions(new Date(), st?.data.sleep.wakeBy ?? "07:00");
         const o = opts.find((x) => fmtClock(x.wakeAt) === fmtClock(at));
         lastAlarm = `${fmtClock(at)}${o ? ` · ${o.cycles} cycles` : ""}`;
-        ctx?.toast(`Wake up at ${fmtClock(at)}: the phone's Hub sets the alarm in its Clock app`);
+        ctx?.toast(`Wake up at ${fmtClock(at)}: set the alarm on your phone (Hub › Routine › Sleep)`);
       }
       render();
     });
