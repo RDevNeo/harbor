@@ -5,7 +5,6 @@
 import { Theme, Icons, Ds, Glyph, TipArea, Btn, Variant, BtnSize, Ui, Input, SearchField, Spinner, Empty, MenuItem, MenuLabel, MenuSeparator, ListRow, SectionHead, FoldBar, ListNote, Avatar, ChannelMark, StatusDot, SideSurface, SideHead, ShowSideBtn, PageBar, PanelSurface, PanelSection, DialogFrame, DialogActions, Field, FieldLabel, TextBox, MenuPanel, Toast, Chip, PillSwitch, Card, ComposeField, Scroll, ScrollThumb, PopoverFrame, CapsLabel } from "ds.slint";
 import { MdBlock, MdBlockView } from "markdown.slint";
 import { ListView } from "std-widgets.slint";
-import { ImageTile } from "composer.slint";
 
 export struct PRow {
     kind: string, // all | section | store | person | settled | empty | sr-head | sr-notice | sr-empty | sr | sr-gap
@@ -141,8 +140,10 @@ export struct PFwdRow { kind: string, id: string, name: string, path: string, on
 
 // A site request's pane (SpokPay's admin request page): a picture of the brief or a message at its drawn size, a fact
 // row of the brief (two half ones side by side), and one line of the timeline (an event or a message).
-// A picture going with the next message, shown over the composer as Projects' composer does (ImageTile).
-export struct PAttach { name: string, thumb: image }
+// A file going with the next message, as a tile over the composer (AttachTile): kind image | video | audio | pdf | file;
+// its preview (a picture, a video's still, a PDF's first page) once there, else its type's icon, tint and extension;
+// `meta` the line under its name ("MP4 · 0:42 · 12.3 MB"); `playing`: an audio file playing here.
+export struct PAttach { name: string, kind: string, thumb: image, has-thumb: bool, icon: string, tint: color, ext: string, meta: string, playing: bool }
 export struct PSrImg { image: image, w: length, h: length }
 export struct PSrFact { a-label: string, a-text: string, b-label: string, b-text: string, two: bool }
 export struct PSrItem {
@@ -217,8 +218,7 @@ export global PersonsBus {
     in property <string> reply-name; // the message being replied to: its author ("" none) and text
     in property <string> reply-text;
     in property <string> attached; // the files going with the next message (or note), one line
-    in property <[PAttach]> attach-tiles; // its pictures, as tiles over the composer
-    in property <string> attached-files; // its other files, one line (the chip)
+    in property <[PAttach]> attach-tiles; // its files, as preview tiles over the composer
     // The composer (Person Hub's): to the person or to their AI ("To: AI | Name"), each with its own draft.
     in property <bool> ai-mode;
     in property <bool> c-ai-on: true; // the person's AI is there: the switch shows
@@ -391,9 +391,9 @@ export global PersonsBus {
     callback emoji-pick(string); // an emoji into the draft at its cursor (draft-cursor / draft-anchor)
     callback emoji-first(); // Enter in the search: the first emoji found
     callback paste(); // Ctrl+V in the composer: a picture on the clipboard joins the message
-    callback clear-attached(); // drops the files that aren't pictures (each picture has its own ×)
-    callback remove-attached(int); // a picture's ×, by its place among the tiles
-    callback open-attached(int); // a picture clicked: the lightbox
+    callback remove-attached(int); // a tile's ×, by its place among the tiles
+    callback open-attached(int); // a tile clicked: the lightbox (pictures, videos), else the system's app
+    callback play-attached(int); // an audio tile's play / pause
     callback toggle-ai();
     callback set-to(string); // "ai" | "person"
     callback cancel-forward();
@@ -1956,6 +1956,142 @@ component QuoteChip inherits Rectangle {
     }
 }
 
+// A file going with the next message (PAttach): a card with its preview (a picture, a video's still with ▶, a PDF's
+// first page; an audio file's play / pause button; else its type's icon and extension on the type's tint), its name
+// and "MP4 · 0:42 · 12.3 MB", the remove button over its top-right corner. A click opens it larger: Hub's lightbox for
+// pictures and videos, the system's app for the rest.
+component AttachTile {
+    in property <PAttach> t;
+    callback remove();
+    callback open();
+    callback play();
+    height: 66px;
+    Rectangle {
+        x: 0;
+        y: 6px;
+        width: root.width - 6px;
+        height: 60px;
+        border-radius: 12px;
+        border-width: 1px;
+        border-color: area.has-hover ? Theme.gray-600 : Theme.border;
+        background: Theme.bg200;
+        area := TipArea {
+            tip: root.t.name;
+            clicked => {
+                root.open();
+            }
+        }
+        HorizontalLayout {
+            padding: 6px;
+            padding-right: 12px;
+            spacing: 10px;
+            Rectangle {
+                width: 48px;
+                height: 48px;
+                border-radius: 8px;
+                clip: true;
+                background: root.t.has-thumb ? Theme.gray-100 : root.t.tint.with-alpha(Theme.dark ? 0.22 : 0.12);
+                if root.t.has-thumb: Image {
+                    width: parent.width;
+                    height: parent.height;
+                    source: root.t.thumb;
+                    image-fit: cover;
+                }
+                if root.t.has-thumb: Rectangle {
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                }
+                if !root.t.has-thumb && root.t.kind != "audio": VerticalLayout {
+                    alignment: center;
+                    spacing: 1px;
+                    Glyph {
+                        icon: root.t.icon;
+                        size: 18px;
+                        color: root.t.tint;
+                    }
+                    if root.t.ext != "": Text {
+                        text: root.t.ext;
+                        font-size: 9px;
+                        font-weight: 700;
+                        color: root.t.tint;
+                        horizontal-alignment: center;
+                        overflow: elide;
+                    }
+                }
+                if root.t.kind == "video" && root.t.has-thumb: Rectangle {
+                    width: 22px;
+                    height: 22px;
+                    border-radius: 11px;
+                    background: #000000a0;
+                    Glyph {
+                        x: 1px;
+                        icon: Icons.play;
+                        size: 11px;
+                        color: #ffffff;
+                    }
+                }
+                if root.t.kind == "audio": Rectangle {
+                    width: 32px;
+                    height: 32px;
+                    border-radius: 16px;
+                    background: pa.has-hover ? root.t.tint.darker(0.2) : root.t.tint;
+                    Glyph {
+                        x: root.t.playing ? 0 : 1px;
+                        icon: root.t.playing ? Icons.pause : Icons.play;
+                        size: 14px;
+                        color: #ffffff;
+                    }
+                    pa := TipArea {
+                        tip: root.t.playing ? "Pause" : "Play";
+                        clicked => {
+                            root.play();
+                        }
+                    }
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                spacing: 2px;
+                Text {
+                    text: root.t.name;
+                    font-size: 12.5px;
+                    font-weight: 500;
+                    color: Theme.fg;
+                    overflow: elide;
+                }
+                Text {
+                    text: root.t.meta;
+                    font-size: 11px;
+                    color: Theme.subtle;
+                    overflow: elide;
+                }
+            }
+        }
+    }
+    Rectangle {
+        x: parent.width - 21px;
+        y: 0;
+        width: 21px;
+        height: 21px;
+        border-radius: 10.5px;
+        background: x-area.has-hover ? Theme.gray-800 : Theme.fg;
+        border-width: 1.5px;
+        border-color: Theme.dark ? Theme.bg200 : Theme.bg100;
+        Glyph {
+            icon: Icons.x;
+            size: 11px;
+            color: Theme.dark ? Theme.bg200 : Theme.bg100;
+        }
+        x-area := TipArea {
+            tip: "Remove";
+            clicked => {
+                root.remove();
+            }
+        }
+    }
+}
+
 // The composer (Person Hub's Chat.tsx): a card with who it goes to on top ("To <person>", or "Note to the AI · never
 // sent to them" in the AI's tint), then the first email's subject, the reply or the forwarded message, the files, the
 // field (or why it can't write to them), and the actions: attach (Open in Projects for the AI), the "To: AI | <person>"
@@ -2074,32 +2210,25 @@ component Composer inherits Rectangle {
                             PersonsBus.cancel-forward();
                         }
                     }
+                    // the files, as preview tiles that wrap onto more rows when the composer is narrow (the phone's)
                     if PersonsBus.attach-tiles.length > 0: Rectangle {
-                        height: 70px;
-                        clip: true;
-                        HorizontalLayout {
-                            spacing: 8px;
-                            alignment: start;
-                            for t[i] in PersonsBus.attach-tiles: ImageTile {
-                                thumb: t.thumb;
-                                name: t.name;
-                                number: 0;
-                                remove => {
-                                    PersonsBus.remove-attached(i);
-                                }
-                                open => {
-                                    PersonsBus.open-attached(i);
-                                }
+                        property <int> cols: max(1, floor((self.width + 8px) / 198px));
+                        property <length> tile-w: min(300px, (self.width + 8px) / self.cols - 8px);
+                        height: ceil(PersonsBus.attach-tiles.length / self.cols) * 72px - 6px;
+                        for t[i] in PersonsBus.attach-tiles: AttachTile {
+                            x: mod(i, parent.cols) * (parent.tile-w + 8px);
+                            y: floor(i / parent.cols) * 72px;
+                            width: parent.tile-w;
+                            t: t;
+                            remove => {
+                                PersonsBus.remove-attached(i);
                             }
-                        }
-                    }
-                    if PersonsBus.attached-files != "": QuoteChip {
-                        glyph: Icons.file;
-                        lead: "";
-                        name: PersonsBus.attached-files;
-                        close-tip: "Remove the files";
-                        close => {
-                            PersonsBus.clear-attached();
+                            open => {
+                                PersonsBus.open-attached(i);
+                            }
+                            play => {
+                                PersonsBus.play-attached(i);
+                            }
                         }
                     }
                     if !root.writes: Text {

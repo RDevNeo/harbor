@@ -4,15 +4,17 @@ import * as slint from "slint-ui";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { clipboard, images, picker } from "@harbor/media";
+import { audio as osAudio } from "@harbor/os";
 import { GLYPHS, type GlyphName } from "@harbor/net";
 import { dataDir } from "@harbor/store";
 import { basename, join } from "node:path";
 import type { TabCtx, TabUi } from "../api.ts";
 import { sameRow, syncRows } from "../../modelsync.ts";
-import { isImage } from "../../logic/images.ts";
 import { loadQr } from "../../qr.ts";
 import { releaseBlocks } from "../../markdown.ts";
 import { aiSlintParts, type PPartData } from "./aiparts.ts";
+import { attachMeta, attachType } from "./attachkind.ts";
+import { AttachPreviews } from "./attachprev.ts";
 import { customEmojiUrl, emojiCategories, emojiRows, inlineLayout, insertAt, jumboEmoji, plainEmoji, searchEmoji, type EmojiEntry } from "./emoji.ts";
 import { aiMenu, blockedNote, composerHint, CONTACT_FIELD, failedMenu, messageMenu, moveEntries, placeOfRow, quoteInto, type MenuEntry, type MoveEntry } from "./menus.ts";
 import { fwdSubtitle, pickable, pickerRows, quoteMeta, stepPick, type FwdProject } from "./fwdproject.ts";
@@ -30,6 +32,8 @@ const POSTER_AUTO = 48 << 20;
 const SR_OWNER_COLOR = "#71717a";
 
 type Cb = (...a: never[]) => unknown;
+/** An attached audio file playing here: where it was paused (s), and since when it plays (ms). */
+type TilePlay = { path: string; handle: osAudio.Playing | null; pos: number; since: number };
 interface Bus extends Record<string, unknown> {
   [k: string]: unknown;
 }
@@ -226,8 +230,11 @@ class PersonsTab {
   private sideModel = new slint.ArrayModel<Record<string, unknown>>([]);
   private listModel = new slint.ArrayModel<Record<string, unknown>>([]);
   private msgModel = new slint.ArrayModel<Record<string, unknown>>([]);
-  /** The pictures going with the next message, as tiles over the composer (PAttach). */
-  private tileModel = new slint.ArrayModel<{ name: string; thumb: Pixels }>([]);
+  /** The files going with the next message, as preview tiles over the composer (PAttach). */
+  private tileModel = new slint.ArrayModel<Record<string, unknown>>([]);
+  private previews: AttachPreviews;
+  /** An attached audio file playing here (its tile's play button): where it was paused, and since when it plays. */
+  private tilePlay: TilePlay | null = null;
   private renderQueued = false;
   private chatSeq = 0;
   /**
@@ -246,6 +253,7 @@ class PersonsTab {
   constructor(private readonly ctx: TabCtx) {
     this.bus = Reflect.get(ctx.win, "PersonsBus") as Bus;
     this.pics = new Pictures(() => this.render());
+    this.previews = new AttachPreviews(() => this.render());
     // What was typed before (the last run, a crash or an update's restart): every chat's draft and recipient.
     const kept = draftsFrom(ctx.kv?.get(DRAFTS_KEY) ?? null);
     this.drafts = kept.drafts;
@@ -342,20 +350,20 @@ class PersonsTab {
     });
     // Ctrl+V / Shift+Insert in the composer: a picture on the clipboard joins the message (the text pastes as usual)
     on("paste", () => void this.pasteImage());
-    on("clear_attached", () => {
-      this.curFiles = this.curFiles.filter((f) => isImage(f));
-      this.render();
-    });
     on("remove_attached", ((i: number) => {
-      const pic = this.curFiles.filter((f) => isImage(f))[i];
-      if (pic === undefined) return;
-      this.curFiles = this.curFiles.filter((f) => f !== pic);
+      const f = this.curFiles[i];
+      if (f === undefined) return;
+      this.curFiles = this.curFiles.filter((x, j) => j !== i || x !== f);
       this.render();
     }) as Cb);
+    // a tile clicked: the lightbox browses the pictures and videos attached; the rest opens in the system's app
     on("open_attached", ((i: number) => {
-      const pics = this.curFiles.filter((f) => isImage(f));
-      if (pics[i] !== undefined) this.ctx.openImage?.(pics[i]!, pics);
+      const f = this.curFiles[i];
+      if (f === undefined) return;
+      if (this.ctx.openImage) this.ctx.openImage(f, this.curFiles);
+      else this.ctx.openExternal(f);
     }) as Cb);
+    on("play_attached", ((i: number) => this.playAttached(i)) as Cb);
     on("set_to", ((to: string) => this.setTo(to === "ai")) as Cb);
     on("cancel_forward", () => {
       this.forwarded = null;
@@ -773,13 +781,64 @@ class PersonsTab {
     else this.files = v;
   }
 
-  /** The composer's attachments: pictures as tiles showing the picture (decoded small, once), other files in one chip. */
+  /** The composer's attachments as preview tiles: a picture, a video's still, a PDF's first page (decoded small, once),
+   *  an audio file's play button, else the type's icon; each with its name, type, length or pages, and size. */
   private paintAttached(b: Bus): void {
     const list = this.curFiles;
     b.attached = list.map((f) => basename(f)).join(", ");
-    b.attached_files = list.filter((f) => !isImage(f)).map((f) => basename(f)).join(", ");
-    const tiles = list.filter((f) => isImage(f)).map((p) => ({ name: basename(p), thumb: this.pics.get(p, 256) ?? NO_PX }));
-    syncRows(this.tileModel, tiles, (x, y) => x.name === y.name && x.thumb === y.thumb);
+    this.previews.keepOnly([...this.files, ...this.aiFiles, ...this.srFiles]);
+    if (this.tilePlay && !list.includes(this.tilePlay.path)) this.stopTileAudio();
+    const tiles = list.map((p) => {
+      const t = attachType(p);
+      const info = this.previews.get(p);
+      const px = info.still ? this.pics.get(info.still, 192) : null;
+      return {
+        name: basename(p),
+        kind: t.kind,
+        thumb: px ?? NO_PX,
+        has_thumb: !!px,
+        icon: GLYPHS[t.icon],
+        tint: t.tint,
+        ext: t.ext.length > 5 ? t.ext.slice(0, 4) : t.ext,
+        meta: attachMeta(t, info),
+        playing: this.tilePlay?.path === p && !!this.tilePlay.handle,
+      };
+    });
+    syncRows(this.tileModel, tiles, (x, y) => x.thumb === y.thumb && sameRow({ ...x, thumb: 0 }, { ...y, thumb: 0 }));
+  }
+
+  /** An audio tile's play / pause: played here, from where it was paused (one at a time: a bubble's audio pauses). */
+  private playAttached(i: number): void {
+    const f = this.curFiles[i];
+    if (f === undefined) return;
+    const cur = this.tilePlay;
+    if (cur?.path === f && cur.handle) {
+      cur.handle.stop();
+      cur.handle = null;
+      cur.pos += (Date.now() - cur.since) / 1000;
+      this.render();
+      return;
+    }
+    if (this.audioSt?.playing) void this.audioCall("pause");
+    cur?.handle?.stop();
+    const st: TilePlay = { path: f, handle: null, pos: cur?.path === f ? cur.pos : 0, since: Date.now() };
+    st.handle = osAudio.play(f, st.pos, 1, (error) => {
+      if (this.tilePlay !== st) return;
+      this.tilePlay = null;
+      if (error) this.setToast(`Couldn't play it: ${error}`);
+      this.render();
+    });
+    if (!st.handle) {
+      this.setToast("No audio player on this PC (install ffmpeg, or mpv)");
+      return;
+    }
+    this.tilePlay = st;
+    this.render();
+  }
+
+  private stopTileAudio(): void {
+    this.tilePlay?.handle?.stop();
+    this.tilePlay = null;
   }
 
   private attachPaths = new Map<string, string | null>();
@@ -1528,6 +1587,10 @@ class PersonsTab {
   private async audioToggle(id: string): Promise<void> {
     const a = this.audioOf(id);
     if (!a) return;
+    if (this.tilePlay?.handle) {
+      this.stopTileAudio();
+      this.render();
+    }
     const st = this.audioSt;
     if (st?.key === a.key && st.playing) return this.audioCall("pause");
     // the same one paused: on from there; another one: from the start (the engine stops the one playing)
@@ -2781,6 +2844,7 @@ class PersonsTab {
 
   stop(): void {
     this.alive = false;
+    this.stopTileAudio();
   }
 }
 
