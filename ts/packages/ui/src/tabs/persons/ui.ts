@@ -14,11 +14,12 @@ import { loadQr } from "../../qr.ts";
 import { releaseBlocks } from "../../markdown.ts";
 import { aiSlintParts, type PPartData } from "./aiparts.ts";
 import { attachMeta, attachType } from "./attachkind.ts";
+import { messageLinks } from "./links.ts";
 import { AttachPreviews } from "./attachprev.ts";
 import { customEmojiUrl, emojiCategories, emojiRows, inlineLayout, insertAt, jumboEmoji, plainEmoji, searchEmoji, type EmojiEntry } from "./emoji.ts";
 import { aiMenu, blockedNote, composerHint, CONTACT_FIELD, failedMenu, messageMenu, moveEntries, placeOfRow, quoteInto, type MenuEntry, type MoveEntry } from "./menus.ts";
 import { fwdSubtitle, pickable, pickerRows, quoteMeta, stepPick, type FwdProject } from "./fwdproject.ts";
-import { aiFolds, audioRow, blankRow, byRecent, chatRows, discordLinks, friendButton, hhmm, shortAgo, listRows, matches, moveSection, nextSpeed, personSections, sectionOrder, servesSection, sideRows, srImageSize, srTimeline, type AiJson, type AudioRow, type AudioStateJson, type ChatJson, type ImgTile, type MsgRow, type PersonJson, type Row, type SrFileJson, type SrPaneJson, type StateJson, type UiState } from "./view.ts";
+import { aiFolds, audioRow, blankRow, byRecent, CHAT_PAGE, chatRows, shownFor, discordLinks, friendButton, hhmm, shortAgo, listRows, matches, moveSection, nextSpeed, personSections, sectionOrder, servesSection, sideRows, srImageSize, srTimeline, type AiJson, type AudioRow, type AudioStateJson, type ChatJson, type ImgTile, type MsgRow, type PersonJson, type Row, type SrFileJson, type SrPaneJson, type StateJson, type UiState } from "./view.ts";
 
 interface Pixels {
   width: number;
@@ -237,6 +238,8 @@ class PersonsTab {
   private tilePlay: TilePlay | null = null;
   private renderQueued = false;
   private chatSeq = 0;
+  /** The open chat's newest rows drawn (CHAT_PAGE at first; more as it scrolls up, or to show a row jumped to). */
+  private shownRows = CHAT_PAGE;
   /**
    * The chat (chatKey) the user marked unread while it was open: it isn't marked seen again until it's opened again
    * (another chat, then this one). Without it the open chat's reload, which follows its row going unread, read it at once.
@@ -565,7 +568,7 @@ class PersonsTab {
       const c = this.chat;
       if (this.chatKey() !== k) return;
       if (!c || c.messages.length === 0 || c.messages.some((m) => m.id === pl.id) || !c.more) break;
-      await this.older();
+      await this.fetchOlder();
     }
     if (this.chat && this.chatKey() === k) setTimeout(() => this.chat && this.chatKey() === k && this.placeOpened(this.chat), 30);
   }
@@ -741,7 +744,9 @@ class PersonsTab {
     b.c_friend = friendButton(c.relation ?? null, this.friending === pp.id);
     b.c_gmail = c.account?.kind === "gmail";
     b.c_connected = !!c.account?.connected;
-    b.c_more = c.more;
+    const all = chatRows(c);
+    // more above: older rows not drawn yet, or older pages the engine has
+    b.c_more = c.more || all.length > this.shownRows;
     b.c_loading = false;
     b.c_empty = c.account ? "No messages yet." : "No channel to talk to them here: connect Discord, Gmail or WhatsApp in the section's +, and give them that identifier (Edit).";
     // the composer (Person Hub's): who it goes to, the reply / forward, the subject of a first email, the files
@@ -763,7 +768,7 @@ class PersonsTab {
     b.ai_mode = this.aiMode;
     b.panel = this.panelOpen;
     this.countArrived(c);
-    const rows = aiFolds(chatRows(c).slice(-400), this.aiFold);
+    const rows = aiFolds(all.slice(-this.shownRows), this.aiFold);
     this.foldedNow = new Set(rows.filter((r) => r.folded).map((r) => r.id));
     this.keepParts(rows);
     const js = rows.map((r) => this.msgJs(r));
@@ -1010,6 +1015,7 @@ class PersonsTab {
       return { image: px ?? NO_PX, x: t.x, y: t.y, w: t.w, h: t.h, video: false, dur: "", loading: false };
     });
     const em = this.emojiJs(r);
+    const ln = this.linksOf(r.kind === "ai" ? "" : em.text);
     return {
       kind: r.kind,
       id: r.id,
@@ -1055,7 +1061,30 @@ class PersonsTab {
       a_transcript: r.audio?.transcript ?? "",
       a_transcribing: !!r.audio && (r.audio.transcribing || this.transcribing.has(r.audio.key)),
       a_hidden: !!r.audio && !this.shownTranscripts.has(r.audio.key),
+      links: ln.links,
+      styled: ln.styled,
     };
+  }
+
+  /** Messages' web addresses as their bubbles draw them, by text (a redraw doesn't parse them again). */
+  private links = new Map<string, { links: ReturnType<typeof messageLinks>["links"]; styled: slint.StyledText }>();
+  private static readonly NO_LINKS = { links: [], styled: slint.StyledText.fromPlainText("") };
+
+  private linksOf(text: string): { links: ReturnType<typeof messageLinks>["links"]; styled: slint.StyledText } {
+    if (!/https?:\/\//i.test(text)) return PersonsTab.NO_LINKS;
+    const had = this.links.get(text);
+    if (had) return had;
+    const m = messageLinks(text);
+    let styled: slint.StyledText;
+    try {
+      styled = slint.StyledText.fromMarkdown(m.markdown);
+    } catch {
+      styled = slint.StyledText.fromPlainText(text);
+    }
+    const out = m.links.length > 0 ? { links: m.links, styled } : PersonsTab.NO_LINKS;
+    if (this.links.size >= 500) this.links.clear();
+    this.links.set(text, out);
+    return out;
   }
 
   /** A video tile's poster here (null until it is): asked for once, which downloads the video into the engine's
@@ -1179,6 +1208,7 @@ class PersonsTab {
     this.files = [];
     this.aiFiles = [];
     const k = this.chatKey();
+    this.shownRows = CHAT_PAGE;
     this.bus.c_open_rev = (Number(this.bus.c_open_rev) || 0) + 1;
     this.bus.c_arrived = 0;
     this.arrivedOf = { key: k, ids: null };
@@ -1222,7 +1252,8 @@ class PersonsTab {
     };
     let target: { id: string; off: number } | null = null;
     if (c.unreadFrom && (!was || was.end)) target = { id: `u${c.unreadFrom}`, off: 24 };
-    else if (was && !was.end && has(was.id)) target = { id: was.id, off: was.off };
+    else if (was && !was.end && chatRows(c).some((r) => r.id === was.id)) target = { id: was.id, off: was.off };
+    if (target && c === this.chat) this.reveal(target.id);
     if (!target || !has(target.id)) return;
     const t = target;
     const put = (): void => {
@@ -1287,7 +1318,19 @@ class PersonsTab {
     this.bus.p_socials_loading = false;
   }
 
+  /** Scrolled to the top: older rows already read are drawn (a page more), else the engine's next older page. */
   private async older(): Promise<void> {
+    const c = this.chat;
+    if (c && chatRows(c).length > this.shownRows) {
+      this.shownRows += CHAT_PAGE;
+      this.render();
+      return;
+    }
+    await this.fetchOlder();
+  }
+
+  /** The engine's next older page of the open chat, drawn as it comes (the rows drawn grow by its rows). */
+  private async fetchOlder(): Promise<void> {
     const open = this.ui.open;
     const c = this.chat;
     const first = c?.messages[0];
@@ -1297,8 +1340,30 @@ class PersonsTab {
     this.bus.c_loading = false;
     if (!r || r.status !== 200 || this.chat !== c) return;
     const page = r.body as { messages: ChatJson["messages"]; more: boolean };
+    const before = chatRows(c).length;
     c.messages = [...page.messages, ...c.messages.filter((m) => !page.messages.some((x) => x.id === m.id))];
     c.more = page.more && page.messages.length > 0;
+    this.shownRows = Math.max(this.shownRows, before) + Math.max(0, chatRows(c).length - before);
+    this.render();
+  }
+
+  /** The row `id` (a reply's original, where the chat was left) is drawn, with a few above it: now, so it can be
+   *  scrolled to on the next frames. */
+  private reveal(id: string): void {
+    const c = this.chat;
+    if (!c) return;
+    const need = shownFor(chatRows(c), id, this.shownRows);
+    if (need === this.shownRows) return;
+    this.shownRows = need;
+    this.draw();
+  }
+
+  /** The tab left the screen: a chat scrolled far up goes back to its newest rows, so coming back (Slint builds the
+   *  whole page again) is quick. */
+  private trim(): void {
+    if (this.shownRows <= CHAT_PAGE) return;
+    this.keepPlace();
+    this.shownRows = CHAT_PAGE;
     this.render();
   }
 
@@ -1320,13 +1385,17 @@ class PersonsTab {
       const c = this.chat;
       if (!c?.more || this.chatKey() !== key) break;
       const n = c.messages.length;
-      await this.older();
+      await this.fetchOlder();
       loaded = true;
       // a live refresh may swap the chat meanwhile: go on with the new one; a page that brought nothing ends it
       if (this.chat === c && c.messages.length === n) break;
     }
     if (this.chatKey() !== key) return;
     if (!has()) return this.setToast("Original message not available");
+    // read before but not drawn yet (older than the rows drawn): drawn now, jumped to on the next frames
+    const drawn = this.shownRows;
+    this.reveal(target);
+    if (this.shownRows !== drawn) loaded = true;
     // rows of a page just read exist once Slint has laid them out: jump on its next frames
     if (loaded) setTimeout(() => this.chatKey() === key && this.flash(target), 80);
     else this.flash(target);
@@ -2878,6 +2947,7 @@ export const personsUi: TabUi = {
   },
   shown: (on) => {
     if (on) void tab?.["refresh"]();
+    else tab?.["trim"]();
   },
   snapshot: () => tab?.snapshot() ?? null,
   restore: (s) => tab?.restore(s),

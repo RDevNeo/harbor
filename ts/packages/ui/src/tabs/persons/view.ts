@@ -563,6 +563,22 @@ export function unreadLabel(c: ChatJson): string {
   return n <= 1 ? "1 unread message" : `${n} unread messages`;
 }
 
+/**
+ * The rows an open chat draws at first, and how many more each scroll to its top adds. Slint builds every drawn row
+ * (a bubble, its text measured twice), and opening a chat cost more than linearly in them: 400 rows froze the window
+ * for seconds, on every chat switch and every return to the tab (rig/personsbench.ts). Older ones come in as it
+ * scrolls up, from memory first, then from the engine.
+ */
+export const CHAT_PAGE = 40;
+
+/** How many of the chat's newest rows to draw so the row `id` is drawn, a few rows below the top (`shown` if it already
+ *  is, or when there's no such row). */
+export function shownFor(rows: readonly { id: string }[], id: string, shown: number): number {
+  const i = rows.findIndex((r) => r.id === id);
+  if (i < 0) return shown;
+  return Math.max(shown, Math.min(rows.length, rows.length - i + 8));
+}
+
 export function chatRows(c: ChatJson, now = Date.now()): MsgRow[] {
   type Item = { at: string; row: MsgRow };
   const items: Item[] = [];

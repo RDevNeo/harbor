@@ -389,7 +389,9 @@ export component Selectable inherits Rectangle {
 }
 
 // A table cell: its text and its links, not selectable; it wraps when its column is narrowed.
-component Linked inherits Rectangle {
+// Text drawn with its links: they open on a click (a right click: Open / Copy link). Also a person chat's bubble with
+// web addresses in it (persons.slint).
+export component Linked inherits Rectangle {
     in property <MdCell> cell;
     in property <length> size: 16px;
     in property <color> ink: Theme.fg;

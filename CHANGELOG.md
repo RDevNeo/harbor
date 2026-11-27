@@ -84,6 +84,18 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
   "All people" row (the head's magnifier opens it) and the connection chips under the section heads. Phone only.
 
 ### Fixed
+- **Persons (PC): typing, switching chats and opening the tab are quick again with long conversations; links in
+  messages open.** Every key typed in a chat's composer measured all of its up to 400 bubbles again (the composer's
+  height fed the messages' layout), a chat switch built all 400 rows (each with a hidden site-request card), and
+  opening the tab, which Slint builds anew each time, did that with per-row handlers that cost quadratically in the
+  rows (seconds of a frozen window). The messages now follow the composer's height only when it really changes, a
+  row builds only the card or bubble it is, and a chat draws its newest 40 rows, 40 more each time it's scrolled to
+  the top (from memory, then older pages from the service); a reply's original or the place a chat was left is drawn
+  when jumped to, and a chat scrolled far up goes back to its newest rows when the tab is left. `rig/personsbench.ts`
+  measures it. Web addresses (http/https, the whole address with its query, without the sentence's trailing
+  punctuation) in Discord, Gmail and WhatsApp messages, either direction, are links now: drawn in the link colour,
+  wrapped inside the bubble, opened in the browser on a click (right click: Open / Copy link), as in Projects'
+  answers. The phone already linked them and draws its own list.
 - **Phone: opening a chat shows it at its place at once, without the scroll flickering for a moment.** A Persons
   chat's pictures and videos were 0 px high until they loaded (their tile's size, from the picture's ratio, was
   replaced by wrap_content), so the chat jumped several times as each came; they now keep their size from the start.

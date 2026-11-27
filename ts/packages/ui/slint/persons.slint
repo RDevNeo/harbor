@@ -3,7 +3,7 @@
 // packages/ui/src/tabs/persons/ui.ts through PersonsBus; data from the engine's v1/persons routes.
 // Built on Hub's design system (ds.slint, DESIGN.md): rows, heads, panels, dialogs and menus are the shared ones.
 import { Theme, Icons, Ds, Glyph, TipArea, Btn, Variant, BtnSize, Ui, Input, SearchField, Spinner, Empty, MenuItem, MenuLabel, MenuSeparator, ListRow, SectionHead, FoldBar, ListNote, Avatar, ChannelMark, StatusDot, SideSurface, SideHead, ShowSideBtn, PageBar, PanelSurface, PanelSection, DialogFrame, DialogActions, Field, FieldLabel, TextBox, MenuPanel, Toast, Chip, PillSwitch, Card, ComposeField, Scroll, ScrollThumb, PopoverFrame, CapsLabel } from "ds.slint";
-import { MdBlock, MdBlockView } from "markdown.slint";
+import { MdBlock, MdBlockView, MdLink, Linked } from "markdown.slint";
 import { ListView } from "std-widgets.slint";
 
 export struct PRow {
@@ -124,6 +124,9 @@ export struct PMsg {
     a-transcript: string,
     a-transcribing: bool,
     a-hidden: bool, // its transcript folded away (show / hide)
+    // The web addresses in `text` (links.ts): their words, clickable over it, and the text drawn with them as links.
+    links: [MdLink],
+    styled: styled-text,
 }
 
 // Someone to link with (the Link with… picker), or someone linked (the panel's LINKED).
@@ -1535,13 +1538,23 @@ component Bubble {
                 Rectangle {
                     visible: !root.ai && root.m.text != "" && !root.jumbo;
                     height: self.visible ? body.preferred-height : 0px;
+                    // the text's size; drawn by Linked instead when it has addresses (in the link colour, clickable)
                     body := Text {
                         width: parent.width;
                         height: parent.height;
                         text: root.ai ? "" : root.m.text;
                         font-size: Ds.t-body;
-                        color: Theme.fg;
+                        color: root.m.links.length > 0 ? transparent : Theme.fg;
                         wrap: word-wrap;
+                    }
+                    if root.m.links.length > 0 && !root.ai: Linked {
+                        width: parent.width;
+                        height: parent.height;
+                        cell: { text: root.m.styled, plain: root.m.text, links: root.m.links, weight: 1 };
+                        size: Ds.t-body;
+                        link(url) => {
+                            PersonsBus.open-url(url);
+                        }
                     }
                     if root.m.emojis.length > 0 && !root.ai: EmojiLayer {
                         width: parent.width;
@@ -1813,7 +1826,7 @@ component MsgRow {
     // how far the tint reaches past the row on each side (the chat's padding: it spans the whole column)
     in property <length> bleed: 0px;
     property <bool> flash: m.id != "" && m.id == PersonsBus.flash-id;
-    height: m.kind == "day" || m.kind == "unread" ? 30px : m.kind == "subject" ? 30px : m.kind == "proposal" || m.kind == "proposing" ? card.preferred-height : bubble.preferred-height;
+    height: m.kind == "day" || m.kind == "unread" ? 30px : m.kind == "subject" ? 30px : body.preferred-height;
     // WhatsApp's flash when a reply's quote jumps here: tinted at once, fading out over ~1.1 s once it's cleared
     tint := Rectangle {
         x: -root.bleed;
@@ -1881,19 +1894,20 @@ component MsgRow {
             overflow: elide;
         }
     }
-    card := SiteCard {
+    // Only the one this row is (a chat opens with up to 400 rows: a hidden card in each doubled its cost).
+    body := VerticalLayout {
         width: root.width;
-        visible: root.m.kind == "proposal" || root.m.kind == "proposing";
-        m: root.m;
-        max-w: root.max-w;
-    }
-    bubble := Bubble {
-        width: root.width;
-        visible: root.m.kind == "msg" || root.m.kind == "ai" || root.m.kind == "out";
-        m: root.m;
-        max-w: root.max-w;
-        menu(x, y) => {
-            PersonsBus.msg-menu(root.m.id, x, y);
+        height: root.height;
+        if root.m.kind == "proposal" || root.m.kind == "proposing": SiteCard {
+            m: root.m;
+            max-w: root.max-w;
+        }
+        if root.m.kind == "msg" || root.m.kind == "ai" || root.m.kind == "out": Bubble {
+            m: root.m;
+            max-w: root.max-w;
+            menu(x, y) => {
+                PersonsBus.msg-menu(root.m.id, x, y);
+            }
         }
     }
 }
@@ -2452,9 +2466,20 @@ component ChatPane inherits Rectangle {
             PersonsBus.a-pos = PersonsBus.a-dur > 0 ? min(PersonsBus.a-dur, PersonsBus.a-pos + 0.1 * PersonsBus.a-speed) : PersonsBus.a-pos + 0.1 * PersonsBus.a-speed;
         }
     }
-    VerticalLayout {
+    // The composer's height, copied when it really changes. Every key typed makes its height binding dirty (the text
+    // is measured again), and Slint passes that on to everything that reads it, equal value or not: the messages
+    // below it (their whole layout, every bubble's wrapped text) were measured again on each key, ~300 ms a key with
+    // 400 messages (rig/personsbench.ts). Through this property a key costs a frame (~25 ms there).
+    property <length> composer-h;
+    init => {
+        root.composer-h = composer.height;
+    }
+    // Placed by hand, not in one VerticalLayout, for the same reason: a layout reads the composer's height directly.
+    Rectangle {
         // header: the shared page bar (46px, as Projects' chat header)
-        PageBar {
+        bar := PageBar {
+            y: 0;
+            width: root.width;
             side-hidden: PersonsBus.side-hidden;
             show-side => {
                 PersonsBus.side-hidden = false;
@@ -2560,7 +2585,9 @@ component ChatPane inherits Rectangle {
         }
         // messages
         Rectangle {
-            vertical-stretch: 1;
+            y: bar.height;
+            width: root.width;
+            height: max(0px, root.height - bar.height - root.composer-h);
             sv := Scroll {
                 property <length> max-w: min(640px, self.visible-width * 0.78);
                 property <length> last-h;
@@ -2610,7 +2637,9 @@ component ChatPane inherits Rectangle {
                     for m[i] in PersonsBus.msgs: MsgRow {
                         property <int> jump: m.id == PersonsBus.jump-id ? PersonsBus.jump-rev : 0;
                         property <int> place: m.id == PersonsBus.place-id ? PersonsBus.place-rev : 0;
-                        // the row across the view's top: the anchor kept while rows above it change, the pill's day
+                        // the row across the view's top: the anchor kept while rows above it change, the pill's day.
+                        // A handler on each row costs while a chat's rows are built (quadratic in them: ~9 s for 400,
+                        // rig/personsbench.ts), so PersonsTab draws its newest rows only and more as it scrolls up.
                         property <bool> at-top: self.y + sv.content-y <= 0px && self.y + self.height + sv.content-y > 0px;
                         m: m;
                         max-w: sv.max-w;
@@ -2643,9 +2672,12 @@ component ChatPane inherits Rectangle {
                                 root.top-day = m.kind == "day" ? "" : m.day;
                             }
                         }
-                        // rows above the one at the top changed (an older page, pictures coming in): it stays put
-                        changed y => {
-                            if m.id == root.top-id {
+                        // rows above the one at the top changed (an older page, pictures coming in): it stays put.
+                        // Watched on that row alone (every row's y moves while a chat is built); it becoming the top
+                        // row (top-y set to its y) moves nothing.
+                        property <length> anchor-y: m.id == root.top-id ? self.y : -1px;
+                        changed anchor-y => {
+                            if m.id == root.top-id && self.y != root.top-y {
                                 if !root.at-bottom && !root.gliding {
                                     sv.content-y = max(min(0px, sv.visible-height - sv.content-height), min(0px, PersonsBus.c-top-off - self.y));
                                 }
@@ -2713,7 +2745,13 @@ component ChatPane inherits Rectangle {
                 }
             }
         }
-        Composer { }
+        composer := Composer {
+            y: root.height - self.height;
+            width: root.width;
+            changed height => {
+                root.composer-h = self.height;
+            }
+        }
     }
     changed width => {
         root.at-bottom = true;
