@@ -1,17 +1,12 @@
 package dev.harbor.app;
 
 import android.app.Activity;
-import android.app.Notification;
-import android.app.NotificationChannel;
-import android.app.NotificationManager;
-import android.app.PendingIntent;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
-import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
@@ -36,7 +31,8 @@ import java.util.Set;
  *  the clipboard, images that open in the photo app, files for Downloads. Each waits on the PC
  *  that sent it (GET /v1/inbox) until it's picked up here, which happens while the app is open:
  *  from every PC of every pairing every 30 s, and at once when the events long-poll says
- *  something waits. */
+ *  something waits. A file that arrives is told in a toast while Hub is open, never in a
+ *  notification (the files are in Pictures/Hub or Download/Hub). */
 final class Inbox {
     private static final long SWEEP = 30_000;
     private static final Object lock = new Object();
@@ -174,11 +170,9 @@ final class Inbox {
                     Activity a = current;
                     if (a != null) try { a.startActivity(view(uri, mime)); } catch (Exception ignored) { }
                 });
-                notify(c, name, "From " + from + ", in Pictures/Hub", uri, mime);
                 break;
             default:
                 Ui.main.post(() -> Ui.toast(c, name + " from " + from + " saved to Download/Hub"));
-                notify(c, name, "From " + from + ", in Download/Hub. Tap to open it.", uri, mime);
         }
     }
 
@@ -232,24 +226,6 @@ final class Inbox {
 
     /** A notification that opens the file (when the user allows Harbor's notifications; asked
      *  once, the first time something arrives). */
-    private static void notify(Context c, String title, String text, Uri u, String mime) {
-        NotificationManager nm = c.getSystemService(NotificationManager.class);
-        if (nm == null) return;
-        if (Build.VERSION.SDK_INT >= 33 && c.checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
-            Activity a = current;
-            if (a != null && !c.getSharedPreferences("inbox", 0).getBoolean("asked", false)) {
-                c.getSharedPreferences("inbox", 0).edit().putBoolean("asked", true).apply();
-                Ui.main.post(() -> a.requestPermissions(new String[] { "android.permission.POST_NOTIFICATIONS" }, 41));
-            }
-            return;
-        }
-        nm.createNotificationChannel(new NotificationChannel("received", "Sent from your PCs", NotificationManager.IMPORTANCE_DEFAULT));
-        int id = u.hashCode();
-        PendingIntent pi = PendingIntent.getActivity(c, id, view(u, mime), PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-        nm.notify(id, new Notification.Builder(c, "received").setSmallIcon(Ui.statIcon(c))
-                .setContentTitle(title).setContentText(text).setContentIntent(pi).setAutoCancel(true).build());
-    }
-
     static String mime(String name, boolean image) {
         int dot = name.lastIndexOf('.');
         String m = dot < 0 ? null : MimeTypeMap.getSingleton().getMimeTypeFromExtension(name.substring(dot + 1).toLowerCase(Locale.ROOT));

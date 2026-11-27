@@ -5,6 +5,22 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 
 ## [Unreleased]
 
+### Changed
+- **Hub for Android posts only what needs you, and people's messages like WhatsApp.** The phone now rings for four
+  kinds only: an agent needs you (Reply, Continue), a usage limit hit (not a reset), a PC that went offline (not back
+  online), and **a new message from someone in Persons** (Discord, Gmail, WhatsApp, Instagram): one conversation
+  notification per person (MessagingStyle, their picture or a letter avatar, a conversation shortcut on Android 11+)
+  stacking their unread lines, with **Reply** (sent through Persons, the way the tab sends; unlock required on 12+) and
+  **Mark as read**; a tap opens their chat in the phone's Persons tab. Not for the user's own messages, history,
+  syncs, or messages already read in the app; nothing while Hub is in front. The PC makes a new note kind `person`
+  when Persons gets a live incoming message, and marks the news a phone shouldn't ring for with `"phone": false`
+  (android/PROTOCOL.md "Notifications"). Gone from the phone: a chat finished, sub-agents, CI, Discord, WhatsApp,
+  Collector, tests, Reply's "Sent" status (the notification just goes; a failure shows a toast and comes back with
+  why), files received (a toast) and app updates (Settings › Update); their channels are deleted from Android's
+  settings. The background connection's notification is as small as Android allows (minimum importance, one line,
+  no status bar icon, hidden on the lock screen). The desktop's notifications are unchanged; macOS and Windows
+  share this PC side (they have no phone-specific UI).
+
 ### Fixed
 - **Persons: emoji in chats.** Discord's custom emoji (`<:CatSou:1296…>`, animated `<a:…>`) showed as raw text; they
   now show as their pictures inside the text (on the phone too; an animated one shows its first frame on the PC), and

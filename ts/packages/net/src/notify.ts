@@ -53,10 +53,76 @@ export interface Note {
   act: string;
   /** The PC it happened on (name), for notes from another PC of the mesh. */
   from: string;
+  /** Hub for Android posts it (android/PROTOCOL.md "Notifications"). False for the news a phone doesn't ring for
+   *  inside a kind it does: a usage limit reset, a PC back online, a delivery, providers updated, a usage warning. */
+  phone: boolean;
+  /** kind "person": who wrote and their new messages (a Persons conversation on the phone). */
+  person: NotePerson | null;
+}
+
+/** One message of a person, as the phone's conversation notification stacks it. */
+export interface PersonLine {
+  /** The message's id on its platform (the phone drops a line it already has). */
+  id: string;
+  text: string;
+  /** Unix seconds. */
+  at: number;
+}
+
+/** A person's new messages (kind "person"): what the phone's MessagingStyle notification, Reply and Mark as read need. */
+export interface NotePerson {
+  /** The person's id in Persons (`v1/persons/chat/<id>/…`). */
+  id: string;
+  name: string;
+  /** Their section ("stores", "spokpay", …) and the chat's key (`<connection id>:<peer>`): the API's `section` and `account`. */
+  section: string;
+  account: string;
+  /** "discord", "gmail", "whatsapp", "instagram". */
+  channel: string;
+  /** Their picture on the PC (`/v1/persons/img/person/<id>?v=…`), "" when there is none (a letter avatar then). */
+  pic: string;
+  /** The letter avatar's colour, "#rrggbb". */
+  color: string;
+  /** The new messages, oldest first. */
+  lines: PersonLine[];
 }
 
 export function newNote(n: Partial<Note> = {}): Note {
-  return { id: 0, at: 0, kind: "", key: "", title: "", body: "", chat: "", count: 0, away: false, reply: false, url: "", act: "", from: "", ...n };
+  return { id: 0, at: 0, kind: "", key: "", title: "", body: "", chat: "", count: 0, away: false, reply: false, url: "", act: "", from: "", phone: true, person: null, ...n };
+}
+
+/** Whether a note posted by kind and key rings on the phone: a limit only when one is hit (`limit:<account>`, not a
+ *  `warn:` warning), a PC note only when a PC went offline (`pc:<id>`, not a delivery or providers updated). */
+export function phoneWants(kind: string, key: string): boolean {
+  if (kind === "limit") return key.startsWith("limit:");
+  if (kind === "pc") return key.startsWith("pc:");
+  return true;
+}
+
+function personJson(p: NotePerson): Json {
+  return {
+    id: p.id,
+    name: p.name,
+    section: p.section,
+    account: p.account,
+    channel: p.channel,
+    pic: p.pic,
+    color: p.color,
+    lines: p.lines.map((l) => ({ id: l.id, text: l.text, at: l.at })),
+  };
+}
+
+function parsePerson(v: unknown): NotePerson | null {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
+  const o = v as Record<string, unknown>;
+  const lines = Array.isArray(o.lines)
+    ? o.lines.flatMap((x): PersonLine[] => {
+        if (typeof x !== "object" || x === null) return [];
+        const l = x as Record<string, unknown>;
+        return [{ id: text(l.id), text: text(l.text), at: typeof l.at === "number" && Number.isInteger(l.at) ? l.at : 0 }];
+      })
+    : [];
+  return { id: text(o.id), name: text(o.name), section: text(o.section), account: text(o.account), channel: text(o.channel), pic: text(o.pic), color: text(o.color), lines };
 }
 
 /** The note as it goes on the wire (a json! value, so keys sort in `wire`); empty chat/url/act/from are left out. */
@@ -69,6 +135,8 @@ export function noteJson(n: Note): Json {
   if (n.url !== "") o.url = n.url;
   if (n.act !== "") o.act = n.act;
   if (n.from !== "") o.from = n.from;
+  if (!n.phone) o.phone = false;
+  if (n.person !== null) o.person = personJson(n.person);
   return o;
 }
 
@@ -98,6 +166,8 @@ export function parseNote(v: unknown): Note | null {
     url: text(o.url),
     act: text(o.act),
     from: text(o.from),
+    phone: o.phone !== false,
+    person: parsePerson(o.person),
   };
 }
 
@@ -247,10 +317,12 @@ export class Notes {
     return this.next;
   }
 
-  /** This PC's own notes newer than `since`, for the other PCs of the mesh (`from` empty; nor PCs going offline, which each PC says itself). */
+  /** This PC's own notes newer than `since`, for the other PCs of the mesh (`from` empty; nor PCs going offline, which
+   *  each PC says itself; nor a person's messages: the PC whose Persons got them tells its phones, and a Reply has to
+   *  go back through that PC). */
   ownSince(since: number): [Note[], number] {
     const [all, last] = this.since(since);
-    return [all.filter((n) => n.from === "" && n.kind !== "pc"), last];
+    return [all.filter((n) => n.from === "" && n.kind !== "pc" && n.kind !== "person"), last];
   }
 
   /** Notes another PC of the mesh had (`from` its name): kept for phones, never shown here. */
@@ -634,7 +706,17 @@ export class Notifier {
 
   /** A note for an event here: kept for phones, and shown on this desktop when the settings say. */
   post(kind: string, key: string, title: string, body: string, chat: string, reply: boolean): void {
-    this.push(newNote({ kind, key, title, body, chat, reply }), true);
+    this.push(newNote({ kind, key, title, body, chat, reply, phone: phoneWants(kind, key) }), true);
+  }
+
+  /** A person wrote (Persons got new messages from them): the phones' conversation notification, never this
+   *  desktop's (the Persons tab has its own unread marks). Keyed per message, so the 90 s merge never drops a line. */
+  notePerson(p: NotePerson): void {
+    const lines = p.lines.slice(-10).map((l) => ({ ...l, text: [...l.text].slice(0, 500).join("") }));
+    const first = lines[0];
+    const last = lines[lines.length - 1];
+    if (first === undefined || last === undefined || p.id === "") return;
+    this.push(newNote({ kind: "person", key: `person:${p.id}:${first.id}`, title: p.name, body: last.text, person: { ...p, lines } }), false);
   }
 
   /** A turn ended: the lead (needs you when it asks something, failed, or finished), or a sub-agent. Copies of another PC's chats are that PC's to notify. */
@@ -673,7 +755,7 @@ export class Notifier {
   /** The limit reset and the chat continues (`desk`: the desktop shows it only with "Notify me when work resumes"). */
   noteResumed(c: { gid: string; title: string } | null, account: string, accountName: string, text: string, desk: boolean): void {
     if (!c) return;
-    this.push(newNote({ kind: "limit", key: `limit:${account}`, title: `${accountName}: usage limit reset`, body: `${c.title} · ${text}`, chat: c.gid }), desk);
+    this.push(newNote({ kind: "limit", key: `limit:${account}`, title: `${accountName}: usage limit reset`, body: `${c.title} · ${text}`, chat: c.gid, phone: false }), desk);
   }
 
   /** PCs of the mesh that went offline (or came back): their transitions only, not the start of Harbor or the mesh being turned off. */
@@ -685,7 +767,7 @@ export class Notifier {
       if (was === true && !p.online && meshOn) {
         this.post("pc", `pc:${p.id}`, `${name} went offline`, "Hub there doesn't answer any more.", "", false);
       } else if (was === false && p.online && meshOn && this.went.includes(p.id)) {
-        this.post("pc", `pc:${p.id}`, `${name} is back online`, "", "", false);
+        this.push(newNote({ kind: "pc", key: `pc:${p.id}`, title: `${name} is back online`, phone: false }), true);
       }
       if (p.online) this.went = this.went.filter((x) => x !== p.id);
       else if (was === true && meshOn) this.went.push(p.id);

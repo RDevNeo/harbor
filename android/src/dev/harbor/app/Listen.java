@@ -15,7 +15,8 @@ import android.os.SystemClock;
 /** Instant notifications (always on since 0.147, no setting): a low-priority
  *  foreground service that keeps one ping waiting at the PC (POST /v1/alive with wait_ms, up to
  *  4 minutes), so notifications arrive within seconds even with the app closed. Android shows
- *  a silent, minimised notification while it runs. The cost: one open connection and a wake
+ *  a notification while it runs: channel "bg" (Background connection) at IMPORTANCE_MIN, one
+ *  line "Connected to your PCs", no status bar icon, silent, folded, not on the lock screen. The cost: one open connection and a wake
  *  every few minutes, a little battery, and Doze may still pause it on some phones (exempt
  *  Harbor from battery optimisation for that). Should it not run, notifications come with the
  *  15-minute pings and the burst after leaving the app (Alive). Its second thread holds the
@@ -43,12 +44,27 @@ public class Listen extends Service {
         if (Ui.app == null) Ui.app = getApplicationContext();
         // It keeps Harbor's process up in the background: the local API for other apps with it.
         LocalApi.start(this);
+        // Android needs a notification while a foreground service runs: as little of one as it
+        // allows. Its own channel at the lowest importance (no status bar icon, no sound, no peek,
+        // folded at the bottom of the shade under "Silent", hidden on the lock screen), one short line.
+        // The channel is new (bg) so an old "listen" one the user may have raised doesn't count.
         NotificationManager nm = getSystemService(NotificationManager.class);
-        nm.createNotificationChannel(new NotificationChannel("listen", "Instant notifications (running)", NotificationManager.IMPORTANCE_MIN));
+        NotificationChannel ch = new NotificationChannel("bg", "Background connection", NotificationManager.IMPORTANCE_MIN);
+        ch.setShowBadge(false);
+        ch.setSound(null, null);
+        ch.enableVibration(false);
+        ch.enableLights(false);
+        ch.setLockscreenVisibility(Notification.VISIBILITY_SECRET);
+        nm.createNotificationChannel(ch);
+        Notes.setUp(this);
         PendingIntent pi = PendingIntent.getActivity(this, 7, new Intent(this, Hubs.class), PendingIntent.FLAG_IMMUTABLE);
-        Notification n = new Notification.Builder(this, "listen").setSmallIcon(Ui.statIcon(this))
-                .setContentTitle("Listening for your PCs").setContentText("So notifications arrive within seconds.")
-                .setContentIntent(pi).setOngoing(true).build();
+        Notification.Builder nb = new Notification.Builder(this, "bg").setSmallIcon(Ui.statIcon(this))
+                .setContentTitle("Connected to your PCs")
+                .setCategory(Notification.CATEGORY_SERVICE).setVisibility(Notification.VISIBILITY_SECRET)
+                .setShowWhen(false).setLocalOnly(true).setOnlyAlertOnce(true)
+                .setContentIntent(pi).setOngoing(true);
+        if (Build.VERSION.SDK_INT >= 31) nb.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_DEFERRED);
+        Notification n = nb.build();
         // Android may refuse it when it restarts the service by itself (START_STICKY, after Harbor's
         // process ended for new app code: Shell.restart) without the app in front: no crash then,
         // the next time Harbor opens starts it (Base) and the 15-minute pings carry on (Alive).

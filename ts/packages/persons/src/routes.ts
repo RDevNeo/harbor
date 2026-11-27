@@ -230,7 +230,8 @@ export class PersonsRoutes {
     return null;
   }
 
-  private pictureRef(p: Person): string | null {
+  /** Their picture's route for the phone (`/v1/persons/img/person/<id>?v=<mtime>`), null when they have none. */
+  pictureRef(p: Person): string | null {
     const f = this.picture(p);
     if (!f) return null;
     let v = 0;

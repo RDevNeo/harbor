@@ -69,6 +69,8 @@ abstract class Base extends Activity {
             requestPermissions(new String[] { "android.permission.POST_NOTIFICATIONS" }, 42);
         }
         if (paired) Listen.apply(this);
+        // This version's notification channels; earlier versions' dead ones leave Android's settings.
+        Notes.setUp(this);
         // Other apps' chats through this phone (LocalApi), while Harbor's process runs.
         LocalApi.start(this);
     }

@@ -278,27 +278,43 @@ phone **Harbor open** while its app calls (within 75 s), **online** while its la
 ### Notifications
 
 From 0.40 (optional: older hubs ignore `since` and answer without `notes`). The hub keeps a
-short list of notes (a day, 200 at most; `src/notify.rs`) for what matters:
+short list of notes (a day, 200 at most; `ts/packages/net/src/notify.ts`) for what matters. The
+**Phone** column says what Hub for Android posts (since 2026-11-26 only four kinds ring there; the
+rest is the desktop's and older phones'):
 
-| `kind` | when | key |
-|---|---|---|
-| `input` | a lead chat's turn ends with a question, or a chat waits for you after a usage limit (`act: "continue"`) | `chat:<gid>` |
-| `input` | an agent asks for a key, to use one or to write one to a .env file (answered on the PC, never on the phone) | `secret:<gid>:<ask id>` |
-| `done` | a lead chat's turn ends (once its sub-agents are done), or stops with an error | `chat:<gid>` |
-| `agent` | a sub-agent's turn ends (apps show it only when asked) | `chat:<gid>` |
-| `ci` | checks fail on one of the user's open PRs (once per head commit; `url` = the PR) | `ci:<repo>#<n>` |
-| `limit` | an account hits its usage limit or cap, or a limit resets and work continues | `limit:<account>` |
-| `pc` | another PC of the mesh stops answering, or answers again | `pc:<id>` |
-| `discord` | the Discord app: a join waits on a captcha a person must solve (opens the phone's captcha screen for that PC), or something else about it (opens Settings › Apps › Discord) | `discord-captcha`, else `discord:<…>` |
-| `test` | Settings › Notifications › Send a test on the PC | `test` |
+| `kind` | when | key | Phone |
+|---|---|---|---|
+| `input` | a lead chat's turn ends with a question, or a chat waits for you after a usage limit (`act: "continue"`) | `chat:<gid>` | **yes**: channel "An agent needs you" (high); Open, Reply, Continue |
+| `input` | an agent asks for a key, to use one or to write one to a .env file (answered on the PC, never on the phone) | `secret:<gid>:<ask id>` | **yes** (Open) |
+| `limit` | an account hits its usage limit or the user's cap | `limit:<account>` | **yes**: "Usage limit hit" |
+| `limit` | a limit resets and work continues (`"phone": false`), a usage warning | `limit:<account>`, `warn:<account>` | no |
+| `pc` | another PC of the mesh stops answering | `pc:<id>` | **yes**: "My PC went offline" |
+| `pc` | that PC answers again, a file delivered, providers updated (`"phone": false`) | `pc:<id>`, `deliver:<name>`, `providers:<id>` | no |
+| `person` | someone in the Persons tab writes (Discord, Gmail, WhatsApp, Instagram: a live incoming message, not the user's own, not history, not one already read in the app; `person` below) | `person:<person id>:<first message id>` | **yes**: "Messages from people" (high), a conversation |
+| `done` | a lead chat's turn ends (once its sub-agents are done), or stops with an error | `chat:<gid>` | no |
+| `agent` | a sub-agent's turn ends (apps show it only when asked) | `chat:<gid>` | no |
+| `ci` | checks fail on one of the user's open PRs (once per head commit; `url` = the PR) | `ci:<repo>#<n>` | no |
+| `discord`, `whatsapp`, `collector`, `routine` | a tab's or app's news (a captcha, a link ended, a run finished) | `<tab>:<…>` | no |
+| `test` | Settings › Notifications › Send a test on the PC | `test` | no (the PC's popup only) |
 
-A note: `{id, at, kind, key, title, body, chat?, url?, act?, count, away, reply, from?}`.
+A note: `{id, at, kind, key, title, body, chat?, url?, act?, count, away, reply, from?, phone?, person?}`.
 Notes with one `key` within 90 s are one: the newer replaces the older with `count` summed (and
 an `input` stays `input`), so the phone keeps **one Android notification per key** and updates
 it. `away`: the user wasn't at that PC (its window not in front, or unused for 2 minutes), for
 "only when I'm away from the PC". `reply`: the chat takes a reply. `from`: the PC of the mesh it
 happened on (each PC fetches the others' own notes, `GET /mesh/v1/notes?since=`, every 15 s, so
-asking one PC is enough; `pc` notes stay local).
+asking one PC is enough; `pc` and `person` notes stay local: a person's Reply has to go back
+through the PC whose Persons got the message). `phone`: present (and `false`) only on news a
+phone doesn't post even though its kind rings (the desktop still shows it as before).
+
+`person` (kind `person` only): `{id, name, section, account, channel, pic, color, lines: [{id, text, at}]}`:
+the person's id in Persons, their name, the section and chat key the Persons API takes
+(`section`, `account`: `POST /v1/persons/chat/{id}/send|read`), the channel (`discord`, `gmail`,
+`whatsapp`, `instagram`), their picture's path on the PC (`/v1/persons/img/person/{id}?v=…`, ""
+for none) and the letter avatar's colour, and the new messages of that event, oldest first (each
+at most 500 characters; an attachment reads as its preview, "🎤 Voice message", "🖼 Image"; an
+email as "Subject: text"). The key is per message burst, so the 90 s merge never drops a line;
+the phone stacks them per person. `body` is the newest line (older phones show that).
 
 Phones take them with the background ping (`POST /v1/alive`, [above](#background-pings-online-with-the-app-closed)):
 add `"since": <last id taken from that PC>` (0: none yet: the answer has no notes, only `last`, so
@@ -308,16 +324,32 @@ start time in ms, so a restarted hub's ids are higher; a `since` from the future
 note.
 
 The app (`Notes.java`, `Alive.java`, `Listen.java`, `NoteAction.java`):
-- a minimised foreground service (`Listen`, always on since 0.147) keeps a 240 s long-poll open
-  (seconds instead of minutes, a silent ongoing notification, a little battery); the 15-minute
-  ping job takes notes too, and when the service isn't running, for 8 minutes after the user
-  leaves the app a one-off job long-polls (`wait_ms` 60000), when an answer is most likely;
-- shows nothing while Harbor is in front; filters by the phone's own choices (kinds, quiet
-  hours), not by `away` (the phone gets notes also while the user is at that PC, since 0.147),
-  Android channels per kind;
-- actions: tap opens the chat (or the PR's `url`), **Reply** (RemoteInput) sends
-  `POST /v1/chats/{gid}/send {"text"}` (Android unlocks the phone first, Android 12+), **Continue** sends `POST /v1/chats/{gid}/continue`. Harbor runs agents
-  without permission prompts, so there is no approve/deny.
+- a foreground service (`Listen`, always on since 0.147) keeps a 240 s long-poll open (seconds
+  instead of minutes, a little battery). Android requires a notification for it: channel `bg`
+  ("Background connection") at IMPORTANCE_MIN, one line "Connected to your PCs": no status bar
+  icon, silent, folded at the bottom of the shade, hidden on the lock screen. The 15-minute ping
+  job takes notes too, and when the service isn't running, for 8 minutes after the user leaves
+  the app a one-off job long-polls (`wait_ms` 60000), when an answer is most likely;
+- posts only `input`, `limit`, `pc` and `person` notes without `"phone": false`; nothing while
+  Hub is in front; filters by the phone's own choices (Settings › Notifications: those four
+  kinds, quiet hours), not by `away`. Channels: `n.input`, `n.limit`, `n.pcoff`, `n.person`, plus
+  Routine's `ride` ("Recording a ride") and `bg`. Channels of earlier versions (`n.done`,
+  `n.agent`, `n.ci`, `n.discord`, `n.whatsapp`, `n.collector`, `n.test`, `n.pc`, `received`,
+  `update`, `listen`) are deleted at start, so they leave Android's settings. Files a PC sends
+  (Inbox) and app updates (Update) post no notification any more: a toast, and Settings › Update;
+- `input`: tap opens the chat (or `url`), **Reply** (RemoteInput) sends
+  `POST /v1/chats/{gid}/send {"text"}` (Android unlocks the phone first, Android 12+),
+  **Continue** sends `POST /v1/chats/{gid}/continue`. Done: the notification goes. Failed: a
+  toast says why and the notification comes back quietly with the reason on top. Harbor runs
+  agents without permission prompts, so there is no approve/deny;
+- `person`: one conversation notification per person (`Notification.MessagingStyle`, their
+  picture from `pic` or a letter avatar on `color`, a long-lived conversation shortcut on Android
+  11+), stacking their unread lines (12 at most; a line two PCs both sent counts once).
+  **Reply** (RemoteInput, unlock required on 12+) sends `POST /v1/persons/chat/{id}/send
+  {"text", "section", "account"}`, the path the Persons tab sends on; **Mark as read** sends
+  `POST /v1/persons/chat/{id}/read {"section", "account"}`. Tap opens their conversation in the
+  phone's Persons tab. A reply sent, Mark as read, opening their chat or swiping it away clears
+  the stacked lines; a failed reply comes back with why.
 
 The desktop shows its own notes with notify-send (click opens the chat) only while Harbor's window
 isn't in front, per Settings › Notifications (kinds, "only when I'm away", quiet hours); a key
@@ -2179,11 +2211,11 @@ The phone always updates automatically (since 0.147 there is no setting; before,
 newer app (GitHub, as above) and install it only while none of Harbor's
 screens is in front and the screen is off or locked: Android always ends an app's process when
 it replaces it. The next start opens the chat the user had (drafts are kept). A version that
-didn't go in by itself is never tried again in the background: one notification per version
-offers it ("Harbor X is ready: tap to install", which installs it in front), and Settings shows Android's whole reason (`INSTALL_FAILED_…`, with the status).
+didn't go in by itself is never tried again in the background: the app offers it once per version
+(Settings › Update and the sidebar; Hub for Android posts no notification for it since 2026-11-26), a tap installs it in front, and Settings shows Android's whole reason (`INSTALL_FAILED_…`, with the status).
 When the phone's verifier refused it (Google Play Protect wants to ask "Scan app?" for a build
 it hasn't seen, which it can't with nobody there: `INSTALL_FAILED_VERIFICATION_FAILURE`), later
-versions skip the background and go straight to the notification, until a version installs: the
+versions skip the background and go straight to the offer, until a version installs: the
 next one then tries the background once more (from 0.157; before, Settings' row asked to try again).
 Nothing on the wire changed for this (0.55.1).
 
