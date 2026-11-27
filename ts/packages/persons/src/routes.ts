@@ -1,8 +1,11 @@
 // `v1/persons/…`: the Persons tab's API (API.md). The Slint window calls it in-process and Hub for Android over the
 // phone API, so both see and change the same state. JSON only (pictures and files as base64).
 import type { AgentDiscord } from "./agent/index.ts";
-import { statSync } from "node:fs";
-import { chatKey, KIND_LABEL, isSection, normWhatsApp, personSections, pickChat, SECTIONS, serves, validPeer, type ChatRef } from "./model/accounts.ts";
+import { readFileSync, statSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { paths } from "@harbor/os";
+import { chatKey, KIND_LABEL, isSection, SECTION_LABEL, normWhatsApp, personSections, pickChat, SECTIONS, serves, validPeer, type ChatRef } from "./model/accounts.ts";
 import { ContactConflict, isContactKind } from "./model/personal.ts";
 import { aiPartsJson } from "./aiparts.ts";
 import { attachmentKind } from "./model/conversation.ts";
@@ -15,7 +18,8 @@ import type { AppData, ChannelKind, Message, OutgoingFile, Person, SectionId, St
 import { Avatars, pictureUrls, storeImageFile, whatsappNumber } from "./avatars.ts";
 import { normalizeSocials } from "./socials.ts";
 import type { ConnView, PersonsService, RowInfo } from "./service.ts";
-import { forwardableFiles, forwardedNote, splitForwarded } from "./forward.ts";
+import { forwardableFiles, forwardedNote, projectChatTitle, projectNote, splitForwarded } from "./forward.ts";
+import { defaultProject, projectChoices } from "./projects.ts";
 import type { SiteRequests } from "./siterequests.ts";
 import type { SiteRequestBoard } from "./srboard.ts";
 import { initialsOf, siteRequestPageUrl } from "./srlist.ts";
@@ -123,7 +127,9 @@ export class PersonsRoutes {
         if (m === "POST" && rest[2] === "retry") return this.retry(rest[1], obj(c.body));
         if (m === "POST" && rest[2] === "ai") return await this.ai(rest[1], obj(c.body));
         if (m === "POST" && rest[2] === "site-request") return this.siteRequest(rest[1], obj(c.body));
+        if (m === "POST" && rest[2] === "to-project") return await this.toProject(rest[1], obj(c.body));
       }
+      if (m === "GET" && rest[0] === "projects" && rest.length === 1) return await this.projects();
       if (m === "POST" && rest[0] === "site-requests" && rest.length === 2) return await this.siteRequestsRoute(rest[1]!, obj(c.body));
       if (rest[0] === "site-request" && rest[1]) return await this.srPane(m, decodeURIComponent(rest[1]), rest[2] ?? "", obj(c.body));
       if (rest[0] === "proposal" && rest[1]) return await this.proposal(m, decodeURIComponent(rest[1]), rest[2] ?? "", obj(c.body));
@@ -432,6 +438,8 @@ export class PersonsRoutes {
         await board.move(ref, str(b.to) ?? "");
       } else if (m === "POST" && act === "ai") {
         return await this.srAi(ref, b);
+      } else if (m === "POST" && act === "to-project") {
+        return await this.srToProject(ref, b);
       } else if (m === "GET" && act === "ai") {
         // the request's AI turns alone (no SpokPay read): the pane asks again while the AI works
         const r = normalizeRef(ref);
@@ -822,6 +830,79 @@ export class PersonsRoutes {
     };
     const aiChat = await this.extra.ai.ask(p, section, text, msgs, conn?.kind ?? null, this.s.data!, transcriptOf);
     return ok({ ok: true, chat: aiChat });
+  }
+
+  // ---------- Forward to Projects ----------
+
+  /** The project Forward to Projects used last (fwd-project.json), picked first next time. */
+  private lastProject(): string | null {
+    try {
+      const v = JSON.parse(readFileSync(join(this.s.dir, "fwd-project.json"), "utf8")) as { last?: unknown };
+      return typeof v.last === "string" ? v.last : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** `GET projects`: Hub's projects for Forward to Projects' picker, `{ projects, selected }` (projects.ts). */
+  private async projects(): Promise<Reply> {
+    const ai = this.extra.ai;
+    if (!ai?.hubState) return err(503, "Hub's projects aren't reachable from here");
+    const list = projectChoices(await ai.hubState(), paths.home());
+    return ok(json({ projects: list, selected: defaultProject(list, this.lastProject()) }));
+  }
+
+  /** A new chat in the project, the prompt then the message (projectNote); remembered as the project used last. */
+  private async startInProject(b: Record<string, unknown>, note: (prompt: string) => string): Promise<Reply> {
+    const ai = this.extra.ai;
+    if (!ai?.startIn) return err(503, "Hub isn't reachable from here");
+    const project = str(b.project);
+    const prompt = (str(b.prompt) ?? "").trim();
+    if (!project) return err(400, "Pick a project");
+    if (!prompt) return err(400, "Write a prompt");
+    const chat = await ai.startIn(project, projectChatTitle(prompt) || "Forwarded message", note(prompt));
+    try {
+      await writeFile(join(this.s.dir, "fwd-project.json"), JSON.stringify({ last: project }));
+    } catch {
+      // remembering it is a nicety
+    }
+    return ok({ ok: true, chat });
+  }
+
+  /** `POST chat/{person}/to-project { section, account?, messageId, prompt, project }`: a person chat's message. */
+  private async toProject(personId: string, b: Record<string, unknown>): Promise<Reply> {
+    const p = this.s.person(decodeURIComponent(personId));
+    if (!p) return err(404, "no such person");
+    const section = sectionOf(str(b.section)) ?? "stores";
+    const { choices } = this.chatConn(p, section, str(b.account));
+    const hit = this.findMessage(choices, str(b.messageId));
+    if (!hit) return err(404, "That message isn't in this chat any more");
+    const m = hit.m;
+    // its images and PDFs fetched to this PC (the agent reads them there), its voice transcripts, as Forward to AI
+    const files: string[] = [];
+    for (const f of forwardableFiles(m)) {
+      const path = await this.s.fetchAttachment(f.url, f.name, hit.chat.conn.id).catch(() => null);
+      if (path) files.push(path);
+    }
+    const said = (m.attachments ?? []).map((_, i) => this.extra.audio?.meta(audioKey(hit.chat.conn.id, m.id, i))?.transcript).filter((t): t is string => !!t);
+    const me = hit.chat.conn.state.me?.globalName || hit.chat.conn.state.me?.username;
+    const from = m.fromMe ? `Me${me ? ` (${me})` : ""}, to ${personLabel(p)}` : personLabel(p);
+    const where = `${SECTION_LABEL[section] ?? section} · ${KIND_LABEL[hit.chat.conn.kind] ?? hit.chat.conn.kind}`;
+    return this.startInProject(b, (prompt) => projectNote({ prompt, message: m, from, section: where, files, transcripts: said }));
+  }
+
+  /** `POST site-request/{ref}/to-project { messageId, prompt, project }`: a site request's message. */
+  private async srToProject(ref: string, b: Record<string, unknown>): Promise<Reply> {
+    const board = this.extra.board;
+    if (!board) return err(404, "SpokPay isn't in this engine");
+    const r = normalizeRef(ref);
+    if (!r) return err(400, "Not a site request ref (SR-…)");
+    const m = board.message(r, str(b.messageId) ?? "");
+    if (!m) return err(404, "That message isn't in this request any more");
+    const store = board.slugOf(r) ?? "";
+    const from = m.side === "spokpay" ? `SpokPay (${m.authorName || "SpokPay"})` : `${m.authorName || store || "the store"}${store ? ` (${store})` : ""}`;
+    const message = { content: m.text, timestamp: new Date(m.createdAt).toISOString(), attachments: m.attachments.filter((a) => a.url).map((a) => ({ name: a.name || "file", url: a.url!, ...(a.contentType ? { type: a.contentType } : {}) })) };
+    return this.startInProject(b, (prompt) => projectNote({ prompt, message, from, section: `SpokPay › site request ${r} (${siteRequestPageUrl(r)})` }));
   }
 
   // ---------- SpokPay site requests ----------
@@ -1219,6 +1300,10 @@ export interface AiPort {
   noteSr?(ref: string, chat: string, text: string): void;
   /** A site request's own turns with the Person AI (its notes and their answers; queued ones too), in time order. */
   srItems?(ref: string, current: string | null): Promise<{ id: string; role: "user" | "assistant"; text: string; at: string; streaming?: boolean; queued?: boolean }[]>;
+  /** Hub's `/v1/state` body (projects, chats): Forward to Projects' picker. */
+  hubState?(): Promise<unknown>;
+  /** Forward to Projects: a new chat in project `project` (Hub's id), titled `title`, `text` its first message. */
+  startIn?(project: string, title: string, text: string): Promise<string>;
 }
 
 export { validPeer };

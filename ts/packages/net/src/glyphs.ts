@@ -119,6 +119,8 @@ export const GLYPHS = {
   FORWARD: "\u{e229}",
   FILE_PLUS: "\u{e0c9}",
   MAIL_WARNING: "\u{e367}",
+  FOLDER_INPUT: "\u{e334}",
+  CHEVRONS_UP_DOWN: "\u{e211}",
   FLAME: "\u{e0d2}",
   VIDEO: "\u{e1a5}",
   MAIL: "\u{e10f}",

@@ -2,7 +2,7 @@
 // everyone, a person's chat (Discord, Gmail, WhatsApp) with the Person AI's bubbles, and the person panel. Driven by
 // packages/ui/src/tabs/persons/ui.ts through PersonsBus; data from the engine's v1/persons routes.
 // Built on Hub's design system (ds.slint, DESIGN.md): rows, heads, panels, dialogs and menus are the shared ones.
-import { Theme, Icons, Ds, Glyph, TipArea, Btn, Variant, BtnSize, Ui, Input, SearchField, Spinner, Empty, MenuItem, MenuLabel, MenuSeparator, ListRow, SectionHead, FoldBar, ListNote, Avatar, ChannelMark, StatusDot, SideSurface, SideHead, ShowSideBtn, PageBar, PanelSurface, PanelSection, DialogFrame, DialogActions, Field, FieldLabel, TextBox, MenuPanel, Toast, Chip, PillSwitch, Card, ComposeField, Scroll, ScrollThumb, PopoverFrame } from "ds.slint";
+import { Theme, Icons, Ds, Glyph, TipArea, Btn, Variant, BtnSize, Ui, Input, SearchField, Spinner, Empty, MenuItem, MenuLabel, MenuSeparator, ListRow, SectionHead, FoldBar, ListNote, Avatar, ChannelMark, StatusDot, SideSurface, SideHead, ShowSideBtn, PageBar, PanelSurface, PanelSection, DialogFrame, DialogActions, Field, FieldLabel, TextBox, MenuPanel, Toast, Chip, PillSwitch, Card, ComposeField, Scroll, ScrollThumb, PopoverFrame, CapsLabel } from "ds.slint";
 import { MdBlock, MdBlockView } from "markdown.slint";
 import { ListView } from "std-widgets.slint";
 import { ImageTile } from "composer.slint";
@@ -129,6 +129,8 @@ export struct PUpload { title: string, meta: string, url: string, thumb: image, 
 export struct PSocial { platform: string, handle: string, url: string, uploads: [PUpload], note: string }
 
 export struct PChip { id: string, label: string, on: bool, color: color }
+/** Forward to Projects' picker: a group's heading ("head"), a project ("item") or "empty"; `hi` = the keyboard's row. */
+export struct PFwdRow { kind: string, id: string, name: string, path: string, on: bool, dot: bool, hi: bool }
 
 // A site request's pane (SpokPay's admin request page): a picture of the brief or a message at its drawn size, a fact
 // row of the brief (two half ones side by side), and one line of the timeline (an event or a message).
@@ -267,6 +269,24 @@ export global PersonsBus {
     in property <[PChip]> f-colors;
     in property <image> qr;
     in property <bool> has-qr;
+    // Forward to Projects (dialog "fwd-project"): the message's quote, the prompt, the project and its picker (opened from
+    // the project field, whose place in the window it keeps in fp-x/-y/-w/-h)
+    in property <string> fp-author;
+    in property <string> fp-meta;
+    in property <string> fp-text;
+    in-out property <string> fp-prompt;
+    in property <bool> fp-can-send;
+    in property <string> fp-name;
+    in property <string> fp-path;
+    in-out property <bool> fp-open;
+    in-out property <string> fp-query;
+    in property <[PFwdRow]> fp-rows;
+    in property <length> fp-list-h: 200px;
+    in property <int> fp-focus-rev;
+    in-out property <length> fp-x;
+    in-out property <length> fp-y;
+    in-out property <length> fp-w;
+    in-out property <length> fp-h;
     // the toast line at the bottom
     in property <string> toast;
     in property <string> toast-action;
@@ -366,6 +386,11 @@ export global PersonsBus {
     callback menu-close();
     callback dialog-ok();
     callback dialog-cancel();
+    callback fp-edited(string); // the prompt changed (Send needs one)
+    callback fp-toggle(); // the project field: the picker opens or closes
+    callback fp-search(string); // the picker's search
+    callback fp-pick(string); // a project picked
+    callback fp-key(string); // up | down | enter | escape in the picker's search
     callback chip(string);
     callback color(string);
     callback add-person();
@@ -3227,10 +3252,313 @@ component Choices inherits HorizontalLayout {
     }
 }
 
+/** Forward to Projects: the forwarded message as a quote (author · time · section, its words), a blue bar on its left. */
+component FwdQuote inherits Rectangle {
+    border-radius: Ds.radius-md;
+    background: Theme.fg.with-alpha(0.06);
+    clip: true;
+    height: min(140px, fq-col.preferred-height);
+    Rectangle {
+        x: 0;
+        width: 2px;
+        background: Theme.blue-700;
+    }
+    fq-col := VerticalLayout {
+        padding: 8px;
+        padding-left: 12px;
+        spacing: 3px;
+        HorizontalLayout {
+            Text {
+                text: PersonsBus.fp-author;
+                font-size: Ds.t-xs;
+                font-weight: 500;
+                color: Theme.fg;
+            }
+            Text {
+                text: PersonsBus.fp-meta;
+                font-size: Ds.t-xs;
+                color: Theme.subtle;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+        }
+        Text {
+            text: PersonsBus.fp-text;
+            font-size: Ds.t-sm;
+            color: Theme.fg;
+            wrap: word-wrap;
+        }
+    }
+}
+
+/** Forward to Projects' prompt: a few lines, focused when the dialog opens; Ctrl+Enter sends, Esc closes the dialog. */
+component FwdPrompt {
+    in property <string> hint;
+    height: max(84px, fp-field.preferred-height + 18px);
+    init => {
+        fp-field.focus();
+    }
+    // the picker closed: the prompt has the keys again
+    property <int> fp-rev: PersonsBus.fp-focus-rev;
+    changed fp-rev => {
+        fp-field.focus();
+    }
+    FocusScope {
+        capture-key-pressed(e) => {
+            if e.text == Key.Return && (e.modifiers.control || e.modifiers.meta) {
+                PersonsBus.dialog-ok();
+                return accept;
+            }
+            if e.text == Key.Escape {
+                PersonsBus.dialog-cancel();
+                return accept;
+            }
+            return reject;
+        }
+        Rectangle {
+            border-radius: Ds.radius-md;
+            border-width: 1px;
+            border-color: fp-field.has-focus ? Theme.gray-1000 : Theme.border;
+            background: Theme.bg100;
+        }
+        if fp-field.text == "": Text {
+            x: 10px;
+            y: 9px;
+            width: parent.width - 20px;
+            text: root.hint;
+            font-size: Ds.t-sm;
+            color: Theme.gray-800;
+            wrap: word-wrap;
+        }
+        fp-field := TextInput {
+            x: 10px;
+            y: 9px;
+            width: parent.width - 20px;
+            text <=> PersonsBus.fp-prompt;
+            font-size: Ds.t-sm;
+            color: Theme.fg;
+            wrap: word-wrap;
+            single-line: false;
+            selection-background-color: Theme.dark ? Theme.blue-500 : Theme.blue-400;
+            selection-foreground-color: Theme.fg;
+            edited => {
+                PersonsBus.fp-edited(self.text);
+            }
+        }
+    }
+}
+
+/** Forward to Projects' project: its name, its path (right, muted) and the up/down chevrons; a click opens the picker. */
+component FwdTarget inherits Rectangle {
+    height: 32px;
+    border-radius: Ds.radius-md;
+    border-width: 1px;
+    border-color: PersonsBus.fp-open ? Theme.fg : Theme.border;
+    background: ft-touch.has-hover && !PersonsBus.fp-open ? Theme.gray-100 : transparent;
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 8px;
+        Glyph {
+            width: 14px;
+            icon: Icons.folder;
+            size: 14px;
+            color: Theme.subtle;
+        }
+        Text {
+            text: PersonsBus.fp-name;
+            font-size: Ds.t-sm;
+            color: Theme.fg;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            text: PersonsBus.fp-path;
+            font-family: "Geist Mono";
+            font-size: Ds.t-xs;
+            color: Theme.gray-800;
+            horizontal-stretch: 1;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Glyph {
+            width: 14px;
+            icon: Icons.chevrons-up-down;
+            size: 14px;
+            color: Theme.subtle;
+        }
+    }
+    ft-touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            PersonsBus.fp-x = root.absolute-position.x;
+            PersonsBus.fp-y = root.absolute-position.y;
+            PersonsBus.fp-w = root.width;
+            PersonsBus.fp-h = root.height;
+            PersonsBus.fp-toggle();
+        }
+    }
+}
+
+/** Forward to Projects' picker: a search over names and paths, then Recent and All projects (path right, muted; a green
+ *  dot while a chat of it works; the picked one ticked). Up / Down / Enter pick from the keyboard, Esc closes it. */
+component FwdPicker inherits PopoverFrame {
+    height: 35px + PersonsBus.fp-list-h;
+    drop-shadow-offset-y: 12px;
+    drop-shadow-blur: 28px;
+    drop-shadow-color: black.with-alpha(Theme.dark ? 90 / 255 : 24 / 255);
+    TouchArea { }
+    Rectangle {
+        y: 0;
+        height: 34px;
+        HorizontalLayout {
+            padding-left: 12px;
+            padding-right: 10px;
+            spacing: 8px;
+            Glyph {
+                width: 14px;
+                icon: Icons.search;
+                size: 14px;
+                color: Theme.gray-800;
+            }
+            FocusScope {
+                horizontal-stretch: 1;
+                capture-key-pressed(e) => {
+                    if e.text == Key.UpArrow {
+                        PersonsBus.fp-key("up");
+                        return accept;
+                    }
+                    if e.text == Key.DownArrow {
+                        PersonsBus.fp-key("down");
+                        return accept;
+                    }
+                    if e.text == Key.Return {
+                        PersonsBus.fp-key("enter");
+                        return accept;
+                    }
+                    if e.text == Key.Escape {
+                        PersonsBus.fp-key("escape");
+                        return accept;
+                    }
+                    return reject;
+                }
+                if fps-field.text == "": Text {
+                    x: 0;
+                    width: parent.width;
+                    horizontal-alignment: left;
+                    text: "Search projects…";
+                    font-size: Ds.t-sm;
+                    color: Theme.gray-800;
+                    vertical-alignment: center;
+                }
+                fps-field := TextInput {
+                    x: 0;
+                    width: parent.width;
+                    text <=> PersonsBus.fp-query;
+                    font-size: Ds.t-sm;
+                    color: Theme.fg;
+                    vertical-alignment: center;
+                    single-line: true;
+                    init => {
+                        self.focus();
+                    }
+                    edited => {
+                        PersonsBus.fp-search(self.text);
+                    }
+                }
+            }
+        }
+        Rectangle {
+            y: parent.height - 1px;
+            height: 1px;
+            background: Theme.border;
+        }
+    }
+    Rectangle {
+        y: 35px;
+        height: PersonsBus.fp-list-h;
+        clip: true;
+        Scroll {
+            VerticalLayout {
+                padding: 4px;
+                for r in PersonsBus.fp-rows: Rectangle {
+                    height: r.kind == "head" ? 26px : 32px;
+                    border-radius: 4px;
+                    background: r.kind == "item" && (r.hi || fpr-touch.has-hover) ? Theme.gray-200 : transparent;
+                    if r.kind == "head": CapsLabel {
+                        x: 8px;
+                        y: 6px;
+                        height: 20px;
+                        text: r.name;
+                    }
+                    if r.kind == "empty": Text {
+                        x: 8px;
+                        text: r.name;
+                        font-size: Ds.t-sm;
+                        color: Theme.subtle;
+                        vertical-alignment: center;
+                    }
+                    if r.kind == "item": HorizontalLayout {
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        spacing: 8px;
+                        Glyph {
+                            width: 14px;
+                            icon: Icons.folder;
+                            size: 14px;
+                            color: Theme.subtle;
+                        }
+                        Text {
+                            text: r.name;
+                            font-size: Ds.t-sm;
+                            color: Theme.fg;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        if r.dot: Rectangle {
+                            width: 6px;
+                            Rectangle {
+                                width: 6px;
+                                height: 6px;
+                                border-radius: 3px;
+                                background: Theme.green-700;
+                            }
+                        }
+                        if r.on: Glyph {
+                            width: 14px;
+                            icon: Icons.check;
+                            size: 14px;
+                            color: Theme.fg;
+                        }
+                        Text {
+                            text: r.path;
+                            font-size: Ds.t-xs;
+                            color: Theme.gray-800;
+                            horizontal-stretch: 1;
+                            horizontal-alignment: right;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+                    fpr-touch := TouchArea {
+                        enabled: r.kind == "item";
+                        mouse-cursor: r.kind == "item" ? pointer : default;
+                        clicked => {
+                            PersonsBus.fp-pick(r.id);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 component Dialog inherits DialogFrame {
     title: PersonsBus.d-title;
     text: PersonsBus.d-text;
     box-w: PersonsBus.dialog == "qr" ? 300px : PersonsBus.dialog == "person" || PersonsBus.dialog == "link" ? 512px : 448px;
+    scrim-dismisses: PersonsBus.dialog != "fwd-project";
     dismiss => {
         PersonsBus.dialog-cancel();
     }
@@ -3470,13 +3798,68 @@ component Dialog inherits DialogFrame {
             chips: PersonsBus.f-lists;
         }
     }
+    // Forward to Projects: the message, the prompt, the project (the picker opens over the page: PersonsPage)
+    if PersonsBus.dialog == "fwd-project": VerticalLayout {
+        spacing: 16px;
+        VerticalLayout {
+            spacing: 6px;
+            FieldLabel {
+                text: "Message";
+            }
+            FwdQuote { }
+        }
+        VerticalLayout {
+            spacing: 6px;
+            FieldLabel {
+                text: "Prompt";
+            }
+            FwdPrompt {
+                hint: "What should change?";
+            }
+        }
+        VerticalLayout {
+            spacing: 6px;
+            FieldLabel {
+                text: "Project";
+            }
+            FwdTarget { }
+        }
+    }
     if PersonsBus.d-error != "": Text {
         text: PersonsBus.d-error;
         font-size: 12px;
         color: Theme.red-900;
         wrap: word-wrap;
     }
-    DialogActions {
+    if PersonsBus.dialog == "fwd-project": HorizontalLayout {
+        spacing: 8px;
+        padding-top: 8px;
+        Text {
+            text: "Ctrl+Enter to send";
+            font-size: Ds.t-xs;
+            color: Theme.gray-800;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+        Btn {
+            text: "Cancel";
+            size: BtnSize.sm;
+            clicked => {
+                PersonsBus.dialog-cancel();
+            }
+        }
+        Btn {
+            text: PersonsBus.d-busy ? "Sending…" : "Send";
+            icon: Icons.send;
+            size: BtnSize.sm;
+            variant: Variant.primary;
+            enabled: !PersonsBus.d-busy && PersonsBus.fp-can-send;
+            clicked => {
+                PersonsBus.dialog-ok();
+            }
+        }
+    }
+    if PersonsBus.dialog != "fwd-project": DialogActions {
         Btn {
             text: PersonsBus.dialog == "qr" ? "Close" : "Cancel";
             clicked => {
@@ -3712,6 +4095,23 @@ export component PersonsPage {
         y: max(8px, PersonsBus.emoji-y - root.absolute-position.y - self.height - 6px);
     }
     if PersonsBus.dialog != "": Dialog { }
+    // Forward to Projects' picker, over the dialog: under the project field, or above it when there's no room below
+    if PersonsBus.dialog == "fwd-project" && PersonsBus.fp-open: TouchArea {
+        clicked => {
+            PersonsBus.fp-open = false;
+        }
+    }
+    if PersonsBus.dialog == "fwd-project" && PersonsBus.fp-open: FwdPicker {
+        property <length> top: PersonsBus.fp-y - root.absolute-position.y;
+        // which side is decided as it opens (at its tallest), so it doesn't jump while the search shortens it
+        property <bool> up;
+        init => {
+            self.up = self.top + PersonsBus.fp-h + 4px + 35px + 304px > root.height - 8px;
+        }
+        x: PersonsBus.fp-x - root.absolute-position.x;
+        width: PersonsBus.fp-w;
+        y: self.up ? max(8px, self.top - 4px - self.height) : self.top + PersonsBus.fp-h + 4px;
+    }
     if PersonsBus.toast != "": Toast {
         x: (root.width - self.width) / 2;
         y: root.height - 24px - self.height;

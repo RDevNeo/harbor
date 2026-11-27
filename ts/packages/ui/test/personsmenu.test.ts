@@ -6,13 +6,13 @@ const base: MsgMenuIn = { fromMe: false, hasText: true, hasFiles: false, canSend
 const labels = (m: Partial<MsgMenuIn>): string[] => messageMenu({ ...base, ...m }).map((e) => (e.sep ? "|" : e.label));
 
 describe("a site request message's menu (the same menu, as far as SpokPay's admin API goes)", () => {
-  test("the store's message: Quote, Forward to AI | Copy text, Open attachment; no Reply, Open Site Request or Mark as unread", () => {
-    expect(labels({ siteRequest: true, hasFiles: true })).toEqual(["Quote", "Forward to AI", "|", "Copy text", "Open attachment"]);
-    expect(labels({ siteRequest: true, fromMe: true })).toEqual(["Quote", "Forward to AI", "|", "Copy text"]);
+  test("the store's message: Quote, Forward to AI, Forward to Projects | Copy text, Open attachment; no Reply, Open Site Request or Mark as unread", () => {
+    expect(labels({ siteRequest: true, hasFiles: true })).toEqual(["Quote", "Forward to AI", "Forward to Projects", "|", "Copy text", "Open attachment"]);
+    expect(labels({ siteRequest: true, fromMe: true })).toEqual(["Quote", "Forward to AI", "Forward to Projects", "|", "Copy text"]);
   });
   test("a picture alone has nothing to quote; a finished or unwritable request only copies and opens", () => {
-    expect(labels({ siteRequest: true, hasText: false, hasFiles: true })).toEqual(["Forward to AI", "|", "Open attachment"]);
-    expect(labels({ siteRequest: true, canSend: false, aiOn: false })).toEqual(["Copy text"]);
+    expect(labels({ siteRequest: true, hasText: false, hasFiles: true })).toEqual(["Forward to AI", "Forward to Projects", "|", "Open attachment"]);
+    expect(labels({ siteRequest: true, canSend: false, aiOn: false })).toEqual(["Forward to Projects", "|", "Copy text"]);
   });
   test("Quote puts the words as > lines ahead of the draft", () => {
     expect(quoteInto("", "Boa noite!\nObtiveram progresso?")).toBe("> Boa noite!\n> Obtiveram progresso?\n\n");
@@ -22,27 +22,33 @@ describe("a site request message's menu (the same menu, as far as SpokPay's admi
 });
 
 describe("a message's menu (Person Hub's MessageMenu)", () => {
-  test("their message in a chat without site requests: Reply, Forward to AI | Copy text | Mark as unread", () => {
-    expect(labels({})).toEqual(["Reply", "Forward to AI", "|", "Copy text", "|", "Mark as unread"]);
+  test("their message in a chat without site requests: Reply, Forward to AI, Forward to Projects | Copy text | Mark as unread", () => {
+    expect(labels({})).toEqual(["Reply", "Forward to AI", "Forward to Projects", "|", "Copy text", "|", "Mark as unread"]);
   });
-  test("SpokPay people and store owners: Open Site Request after Forward to AI", () => {
-    expect(labels({ siteRequests: true })).toEqual(["Reply", "Forward to AI", "Open Site Request", "|", "Copy text", "|", "Mark as unread"]);
+  test("SpokPay people and store owners: Open Site Request after Forward to Projects", () => {
+    expect(labels({ siteRequests: true })).toEqual(["Reply", "Forward to AI", "Forward to Projects", "Open Site Request", "|", "Copy text", "|", "Mark as unread"]);
   });
   test("my own message: no Mark as unread (Open Site Request still, as Person Hub)", () => {
-    expect(labels({ fromMe: true, siteRequests: true })).toEqual(["Reply", "Forward to AI", "Open Site Request", "|", "Copy text"]);
+    expect(labels({ fromMe: true, siteRequests: true })).toEqual(["Reply", "Forward to AI", "Forward to Projects", "Open Site Request", "|", "Copy text"]);
   });
   test("no text: no Copy; a file: Open attachment", () => {
-    expect(labels({ hasText: false, hasFiles: true })).toEqual(["Reply", "Forward to AI", "|", "Open attachment", "|", "Mark as unread"]);
+    expect(labels({ hasText: false, hasFiles: true })).toEqual(["Reply", "Forward to AI", "Forward to Projects", "|", "Open attachment", "|", "Mark as unread"]);
   });
-  test("signed out and no AI: no Reply, no Forward, no leading separator", () => {
-    expect(labels({ canSend: false, aiOn: false })).toEqual(["Copy text", "|", "Mark as unread"]);
+  test("signed out and no AI: no Reply, no Forward to AI, no leading separator", () => {
+    expect(labels({ canSend: false, aiOn: false })).toEqual(["Forward to Projects", "|", "Copy text", "|", "Mark as unread"]);
+  });
+  test("Forward to Projects right under Forward to AI, only for a message with words or files", () => {
+    const l = labels({ siteRequests: true });
+    expect(l.indexOf("Forward to Projects")).toBe(l.indexOf("Forward to AI") + 1);
+    expect(labels({ hasText: false, hasFiles: false })).not.toContain("Forward to Projects");
+    expect(labels({ siteRequest: true, hasText: false, hasFiles: false })).not.toContain("Forward to Projects");
   });
   test("a site request already drafting from it: not offered again", () => {
     expect(labels({ siteRequests: true, proposing: true })).not.toContain("Open Site Request");
   });
   test("icons where Person Hub had them, the shortcut on Mark as unread, nothing red", () => {
     const m = messageMenu({ ...base, siteRequests: true, hasFiles: true });
-    expect(m.filter((e) => !e.sep).map((e) => e.icon)).toEqual(["REPLY", "SPARKLES", "FILE_PLUS", "COPY", "EXTERNAL", "MAIL_WARNING"]);
+    expect(m.filter((e) => !e.sep).map((e) => e.icon)).toEqual(["REPLY", "SPARKLES", "FOLDER_INPUT", "FILE_PLUS", "COPY", "EXTERNAL", "MAIL_WARNING"]);
     expect(m.find((e) => e.action === "unread")?.hint).toBe("Alt+Click");
     expect(m.some((e) => e.danger)).toBe(false);
   });

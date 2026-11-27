@@ -435,7 +435,7 @@ export interface MsgRow {
 /** Bars of an audio without a waveform: a flat line (the player still seeks on it). */
 export const FLAT_BARS: number[] = Array.from({ length: 40 }, () => 0.18);
 
-const hhmm = (iso: string): string => {
+export const hhmm = (iso: string): string => {
   const d = new Date(iso);
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 };

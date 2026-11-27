@@ -15,7 +15,8 @@ import { releaseBlocks } from "../../markdown.ts";
 import { aiSlintParts, type PPartData } from "./aiparts.ts";
 import { customEmojiUrl, emojiCategories, emojiRows, inlineLayout, insertAt, jumboEmoji, plainEmoji, searchEmoji, type EmojiEntry } from "./emoji.ts";
 import { aiMenu, blockedNote, composerHint, CONTACT_FIELD, failedMenu, messageMenu, moveEntries, placeOfRow, quoteInto, type MenuEntry, type MoveEntry } from "./menus.ts";
-import { aiFolds, audioRow, blankRow, byRecent, chatRows, shortAgo, listRows, matches, moveSection, nextSpeed, personSections, sectionOrder, servesSection, sideRows, srImageSize, srTimeline, type AiJson, type AudioRow, type AudioStateJson, type ChatJson, type MsgRow, type PersonJson, type Row, type SrFileJson, type SrPaneJson, type StateJson, type UiState } from "./view.ts";
+import { fwdSubtitle, pickable, pickerRows, quoteMeta, stepPick, type FwdProject } from "./fwdproject.ts";
+import { aiFolds, audioRow, blankRow, byRecent, chatRows, hhmm, shortAgo, listRows, matches, moveSection, nextSpeed, personSections, sectionOrder, servesSection, sideRows, srImageSize, srTimeline, type AiJson, type AudioRow, type AudioStateJson, type ChatJson, type MsgRow, type PersonJson, type Row, type SrFileJson, type SrPaneJson, type StateJson, type UiState } from "./view.ts";
 
 interface Pixels {
   width: number;
@@ -285,6 +286,26 @@ class PersonsTab {
       b.sub_open = false;
     });
     on("dialog_ok", () => void this.okDialog());
+    on("fp_edited", ((t: string) => {
+      b.fp_can_send = t.trim() !== "";
+    }) as Cb);
+    on("fp_toggle", () => this.fwdToggle());
+    on("fp_search", ((q: string) => {
+      const f = this.fwd;
+      if (!f) return;
+      f.query = q;
+      f.hi = pickable(pickerRows(f.projects, q, f.selected))[0]?.id ?? "";
+      this.renderFwd();
+    }) as Cb);
+    on("fp_pick", ((id: string) => this.fwdPick(id)) as Cb);
+    on("fp_key", ((k: string) => {
+      const f = this.fwd;
+      if (!f) return;
+      if (k === "escape") return this.fwdClosePicker();
+      if (k === "enter") return f.hi ? this.fwdPick(f.hi) : undefined;
+      f.hi = stepPick(pickerRows(f.projects, f.query, f.selected), f.hi, k === "up" ? -1 : 1);
+      this.renderFwd();
+    }) as Cb);
     on("dialog_cancel", () => this.closeDialog());
     on("chip", ((id: string) => {
       // Add contact's platform: one at a time
@@ -1893,6 +1914,14 @@ class PersonsTab {
         this.focusField();
         this.render();
       },
+      project: () =>
+        this.forwardToProject({
+          author: m.fromMe ? "You" : c.person.name,
+          at: m.at,
+          section: SECTION_LABEL[open.section] ?? open.section,
+          text: m.text || this.filesLine(m.files.map((f) => f.name), m.voice),
+          send: (project, prompt) => this.api("POST", `chat/${encodeURIComponent(open.id)}/to-project`, { section: open.section, account: c.account?.id, messageId: m.id, project, prompt }),
+        }),
       "site-request": () => void this.siteRequest(m.id),
       copy: () => this.copy(m.text),
       "open-file": () => void this.openFile(m.id),
@@ -1933,6 +1962,14 @@ class PersonsTab {
         this.focusField();
         this.render();
       },
+      project: () =>
+        this.forwardToProject({
+          author: it.author,
+          at: new Date(it.at).toISOString(),
+          section: `SpokPay · ${p.ref}`,
+          text: it.text || this.filesLine(it.files.map((f) => f.name), false),
+          send: (project, prompt) => this.api("POST", `site-request/${encodeURIComponent(p.ref)}/to-project`, { messageId: it.id, project, prompt }),
+        }),
       copy: () => this.copy(it.text),
       "open-file": () => {
         const f = it.files[0];
@@ -1942,6 +1979,112 @@ class PersonsTab {
       },
     };
     this.showEntries(x, y, entries.map((e) => ({ ...e, ...(e.action ? { run: run[e.action] } : {}) })));
+  }
+
+  // ---------- Forward to Projects ----------
+
+  /** The open Forward to Projects dialog: how it sends, Hub's projects, the one picked, the picker's search and keyboard row. */
+  private fwd: { send: (project: string, prompt: string) => Promise<{ status: number; body: Record<string, unknown> }>; projects: FwdProject[]; selected: string | null; query: string; hi: string; loaded: boolean } | null = null;
+
+  /** A message with no words: its files, as the quote shows it. */
+  private filesLine(names: string[], voice: boolean): string {
+    if (voice) return "Voice message";
+    return names.length ? `📎 ${names.join(", ")}` : "Message";
+  }
+
+  /** Forward to Projects: the dialog (the message quoted, a prompt, the project), Hub's projects read meanwhile. */
+  private forwardToProject(o: { author: string; at: string; section: string; text: string; send: (project: string, prompt: string) => Promise<{ status: number; body: Record<string, unknown> }> }): void {
+    const b = this.bus;
+    const meta = quoteMeta({ author: o.author, time: o.at ? hhmm(o.at) : "", section: o.section });
+    const t = o.text.trim();
+    b.fp_author = meta.author;
+    b.fp_meta = meta.rest;
+    b.fp_text = t.length > 600 ? `${t.slice(0, 600).trimEnd()}…` : t;
+    b.fp_prompt = "";
+    b.fp_can_send = false;
+    b.fp_open = false;
+    b.fp_query = "";
+    this.fwd = { send: o.send, projects: [], selected: null, query: "", hi: "", loaded: false };
+    this.renderFwd();
+    this.openDialog("fwd-project", "Forward to Projects", fwdSubtitle(""), "Send", async () => {
+      const f = this.fwd;
+      if (!f) return;
+      const prompt = String(b.fp_prompt ?? "").trim();
+      if (!prompt) throw new Error("Write a prompt: what should change?");
+      if (!f.selected) throw new Error(f.loaded ? "Pick a project" : "Still reading Hub's projects…");
+      b.fp_open = false;
+      const r = await f.send(f.selected, prompt);
+      const chat = r.body.chat;
+      if (r.status !== 200 || chat == null) throw new Error(String(r.body.error ?? "The chat didn't start"));
+      // Projects, on the new chat
+      this.ctx.openChat?.(String(chat));
+    });
+    this.dialogCancel = () => {
+      this.fwd = null;
+      b.fp_open = false;
+    };
+    b.d_text = fwdSubtitle(this.fwdProject()?.name ?? "");
+    void this.loadFwdProjects();
+  }
+
+  private fwdProject(): FwdProject | null {
+    const f = this.fwd;
+    return f?.projects.find((p) => p.id === f.selected) ?? null;
+  }
+
+  private async loadFwdProjects(): Promise<void> {
+    const f = this.fwd;
+    if (!f) return;
+    const r = await this.api("GET", "projects").catch((e: unknown) => ({ status: 500, body: { error: e instanceof Error ? e.message : String(e) } as Record<string, unknown> }));
+    if (this.fwd !== f) return;
+    f.loaded = true;
+    if (r.status !== 200) {
+      this.bus.d_error = String(r.body.error ?? "Couldn't read Hub's projects");
+    } else {
+      f.projects = (Array.isArray(r.body.projects) ? r.body.projects : []) as FwdProject[];
+      f.selected = typeof r.body.selected === "string" ? r.body.selected : (f.projects[0]?.id ?? null);
+    }
+    this.renderFwd();
+  }
+
+  private renderFwd(): void {
+    const f = this.fwd;
+    const b = this.bus;
+    if (!f) return;
+    const p = this.fwdProject();
+    b.fp_name = p ? p.name : f.loaded ? "Pick a project" : "Reading Hub's projects…";
+    b.fp_path = p?.short ?? "";
+    if (b.dialog === "fwd-project") b.d_text = fwdSubtitle(p?.name ?? "");
+    const rows = pickerRows(f.projects, f.query, f.selected);
+    b.fp_rows = rows.map((r) => ({ ...r, name: r.kind === "head" ? r.name.toUpperCase() : r.name, hi: r.kind === "item" && r.id === f.hi }));
+    // the list's height: every row, at most ~9 projects (it scrolls past that)
+    const h = rows.reduce((n, r) => n + (r.kind === "head" ? 26 : 32), 8);
+    b.fp_list_h = Math.min(h, 304);
+  }
+
+  private fwdToggle(): void {
+    const f = this.fwd;
+    if (!f) return;
+    if (this.bus.fp_open) return this.fwdClosePicker();
+    f.query = "";
+    f.hi = f.selected ?? "";
+    this.bus.fp_query = "";
+    this.renderFwd();
+    this.bus.fp_open = true;
+  }
+
+  private fwdClosePicker(): void {
+    this.bus.fp_open = false;
+    this.bus.fp_focus_rev = (Number(this.bus.fp_focus_rev) || 0) + 1;
+  }
+
+  private fwdPick(id: string): void {
+    const f = this.fwd;
+    if (!f || !f.projects.some((p) => p.id === id)) return;
+    f.selected = id;
+    this.bus.d_error = "";
+    this.renderFwd();
+    this.fwdClosePicker();
   }
 
   // ---------- SpokPay site requests ----------

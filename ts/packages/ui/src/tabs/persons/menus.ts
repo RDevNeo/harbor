@@ -3,7 +3,7 @@
 // MenuItem / MenuSeparator. Pure, so it is unit tested.
 import type { GlyphName } from "@harbor/net";
 
-export type MsgAction = "reply" | "quote" | "forward" | "site-request" | "copy" | "open-file" | "unread";
+export type MsgAction = "reply" | "quote" | "forward" | "project" | "site-request" | "copy" | "open-file" | "unread";
 
 export interface MenuEntry {
   action?: MsgAction;
@@ -37,8 +37,9 @@ export interface MsgMenuIn {
 }
 
 /**
- * Reply · Forward to AI · Open Site Request | Copy text · Open attachment | Mark as unread (their messages; Alt+Click).
- * A site request's message: Quote · Forward to AI | Copy text · Open attachment.
+ * Reply · Forward to AI · Forward to Projects · Open Site Request | Copy text · Open attachment | Mark as unread (their
+ * messages; Alt+Click). A site request's message: Quote · Forward to AI · Forward to Projects | Copy text · Open attachment.
+ * Forward to Projects (a new chat in a project, about this message) whenever it has words or files.
  * Each group only when it has entries, a separator between groups.
  */
 export function messageMenu(m: MsgMenuIn): MenuEntry[] {
@@ -47,6 +48,7 @@ export function messageMenu(m: MsgMenuIn): MenuEntry[] {
       ...(m.canSend && !m.siteRequest ? [{ action: "reply" as const, label: "Reply", icon: "REPLY" as const }] : []),
       ...(m.canSend && m.siteRequest && m.hasText ? [{ action: "quote" as const, label: "Quote", icon: "REPLY" as const }] : []),
       ...(m.aiOn ? [{ action: "forward" as const, label: "Forward to AI", icon: "SPARKLES" as const }] : []),
+      ...(m.hasText || m.hasFiles ? [{ action: "project" as const, label: "Forward to Projects", icon: "FOLDER_INPUT" as const }] : []),
       ...(m.siteRequests && !m.proposing ? [{ action: "site-request" as const, label: "Open Site Request", icon: "FILE_PLUS" as const }] : []),
     ],
     [

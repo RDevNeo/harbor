@@ -31,14 +31,15 @@ export function forwardAttachmentInfo(m: Pick<Message, "attachments" | "voice">)
     .join("; ");
 }
 
-/** The note to the AI with a forwarded message. `files`: its attachments fetched to this PC (paths the agent can read). */
-export function forwardedNote(o: { message: Pick<Message, "content" | "timestamp" | "attachments" | "voice">; from: string; question: string; files?: readonly string[]; transcripts?: readonly string[] }): string {
+/** The <forwarded-message> block alone (forwardedNote's, and Forward to Projects'). `section`: the Persons section it came from. */
+export function forwardedBlock(o: { message: Pick<Message, "content" | "timestamp" | "attachments" | "voice">; from: string; section?: string; files?: readonly string[]; transcripts?: readonly string[] }): string {
   const m = o.message;
   const at = (m.timestamp ?? "").slice(0, 16).replace("T", " ");
   const info = forwardAttachmentInfo(m);
-  const lines = [
+  return [
     FWD_OPEN,
     `From: ${o.from}`,
+    o.section ? `Section: ${o.section}` : "",
     at ? `Time: ${at}` : "",
     info ? `Attachment: ${info}` : "",
     ...(m.attachments ?? []).filter((a) => a?.url).map((a) => `Attachment URL: ${a.url}`),
@@ -47,9 +48,29 @@ export function forwardedNote(o: { message: Pick<Message, "content" | "timestamp
     "Text:",
     (m.content ?? "").trim() || "(no text)",
     FWD_CLOSE,
-  ].filter(Boolean);
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+/** The note to the AI with a forwarded message. `files`: its attachments fetched to this PC (paths the agent can read). */
+export function forwardedNote(o: { message: Pick<Message, "content" | "timestamp" | "attachments" | "voice">; from: string; question: string; files?: readonly string[]; transcripts?: readonly string[] }): string {
   const q = o.question.trim() || FORWARD_DEFAULT_QUESTION;
-  return `${LEAD}\n${lines.join("\n")}\n\n${q}`;
+  return `${LEAD}\n${forwardedBlock(o)}\n\n${q}`;
+}
+
+/**
+ * Forward to Projects: the first message of a new chat in a project, the user's prompt first, then the forwarded
+ * message (who, the Persons section, when, attachments, the full text) as forwardedNote's block.
+ */
+export function projectNote(o: { prompt: string; message: Pick<Message, "content" | "timestamp" | "attachments" | "voice">; from: string; section: string; files?: readonly string[]; transcripts?: readonly string[] }): string {
+  return `${o.prompt.trim()}\n\nThe message this is about, forwarded from Persons (${o.section}):\n${forwardedBlock(o)}`;
+}
+
+/** A Forward to Projects chat's title: the prompt's first line, whitespace collapsed, at most `max` characters. */
+export function projectChatTitle(prompt: string, max = 80): string {
+  const line = (prompt.split("\n").find((l) => l.trim() !== "") ?? "").replace(/\s+/g, " ").trim();
+  return line.length > max ? `${line.slice(0, max - 1).trimEnd()}…` : line;
 }
 
 /** A note to the AI split into the forwarded message (if any) and the question. */

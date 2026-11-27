@@ -337,6 +337,21 @@ export class PersonAi implements AiPort {
     return this.chats[key] ?? null;
   }
 
+  /** Hub's `/v1/state` body (its projects and chats): Forward to Projects' picker. */
+  async hubState(): Promise<unknown> {
+    const r = await this.call("GET", "v1/state");
+    if (r.status >= 400) throw new Error(String((r.body as { error?: string } | null)?.error ?? `Hub answered ${r.status}`));
+    return r.body;
+  }
+
+  /** Forward to Projects: a new chat in `project`, titled `title`, whose first message is `text`. Answers its id. */
+  async startIn(project: string, title: string, text: string): Promise<string> {
+    const r = await this.call("POST", "v1/chats", {}, { text, project_id: /^\d+$/.test(project) ? Number(project) : project, title });
+    const id = (r.body as { id?: string | number | null } | null)?.id;
+    if (r.status >= 400 || id == null) throw new Error(String((r.body as { error?: string } | null)?.error ?? "Hub didn't start the chat"));
+    return String(id);
+  }
+
   private async send(k: string, title: string, full: string): Promise<string> {
     const { project, chat } = await this.locateKey(k, title);
     if (chat) {

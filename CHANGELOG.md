@@ -58,6 +58,15 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
   their whole conversation, not only what arrives after.
 
 ### Added
+- **Persons: Forward to Projects** in a message's menu (right under Forward to AI, in person chats and in a site
+  request's pane, for any message with words or files): a dialog quotes the message (author · time · section), takes a
+  prompt (Ctrl+Enter sends, Esc closes) and a project, picked from Hub's projects (search by name or path, Recent: the
+  projects with the newest chats, then All projects; a green dot while one of its chats works). Send starts a new chat
+  there, titled by the prompt's first line, its first message the prompt then the forwarded message (who, section,
+  time, attachments fetched to this PC, voice transcripts, the text), and opens it in Projects. Persons [TAB] is picked
+  first, then whichever was used last. Engine: `GET v1/persons/projects`, `POST v1/persons/chat/{id}/to-project` and
+  `POST v1/persons/site-request/{ref}/to-project`. Lucide subset: folder-input, chevrons-up-down. Desktop only for now:
+  the phone app's long-press menu is Java (PersonsChat.java) and would need a new APK; it can call the same routes later.
 - **Persons: the sidebar's sections can be reordered.** Drag a section's head (Stores, Creators, SpokPay, Personal…)
   onto another section to put it in that one's place, or use Move up / Move down in its + menu; the order is kept with
   the folds (`folds.json`, `order`). The phone app keeps its own fixed order (its sidebar is its own; not changed here).
