@@ -448,8 +448,9 @@ abstract class Base extends Activity {
         Ui.main.postDelayed(() -> { if (front && !isFinishing()) Ui.pool.execute(dev.harbor.shell.Shell::ok); }, 5_000);
         if (myTheme != Ui.themeGen) { recreate(); return; }
         if (hub != null) startPolling();
-        // The tab bar's Collector count, fresh for this screen.
+        // The tab bar's counts, fresh for this screen, and again every few seconds while Hub is in front.
         Tabs.poke(Tabs.hub(this));
+        Tabs.tick();
     }
 
     @Override

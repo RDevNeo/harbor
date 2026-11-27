@@ -44,6 +44,18 @@ describe("Routine engine", () => {
     expect(await createRoutineEngine().route(call("GET", "v1/persons"))).toBeNull();
   });
 
+  test("pending: today's goals still to do, for the tab bars' count", async () => {
+    const { r } = rig();
+    const pending = async () => ((await r("GET", "v1/routine/pending")).body as { pending: number }).pending;
+    expect(await pending()).toBe(0);
+    await r("POST", "v1/routine/act", { act: "plan", id: "basic" });
+    expect(await pending()).toBe(3);
+    await r("POST", "v1/routine/act", { act: "log", goal: "water", amount: 1000 });
+    expect(await pending()).toBe(3);
+    await r("POST", "v1/routine/act", { act: "log", goal: "water", amount: 1000 });
+    expect(await pending()).toBe(2);
+  });
+
   test("export imports back 1:1", async () => {
     const a = rig();
     await a.r("POST", "v1/routine/act", { act: "plan", id: "igor" });

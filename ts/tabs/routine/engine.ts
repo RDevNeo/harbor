@@ -4,6 +4,7 @@
 //   GET  v1/routine                 {rev, data, walking, ride}            everything the screens draw
 //   POST v1/routine/act             {act, …} (lib/actions.ts)             a change; answers like GET
 //   POST v1/routine/walking         {days, from, to}                      the phone's Health Connect read (km per day)
+//   GET  v1/routine/pending         {rev, pending}                        today's goals still to do (the tab bars' count)
 //   GET  v1/routine/view?sel=…      what the phone's screens draw (view.ts: today, history, goals, wake-up times)
 //   POST v1/routine/ride            {active: {goalId, session, distM, gainM} | null}   the phone's ride being recorded
 //   POST v1/routine/ride/finish     {goal, points: Fix[], movingMs, at}   a finished ride: summarized here, logged, its track kept
@@ -27,7 +28,7 @@ import { EXPORT_APP, ImportError, readByCode, readExport, restore, ROUTINE_PREFI
 import type { AppData } from "./lib/types.ts";
 import { mergeWalk, type WalkDays } from "./lib/walking.ts";
 import { filterFixes, summarize, type Fix } from "./lib/track.ts";
-import { fullView, type ActiveRide } from "./view.ts";
+import { fullView, pendingToday, type ActiveRide } from "./view.ts";
 
 const WALK_KEY = `${ROUTINE_PREFIX}walking`;
 const COACH_KEY = `${ROUTINE_PREFIX}coach-hub`;
@@ -374,6 +375,8 @@ export function createRoutineEngine(): TabEngine & { store(): RoutineStore } {
           changed();
           return ok(s.state());
         }
+        case "GET pending":
+          return ok({ rev: s.rev, pending: pendingToday(s.data()) });
         case "GET view": {
           const sel = call.query.find(([k]) => k === "sel")?.[1] ?? "all";
           return ok(asJson({ rev: s.rev, ...fullView(s.data(), s.walking(), s.ride as ActiveRide | null, sel) }));

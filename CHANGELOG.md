@@ -6,6 +6,10 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 ## [Unreleased]
 
 ### Changed
+- **Hub's tab bars count on every tab, like WhatsApp.** The phone's bottom bar now shows Persons' unread messages
+  (the drawer's section counts summed) and Routine's goals still to do today beside Projects' and Collector's counts,
+  in the same pill, refreshed every 5 s while Hub is in front and at once from the Persons tab. The PC's tab row gets
+  Routine's count too (new `GET v1/routine/pending`: today's scheduled goals not reached yet; bonus days don't count).
 - **Hub for Android posts only what needs you, and people's messages like WhatsApp.** The phone now rings for four
   kinds only: an agent needs you (Reply, Continue), a usage limit hit (not a reset), a PC that went offline (not back
   online), and **a new message from someone in Persons** (Discord, Gmail, WhatsApp, Instagram): one conversation

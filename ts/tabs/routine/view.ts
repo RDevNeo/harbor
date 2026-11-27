@@ -23,6 +23,14 @@ export interface ActiveRide {
   gainM: number;
 }
 
+/** Today's goals still to do: scheduled today (not a bonus day), active, not reached yet. The Routine tab's count on
+ *  both tab bars (GET v1/routine/pending). */
+export function pendingToday(d: AppData, now = Date.now()): number {
+  const totals = totalsFrom(d.entries);
+  const today = dateKey(new Date(now));
+  return activeGoals(d.goals).filter((g) => isScheduled(g, today) && amount(totals, today, g.id) < g.target).length;
+}
+
 /** An arc from 12 o'clock, clockwise, `frac` of the circle (r 44 in a 100 box): "" for none. */
 export function ringPath(frac: number): string {
   const f = Math.max(0, Math.min(1, frac));

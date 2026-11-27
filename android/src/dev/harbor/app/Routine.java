@@ -117,6 +117,7 @@ public class Routine extends Base {
             try {
                 h.call("POST", "/v1/routine/act", body);
                 Ui.main.post(this::load);
+                Tabs.poke(h); // the tab bar's goals-left count
             } catch (Exception e) {
                 Ui.main.post(() -> Ui.toast(this, h.whyDown(e)));
             }

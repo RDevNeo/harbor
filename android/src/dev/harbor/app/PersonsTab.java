@@ -37,6 +37,7 @@ public final class PersonsTab {
     public static void listen(Runnable r) { listener = r; }
 
     static void changed() {
+        Tabs.personsUnread(PersonsState.unread); // the tab bar's Persons count, at once
         Runnable r = listener;
         if (r != null) r.run();
     }

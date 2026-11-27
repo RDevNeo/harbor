@@ -5815,7 +5815,7 @@ export class Shell {
   /** Switches the top-level tab (as a click on the tab bar). */
   selectTab: (id: string) => void = () => {};
   private mountTabs(): void {
-    type Bus = { current: string; select: (id: string) => void; persons_unread: number; collector_unread: number; projects_unread: number };
+    type Bus = { current: string; select: (id: string) => void; persons_unread: number; collector_unread: number; projects_unread: number; routine_unread: number };
     let found: Bus;
     try {
       found = busOf<Bus>(this.win, "TabsBus");
@@ -5874,14 +5874,24 @@ export class Shell {
       if (n > 0 && tabs.current === "collector") collectorSeen();
       else if (tabs.collector_unread !== n) tabs.collector_unread = n;
     };
+    // The Routine tab's: today's goals still to do (v1/routine/pending), the phone's tab bar the same.
+    const routinePending = async (): Promise<void> => {
+      const call = this.hub.call;
+      if (!call) return;
+      const r = await call("GET", "v1/routine/pending").catch(() => null);
+      const n = r?.status === 200 ? Number((r.body as { pending?: unknown } | null)?.pending) : NaN;
+      if (Number.isInteger(n) && n >= 0 && tabs.routine_unread !== n) tabs.routine_unread = n;
+    };
     void personsUnread();
     void collectorUnread();
+    void routinePending();
     // The Projects tab's own count is the window engine's (each sidebar refresh sets it); read here too, for a phone's
     // open or a turn's end that didn't redraw the sidebar.
     this.projectsBadge();
     const badge = setInterval(() => {
       void personsUnread();
       void collectorUnread();
+      void routinePending();
       this.projectsBadge();
     }, 3000);
     badge.unref?.();

@@ -170,7 +170,10 @@ the model: a slim top bar with the sidebar button, a sheet from the left, the ta
   for its QR code shows). Routine: Today, History, Sleep, Goals, Coach. Collector: Collector, Available, Approved,
   Restricted with their counts.
 - **Tab bar** (`Tabs.around`): Projects, Persons, Routine, Collector, on every page including chats; it steps aside
-  only while the keyboard is up. Tapping a tab brings back the page it showed (Projects: the chat, else the
+  only while the keyboard is up. Every tab carries a count on its icon's corner (`Ds.pill`), as WhatsApp's and the PC's tab
+  row (same routes): Projects the chats that need you, Persons everyone's unread messages, Routine today's goals still
+  to do (`v1/routine/pending`), Collector its finished runs not looked at; read on each screen, on the PC's state
+  changes and every 5 s while Hub is in front. Tapping a tab brings back the page it showed (Projects: the chat, else the
   workspace; never Hub's start screen, which is the drawer's Workspaces & PCs).
 
 Components:
