@@ -136,7 +136,32 @@ describe("Personal over the API", () => {
     expect(r2).toEqual({ ok: false, error: "Instagram isn't connected: Paste your Instagram session to connect" });
     const r3 = (await call("POST", "contacts", { kind: "whatsapp", handle: "+55 11 91234-5678" })).body as Record<string, any>;
     expect(r3).toEqual({ ok: false, error: "No WhatsApp connection in Personal" });
-    expect((await call("POST", "contacts", { kind: "gmail", handle: "a@b.c" })).status).toBe(400);
+    expect((await call("POST", "contacts", { kind: "telegram", handle: "ana" })).status).toBe(400);
+    const r4 = (await call("POST", "contacts", { kind: "gmail", handle: "not an email", section: "creators" })).body as Record<string, any>;
+    expect(r4).toEqual({ ok: false, error: "That isn’t an email address" });
+    const r5 = (await call("POST", "contacts", { kind: "discord", handle: "ana_s", section: "stores", store: "nope" })).body as Record<string, any>;
+    expect(r5).toEqual({ ok: false, error: "Pick the store they're in" });
     expect(JSON.stringify(s.data!.people)).toBe(before);
+  });
+});
+
+describe("Add contact in every section", () => {
+  it("adds by email to Creators, and by Discord username to SpokPay through its own connection", async () => {
+    const { s, call } = await setup();
+    const c = (await call("POST", "contacts", { kind: "gmail", handle: "Elisa@Example.com", section: "creators" })).body as Record<string, any>;
+    expect(c).toMatchObject({ ok: true, existed: false });
+    expect(s.person(c.person.id)).toMatchObject({ email: "elisa@example.com", listIds: ["creators"], storeIds: [] });
+    const d = (await call("POST", "contacts", { kind: "discord", handle: "@ana_s", name: "Ana", section: "spokpay" })).body as Record<string, any>;
+    expect(d).toMatchObject({ ok: true, existed: false });
+    expect(s.person(d.person.id)).toMatchObject({ name: "Ana", discordId: ANA, listIds: ["spokpay"] });
+  });
+
+  it("someone already in Persons joins the section (a store, here) instead of being added twice", async () => {
+    const { s, call } = await setup();
+    s.update((d) => ({ ...d, stores: [{ id: "s1", name: "Loja", color: "#3b82f6" }] }));
+    const r = (await call("POST", "contacts", { kind: "discord", handle: "xan", section: "stores", store: "s1" })).body as Record<string, any>;
+    expect(r).toMatchObject({ ok: true, existed: true });
+    expect(s.person("px")).toMatchObject({ storeIds: ["s1"], listIds: ["spokpay"] });
+    expect(s.data!.people.length).toBe(1);
   });
 });

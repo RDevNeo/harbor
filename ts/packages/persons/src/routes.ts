@@ -6,11 +6,11 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { paths } from "@harbor/os";
 import { chatKey, KIND_LABEL, isSection, SECTION_LABEL, normWhatsApp, personSections, pickChat, SECTIONS, serves, validPeer, type ChatRef } from "./model/accounts.ts";
-import { ContactConflict, isContactKind } from "./model/personal.ts";
+import { ContactConflict, isAddKind } from "./model/personal.ts";
 import { aiPartsJson } from "./aiparts.ts";
 import { attachmentKind } from "./model/conversation.ts";
 import { initials } from "./model/format.ts";
-import { parsePlace } from "./model/move.ts";
+import { parsePlace, type Place } from "./model/move.ts";
 import { cleanUsername, isDiscordId, isEmail, joinScope, normalizeData, personLabel, searchText } from "./model/data.ts";
 import { headerStatus } from "./model/presence.ts";
 import { seenOf } from "./model/readState.ts";
@@ -1247,7 +1247,8 @@ export class PersonsRoutes {
   }
 
   /**
-   * `POST contacts {kind, handle, name?, confirm?}`: Personal › Add contact. Someone already in Persons under another name
+   * `POST contacts {kind, handle, name?, confirm?, section?, store?}`: Add contact, in Personal unless `section` says
+   * another (Stores: `store` too); `kind` gmail takes an email. Someone already in Persons under another name
    * than the one typed, or a WhatsApp number named otherwise on WhatsApp, answers `{ ok: false, error, conflict: { confirm:
    * "Rename"|"Add anyway", personId, name } }` and changes nothing; the same call with `confirm: true` goes on. `handle` is a WhatsApp number, a Discord username or
    * an Instagram username, resolved on that platform before anything is saved. `{ ok: true, person, existed }`, or
@@ -1255,9 +1256,12 @@ export class PersonsRoutes {
    */
   private async addContact(b: Record<string, unknown>): Promise<Reply> {
     const kind = str(b.kind);
-    if (!isContactKind(kind)) return err(400, "kind: discord, whatsapp or instagram");
+    if (!isAddKind(kind)) return err(400, "kind: discord, whatsapp, instagram or gmail");
+    // the section it's added to (Personal unless said); Stores takes the store
+    const section = sectionOf(str(b.section) ?? "") ?? "personal";
+    const place: Place = section === "stores" ? { section, store: str(b.store) ?? "" } : { section };
     try {
-      const r = await this.s.addContact(kind, str(b.handle) ?? "", str(b.name) ?? "", b.confirm === true);
+      const r = await this.s.addContact(kind, str(b.handle) ?? "", str(b.name) ?? "", b.confirm === true, place);
       return ok({ ok: true, person: json(r.person), existed: r.existed, was: r.was, joined: r.joined, renamed: r.renamed, message: contactMessage(r) });
     } catch (e) {
       // needs the user's confirm: the reason for the form, and what its button says then (sent again with confirm: true)

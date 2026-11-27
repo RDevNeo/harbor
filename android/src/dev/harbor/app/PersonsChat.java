@@ -59,7 +59,7 @@ final class PersonsChat {
     private final LinearLayout box, head, replyBox, fwdBox, seg, segAi, segPerson, sendPill;
     private final FrameLayout headMark, sendRound;
     private final View headLine;
-    private final TextView headText, headNote, blocked, replyText, fwdText, toLabel, attach, maximize;
+    private final TextView headText, headNote, blocked, replyText, fwdText, toLabel, attach;
     private final EditText subject, edit;
     /** A message forwarded to the AI (Forward to AI): quoted in the AI composer, sent with the next note. */
     private JSONObject forwarded;
@@ -177,9 +177,6 @@ final class PersonsChat {
         attach = Ui.iconButton(a, Ui.I_CLIP, Ui.G700, v -> { if (a instanceof Base) ((Base) a).pickImage(this::addPhoto); });
         attach.setContentDescription("Attach a photo");
         row.addView(attach, new LinearLayout.LayoutParams(Ui.dp(40), Ui.dp(40)));
-        maximize = Ui.iconButton(a, Ui.I_MAXIMIZE, Ui.G700, v -> Ui.toast(a, "The AI's chat is in Projects on the PC"));
-        maximize.setContentDescription("Open in Projects");
-        row.addView(maximize, new LinearLayout.LayoutParams(Ui.dp(40), Ui.dp(40)));
         toLabel = Ui.text(a, "To", 13, Ui.G700);
         row.addView(toLabel, Ui.margins(Ui.wrap(), 4, 0, 6, 0));
         seg = Ui.row(a);
@@ -699,7 +696,9 @@ final class PersonsChat {
             Linkify.addLinks(tv, Linkify.WEB_URLS | Linkify.EMAIL_ADDRESSES);
             if (!emo.isEmpty()) emojiPictures(tv, sb, emo, spots, big ? Ui.dp(48) : Math.round(tv.getTextSize() * 1.375f));
             tv.setOnLongClickListener(v -> { menu(m); return true; });
-            if (sb.length() > 0) b.addView(tv);
+            // plain text gets its own width (its widest line, at most the bubble's): a long message right under a
+            // one-letter one of mine once came out one letter wide on a phone (Android 13)
+            if (sb.length() > 0) b.addView(tv, emo.isEmpty() ? textWidth(tv, sb, inner) : Ui.wrap());
         }
         for (JSONObject f : fs) {
             boolean audio = "audio".equals(PersonsUi.s(f, "kind")) || (m.optBoolean("voice") && !f.optBoolean("image"));
@@ -747,6 +746,12 @@ final class PersonsChat {
         } catch (Exception ignored) { }
         String ac = acctId();
         return ac == null ? "" : ac;
+    }
+
+    /** A message's text at the width it needs (its widest line, at most `max`), not left to wrap_content's measure. */
+    private static LinearLayout.LayoutParams textWidth(TextView tv, CharSequence text, int max) {
+        int w = (int) Math.ceil(android.text.Layout.getDesiredWidth(text, tv.getPaint())) + tv.getCompoundPaddingLeft() + tv.getCompoundPaddingRight();
+        return new LinearLayout.LayoutParams(Math.max(1, Math.min(max, w)), LinearLayout.LayoutParams.WRAP_CONTENT);
     }
 
     private static LinearLayout.LayoutParams endWrap() {
@@ -857,7 +862,7 @@ final class PersonsChat {
         if (!text.isEmpty()) {
             TextView tv = Ui.text(a, text, 15, Ui.FG);
             tv.setMaxWidth(maxW() - Ui.dp(24));
-            b.addView(tv);
+            b.addView(tv, textWidth(tv, text, maxW() - Ui.dp(24)));
         }
         if (n > 0) b.addView(Ui.text(a, n == 1 ? "1 photo" : n + " photos", 13, Ui.G700));
         String err = PersonsUi.s(o, "error");
@@ -1175,7 +1180,6 @@ final class PersonsChat {
         attach.setVisibility(toAi ? View.GONE : View.VISIBLE);
         attach.setEnabled(!blockedNow && a instanceof Base);
         attach.setAlpha(!blockedNow ? 1f : 0.45f);
-        maximize.setVisibility(toAi ? View.VISIBLE : View.GONE);
         boolean sw = aiOn();
         toLabel.setVisibility(sw ? View.VISIBLE : View.GONE);
         seg.setVisibility(sw ? View.VISIBLE : View.INVISIBLE);

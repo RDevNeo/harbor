@@ -47,7 +47,7 @@ final class PersonsSr {
     private final ScrollView sv;
     private final LinearLayout content, bottom, thumbs;
     private final EditText edit;
-    private final TextView finished, blocked, headText, headNote, toLabel, attach, maximize;
+    private final TextView finished, blocked, headText, headNote, toLabel, attach;
     private final LinearLayout box, head, seg, segAi, segPerson, sendPill;
     private final FrameLayout headMark, sendRound;
     private final View headLine;
@@ -150,9 +150,6 @@ final class PersonsSr {
         attach = Ui.iconButton(a, Ui.I_CLIP, Ui.G700, v -> { if (a instanceof Base) ((Base) a).pickImage(this::addPhoto); });
         attach.setContentDescription("Attach a photo");
         row.addView(attach, new LinearLayout.LayoutParams(Ui.dp(40), Ui.dp(40)));
-        maximize = Ui.iconButton(a, Ui.I_MAXIMIZE, Ui.G700, v -> Ui.toast(a, "The AI's chat is in Projects on the PC"));
-        maximize.setContentDescription("Open in Projects");
-        row.addView(maximize, new LinearLayout.LayoutParams(Ui.dp(40), Ui.dp(40)));
         toLabel = Ui.text(a, "To", 13, Ui.G700);
         row.addView(toLabel, Ui.margins(Ui.wrap(), 4, 0, 6, 0));
         seg = Ui.row(a);
@@ -657,7 +654,6 @@ final class PersonsSr {
         attach.setVisibility(toAi ? View.GONE : View.VISIBLE);
         attach.setEnabled(!blockedNow && a instanceof Base);
         attach.setAlpha(!blockedNow ? 1f : 0.45f);
-        maximize.setVisibility(toAi ? View.VISIBLE : View.GONE);
         seg.setBackground(Ui.round(Ui.BG, Ui.LINE, 17));
         paintSegment(segAi, "AI", toAi);
         paintSegment(segPerson, n, !toAi);

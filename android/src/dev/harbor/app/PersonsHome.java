@@ -37,6 +37,8 @@ final class PersonsHome {
         String section = "", text = "", key = "";
         JSONObject person, store, sr;
         List<JSONObject> conns;
+        /** Add contact in Stores: the stores they can go in. */
+        List<JSONObject> stores;
         boolean owner, settled, open, indent;
         int count, unread;
         Item(int kind) { this.kind = kind; }
@@ -121,6 +123,14 @@ final class PersonsHome {
         items.add(n);
     }
 
+    /** A section's Add contact row (every section, as the PC's section menus add someone to each). */
+    private void addRow(String section, List<JSONObject> stores) {
+        Item it = new Item(ADD);
+        it.section = section;
+        it.stores = stores;
+        items.add(it);
+    }
+
     private void build(JSONObject st) {
         JSONArray people = PersonsUi.arr(st, "people"), stores = PersonsUi.arr(st, "stores"),
                 lists = PersonsUi.arr(st, "lists"), conns = PersonsUi.arr(st, "connections");
@@ -135,6 +145,7 @@ final class PersonsHome {
         Item h = head("stores", "Stores", "stores", storePeople);
         if (h.open) {
             sectionConns("stores", conns);
+            if (!stList.isEmpty()) addRow("stores", stList);
             if (stList.isEmpty()) note("No stores yet.", false);
             for (JSONObject s : stList) {
                 String sid = PersonsUi.s(s, "id");
@@ -178,7 +189,7 @@ final class PersonsHome {
             if (!lh.open) continue;
             if (!section.isEmpty()) sectionConns(section, conns);
             if ("spokpay".equals(section)) siteRequests(st.optJSONObject("siteRequests"));
-            if ("personal".equals(section)) items.add(new Item(ADD));
+            if (!section.isEmpty()) addRow(section, null);
             List<JSONObject> live = new ArrayList<>();
             for (JSONObject q : in) if (section.isEmpty() || !settled(q, section)) live.add(q);
             Collections.sort(live, recent(section));
@@ -406,12 +417,12 @@ final class PersonsHome {
                 return Ds.inset(a, siteRequestRow(it.sr), 0);
             }
             case ADD: {
-                // Personal › Add contact: a WhatsApp number, a Discord or Instagram username
+                // Add contact, in every section: a WhatsApp number, a Discord or Instagram username, an email
                 LinearLayout r = Ds.row(a, false);
                 r.setPadding(Ui.dp(14), Ui.dp(8), Ui.dp(14), Ui.dp(8));
                 r.addView(Ui.icon(a, Ui.I_PLUS, 16, Ui.G700), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(16), Ui.dp(16)), 0, 0, 10, 0));
                 r.addView(Ds.rowTitle(a, "Add contact", false, Ui.G700), Ui.weight());
-                r.setOnClickListener(v -> addContact(p));
+                r.setOnClickListener(v -> addContact(p, it.section, it.stores));
                 r.setContentDescription("Add contact");
                 return Ds.inset(a, r, 0);
             }
@@ -635,20 +646,37 @@ final class PersonsHome {
         return out;
     }
 
-    /** Personal › Add contact (the PC's dialog): the platform, then their number or username. The PC finds them there
-     *  first; when it can't, the reason shows in the dialog and nothing is saved. Their chat opens once added. */
-    static void addContact(PersonsState p) {
-        List<Sheet.Option> o = new ArrayList<>();
-        o.add(new Sheet.Option("discord", "Discord", "Their username", true));
-        o.add(new Sheet.Option("whatsapp", "WhatsApp", "Their number", true));
-        o.add(new Sheet.Option("instagram", "Instagram", "Their username", true));
-        Sheet.pick(p.a, "Add contact", "Where you talk to them: their conversation shows here.", o, "", kind -> contactForm(p, kind));
+    /** Add contact in `section` (the PC's dialog; Stores: the store first, from `stores`): the platform, then their
+     *  number, username or email. The PC finds them there first; when it can't, the reason shows in the dialog and nothing
+     *  is saved. Their chat opens once added. */
+    static void addContact(PersonsState p, String section, List<JSONObject> stores) {
+        if ("stores".equals(section)) {
+            if (stores == null || stores.isEmpty()) return;
+            if (stores.size() == 1) { contactKind(p, section, PersonsUi.s(stores.get(0), "id")); return; }
+            List<Sheet.Option> o = new ArrayList<>();
+            for (JSONObject st : stores) o.add(new Sheet.Option(PersonsUi.s(st, "id"), PersonsUi.s(st, "name"), "", true));
+            Sheet.pick(p.a, "Add contact", "The store they're in.", o, "", store -> contactKind(p, section, store));
+            return;
+        }
+        contactKind(p, section, "");
     }
 
-    private static void contactForm(PersonsState p, String kind) {
-        boolean wa = "whatsapp".equals(kind);
-        EditText handle = Ui.input(p.a, wa ? "+55 11 91234-5678" : "@username", false);
+    /** The platforms Add contact offers in a section: Personal's own (Discord, WhatsApp, Instagram); the others talk
+     *  on Discord and WhatsApp, Creators by email too. */
+    private static void contactKind(PersonsState p, String section, String store) {
+        List<Sheet.Option> o = new ArrayList<>();
+        if ("creators".equals(section)) o.add(new Sheet.Option("gmail", "Email", "Their email address", true));
+        o.add(new Sheet.Option("discord", "Discord", "Their username", true));
+        o.add(new Sheet.Option("whatsapp", "WhatsApp", "Their number", true));
+        if ("personal".equals(section)) o.add(new Sheet.Option("instagram", "Instagram", "Their username", true));
+        Sheet.pick(p.a, "Add contact", "Where you talk to them: their conversation shows here.", o, "", kind -> contactForm(p, kind, section, store));
+    }
+
+    private static void contactForm(PersonsState p, String kind, String section, String store) {
+        boolean wa = "whatsapp".equals(kind), mail = "gmail".equals(kind);
+        EditText handle = Ui.input(p.a, wa ? "+55 11 91234-5678" : mail ? "name@example.com" : "@username", false);
         if (wa) handle.setInputType(android.text.InputType.TYPE_CLASS_PHONE);
+        if (mail) handle.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS);
         EditText name = Ui.input(p.a, "Name (optional)", false);
         TextView err = Ui.text(p.a, "", 13, Ui.RED);
         err.setVisibility(View.GONE);
@@ -657,7 +685,7 @@ final class PersonsHome {
         box.addView(handle, Ui.fill());
         box.addView(name, Ui.margins(Ui.fill(), 0, 8, 0, 0));
         box.addView(err, Ui.margins(Ui.fill(), 0, 8, 0, 0));
-        android.app.AlertDialog d = Ui.dialog(p.a).setTitle(PersonsUi.kindLabel(kind) + (wa ? " number" : " username")).setView(box)
+        android.app.AlertDialog d = Ui.dialog(p.a).setTitle(mail ? "Their email" : PersonsUi.kindLabel(kind) + (wa ? " number" : " username")).setView(box)
                 .setPositiveButton("Add", null).setNegativeButton("Cancel", null).show();
         handle.requestFocus();
         // the dialog stays open on an error (its reason under the fields); a conflict (the number is someone else's, or
@@ -669,6 +697,8 @@ final class PersonsHome {
             JSONObject body = PersonsUi.put(new JSONObject(), "kind", kind);
             PersonsUi.put(body, "handle", h);
             PersonsUi.put(body, "name", n);
+            PersonsUi.put(body, "section", section);
+            if (!store.isEmpty()) PersonsUi.put(body, "store", store);
             if ((h + "\n" + n).equals(pending[0])) PersonsUi.put(body, "confirm", true);
             v.setEnabled(false);
             err.setVisibility(View.GONE);
@@ -686,7 +716,7 @@ final class PersonsHome {
                 JSONObject person = r.optJSONObject("person");
                 if (r.optBoolean("existed")) Ui.toast(p.a, r.optString("message", "Already in Persons"));
                 p.refresh();
-                if (person != null) p.openChat(PersonsUi.s(person, "id"), "personal");
+                if (person != null) p.openChat(PersonsUi.s(person, "id"), section);
             });
         });
     }

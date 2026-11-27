@@ -99,6 +99,20 @@ final class Sidebar {
 
         // The drawer's head (Ds.drawerHead, as every tab's): "Projects", the workspaces shown, Add project, Search.
         Ds.DrawerHead head = Ds.drawerHead(a, "Projects");
+        // The title opens the drawer's pages (Show one project…, Settings, Workspaces & PCs): no rows for them over the
+        // list, which starts with the projects. A chevron after it says it opens something.
+        head.row.removeView(head.title);
+        LinearLayout titleBtn = Ui.row(a);
+        titleBtn.setGravity(Gravity.CENTER_VERTICAL);
+        titleBtn.setPadding(Ui.dp(8), Ui.dp(6), Ui.dp(8), Ui.dp(6));
+        titleBtn.setBackground(Ui.press(0, 0, 10));
+        titleBtn.addView(head.title, Ui.wrap());
+        titleBtn.addView(Ui.icon(a, Ui.I_DOWN, 16, Ui.G600), Ui.margins(new LinearLayout.LayoutParams(Ui.dp(18), Ui.dp(18)), 4, 1, 0, 0));
+        titleBtn.setContentDescription("Projects menu: Settings, Workspaces & PCs");
+        titleBtn.setOnClickListener(v -> titleMenu());
+        head.row.setPadding(Ui.dp(12), 0, Ui.dp(6), 0);
+        head.row.addView(titleBtn, 0, Ui.wrap());
+        head.row.addView(new View(a), 1, Ui.weight());
         // Which workspace's chats show; hidden until `render` knows there are any.
         wsBtn = head.action(Ui.I_USERS, "Pick the workspaces shown", v -> pickWorkspaces());
         wsBtn.setVisibility(View.GONE);
@@ -258,17 +272,14 @@ final class Sidebar {
         if (offTitle == null) banners(st);
         // The drawer's pages (as Headquarters' drawer lists its app's): a project filter, Settings, and the
         // workspaces and PCs; the tab's own page (Chats) is the list alone, its top bar has the rest.
-        if (!asPage || !filter.isEmpty()) list.addView(nav(Ui.I_LAYERS, "Projects", filter.isEmpty() ? null : projects.get(filter), v -> pickProject(projects)), Ui.fill());
-        if (!asPage) {
-            // No PCs row (Settings lists the workspace's PCs), and no
-            // Pull requests or Issues rows (the search's pages and a project's sheet open them).
-            list.addView(nav(Ui.I_SETTINGS, "Settings", null, v -> settings()), Ui.fill());
-            list.addView(nav(Ui.I_MONITOR, "Workspaces & PCs", null, v -> workspaces()), Ui.fill());
-        }
+        // No rows for Projects, Settings and Workspaces & PCs: the head's title opens them (titleMenu). While one
+        // project is picked, its row stays to say so (a tap picks another or all).
+        lastProjects = projects;
+        if (!filter.isEmpty()) list.addView(nav(Ui.I_LAYERS, "Projects", projects.get(filter), v -> pickProject(projects)), Ui.fill());
         // A newer app on GitHub: a sheet says so, once per version (Update.prompt); Settings › App keeps it.
         long offered = Update.known(a);
         if (offered > Settings.myCode(a)) Ui.main.post(() -> Update.prompt(a, offered));
-        if (!asPage || !filter.isEmpty()) {
+        if (!filter.isEmpty()) {
             View line = new View(a);
             line.setBackgroundColor(Ui.LINE);
             list.addView(line, Ui.margins(new LinearLayout.LayoutParams(-1, Ui.dp(1)), 20, 8, 20, 2));
@@ -1031,6 +1042,18 @@ final class Sidebar {
     }
 
     private static final String ADD = "\u0000add";
+
+    /** The projects as last drawn (the title menu's Show one project…). */
+    private Map<String, String> lastProjects = new LinkedHashMap<>();
+
+    /** The drawer title's menu: the pages that had rows over the list. */
+    private void titleMenu() {
+        List<Ds.Item> items = new ArrayList<>();
+        if (!lastProjects.isEmpty()) items.add(Ds.item(Ui.I_LAYERS, filter.isEmpty() ? "Show one project…" : "Projects: " + lastProjects.get(filter), () -> pickProject(lastProjects)));
+        items.add(Ds.item(Ui.I_SETTINGS, "Settings", this::settings));
+        items.add(Ds.item(Ui.I_MONITOR, "Workspaces & PCs", this::workspaces));
+        Ds.menu(a, items);
+    }
 
     private void pickProject(Map<String, String> projects) {
         List<Sheet.Option> o = new ArrayList<>();

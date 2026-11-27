@@ -82,10 +82,17 @@ for (const d of ["home", "run", "state", "data", "cache", "config", "persons"]) 
     [false, "Sobre isso: a transportadora confirmou entrega até quinta-feira."],
     [true, "Combinado então."],
     [false, "E sobre aquele pedido de ontem, já foi resolvido?"],
+    [true, "s"],
+    // a long message of mine with its ticks (WhatsApp's), as a reply the AI drafted, right under a one-letter one of
+    // mine: it wraps at the bubble's width (it once took the one-letter bubble's)
+    [true, 'AI: "Boa noite, Ana! Sim, o pedido de ontem já foi resolvido: a transportadora reenviou hoje cedo e o código de rastreio novo já está no painel. Qualquer dúvida é só me chamar por aqui."'],
   ];
   const t = Date.parse("2026-11-26T12:02:00.000Z");
   const msgs: Record<string, unknown>[] = lines.map(([mine, content], i) => ({ id: String(500000000000000100n + BigInt(i)), channelId: "300000000000000001", authorId: mine ? "900000000000000009" : ana, fromMe: mine, content, timestamp: new Date(t + i * 7 * 60_000).toISOString() }));
   msgs[13].reply = { id: String(msgs[0].id), fromMe: true, content: lines[0][1] };
+  msgs[16].status = "sent";
+  msgs[17].status = "sent";
+  msgs[17].timestamp = new Date(Date.parse(String(msgs[16].timestamp)) + 60_000).toISOString();
   msgs[15].reply = { id: "500000000000000001", fromMe: true, content: "Ana, o pedido #4821 voltou para o centro de distribuição." };
   writeFileSync(join(dir, "persons", "discord-cache.json"), JSON.stringify({ conversations: { [ana]: { channelId: "300000000000000001", messages: msgs } } }));
 }

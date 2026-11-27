@@ -7,10 +7,11 @@ import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync } fro
 import { join } from "node:path";
 import { allPeers, chatKey, chatsFor, KIND_LABEL, peerOf, personSections, phoneVariants, SECTION_LABEL, seenKey, serves, validPeer, type ChatRef } from "./model/accounts.ts";
 import { freshIncoming, type IncomingLine } from "./incoming.ts";
-import { contactConflict, personalShares, resolveContact, whatsAppContactToSave, type ContactKind } from "./model/personal.ts";
+import { contactConflict, personalShares, resolveContact, whatsAppContactToSave, type AddKind } from "./model/personal.ts";
 import { linkPeople, unlinkPerson } from "./model/link.ts";
 import { lastMessage, mergeMessages } from "./model/conversation.ts";
 import { movePerson, type Place } from "./model/move.ts";
+import { DEFAULT_LISTS } from "./model/data.ts";
 import { applyDiscordUser, applyPhoto, applySocialPhoto, cleanUsername, emailsOf, inScope, isSettled, personLabel, photoStale, renamePerson, settlePerson, socialPhotoKey, socialPhotoSources, socialPhotoStale, staleProfiles, unsettlePerson, wakeSettled } from "./model/data.ts";
 import { mergePresence, PRESENCE_RANK, rowStatus, type RowStatus } from "./model/presence.ts";
 import { badgeChats, chatUnread, defaultChat, laterMark, migrateAllSeen, seenOf } from "./model/readState.ts";
@@ -524,34 +525,58 @@ export class PersonsService {
    * are on that platform through a connection serving Personal, then saved as a person in Personal (someone already in
    * Persons with that id just joins Personal). Throws with the reason when it can't be resolved: nothing is saved then.
    */
-  async addContact(kind: ContactKind, handle: string, name = "", confirm = false): Promise<AddedContact> {
+  /**
+   * Add contact, in any section (`place`: Personal unless said; Stores takes a store): their WhatsApp number, Discord or
+   * Instagram username, or email, resolved on that platform through a connection of the section (else any of that kind)
+   * before anything is saved. Someone already in Persons joins the place instead.
+   */
+  async addContact(kind: AddKind, handle: string, name = "", confirm = false, place: Place = { section: "personal" }): Promise<AddedContact> {
     if (!this.data) throw new Error("Persons isn't loaded");
-    const views = this.views().filter((v) => v.kind === kind && serves(v, "personal"));
-    const conn = views.find((v) => v.connected) ?? views[0];
-    if (!conn) throw new Error(`No ${KIND_LABEL[kind]} connection in Personal`);
-    if (!conn.connected) throw new Error(`${KIND_LABEL[kind]} isn't connected${conn.state.error ? `: ${conn.state.error}` : ""}`);
-    const c = this.conns.get(conn.id);
-    if (!c) throw new Error("That connection is gone");
-    const r = await resolveContact(kind, handle, (q) => c.lookup(q));
+    const section = place.section;
+    const store = place.section === "stores" ? place.store : "";
+    if (section === "stores" && !this.data.stores.some((x) => x.id === store)) throw new Error("Pick the store they're in");
+    const where = SECTION_LABEL[section] ?? section;
+    let r: { id: string; username: string; displayName?: string; avatar?: string | null; photo?: string };
+    if (kind === "gmail") r = await resolveContact(kind, handle, async () => ({ matches: [] }));
+    else {
+      const all = this.views().filter((v) => v.kind === kind);
+      const views = all.filter((v) => serves(v, section));
+      // the section's own connection first; else any of that kind (only to find who they are)
+      const conn = views.find((v) => v.connected) ?? all.find((v) => v.connected) ?? views[0] ?? all[0];
+      if (!conn) throw new Error(`No ${KIND_LABEL[kind]} connection in ${where}`);
+      if (!conn.connected) throw new Error(`${KIND_LABEL[kind]} isn't connected${conn.state.error ? `: ${conn.state.error}` : ""}`);
+      const c = this.conns.get(conn.id);
+      if (!c) throw new Error("That connection is gone");
+      r = await resolveContact(kind, handle, (q) => c.lookup(q));
+    }
     const at = new Date().toISOString();
-    // the same human already in Persons (a WhatsApp number in either Brazilian form counts): they join Personal. A name
+    const inPlace = (x: Person): boolean => (section === "stores" ? x.storeIds.includes(store) : x.listIds.includes(section));
+    const join = (x: Person): Person => (section === "stores" ? { ...x, storeIds: [...x.storeIds, store] } : { ...x, listIds: [...x.listIds, section] });
+    // the section's list, made when it isn't there yet (as moving someone in does)
+    const ensureList = (): void => {
+      if (section === "stores" || this.data!.lists.some((l) => l.id === section)) return;
+      const def = DEFAULT_LISTS.find((l) => l.id === section);
+      if (def) this.update((d) => ({ ...d, lists: [...d.lists, { ...def }] }));
+    };
+    // the same human already in Persons (a WhatsApp number in either Brazilian form counts): they join the place. A name
     // typed that isn't theirs, or a number WhatsApp names otherwise, stops here until the user confirms (ContactConflict):
     // a mistyped number must never rename or add someone else silently
     const same = (v: string): boolean => (kind === "whatsapp" ? phoneVariants(r.id).includes(v) || phoneVariants(v).includes(r.id) : v === r.id);
     const existing = this.data.people.find((p) => allPeers(p, kind).some(same));
     const typed = name.trim();
-    const shown = kind === "whatsapp" ? `+${r.id}` : `@${r.username}`;
+    const shown = kind === "whatsapp" ? `+${r.id}` : kind === "gmail" ? r.id : `@${r.username}`;
     const conflict = confirm
       ? null
-      : contactConflict({ typed, handle: shown, existing: existing ? { id: existing.id, label: personLabel(existing), inPersonal: existing.listIds.includes("personal") } : null, platformName: kind === "whatsapp" ? r.displayName : undefined });
+      : contactConflict({ typed, handle: shown, existing: existing ? { id: existing.id, label: personLabel(existing), inPersonal: inPlace(existing) } : null, platformName: kind === "whatsapp" ? r.displayName : undefined, section: where });
     if (conflict) throw conflict;
+    ensureList();
     if (existing) {
       const was = personLabel(existing);
-      const joined = !existing.listIds.includes("personal");
+      const joined = !inPlace(existing);
       // only a confirmed Rename changes their name
       const renamed = confirm && !!typed && typed !== existing.name;
-      if (joined || renamed) this.updatePerson(existing.id, (x) => ({ ...(renamed ? renamePerson(x, typed) : x), listIds: joined ? [...x.listIds, "personal"] : x.listIds, updatedAt: at }));
-      this.log("personal contact existed", kind, existing.id, joined ? "joined" : "", renamed ? "renamed" : "");
+      if (joined || renamed) this.updatePerson(existing.id, (x) => ({ ...(joined ? join(renamed ? renamePerson(x, typed) : x) : renamed ? renamePerson(x, typed) : x), updatedAt: at }));
+      this.log("contact existed", section, kind, existing.id, joined ? "joined" : "", renamed ? "renamed" : "");
       // the number they were found by (their main one may be another): saved in WhatsApp contacts unless named there already
       if (kind === "whatsapp") {
         const now = this.person(existing.id) ?? existing;
@@ -559,7 +584,8 @@ export class PersonsService {
       }
       return { person: this.person(existing.id) ?? existing, existed: true, was, joined, renamed };
     }
-    const p: Person = { id: this.newId(), name: name.trim(), discordId: "", storeIds: [], listIds: ["personal"], createdAt: at, updatedAt: at };
+    let p: Person = { id: this.newId(), name: typed, discordId: "", storeIds: [], listIds: [], createdAt: at, updatedAt: at };
+    p = join(p);
     if (kind === "discord") {
       p.discordId = r.id;
       p.discordUsername = r.username;
@@ -569,6 +595,9 @@ export class PersonsService {
     } else if (kind === "whatsapp") {
       p.whatsapp = r.id;
       if (!p.name && r.displayName) p.name = r.displayName;
+    } else if (kind === "gmail") {
+      p.email = r.id;
+      if (!p.name) p.name = r.id.split("@")[0] ?? r.id;
     } else {
       p.instagram = r.id;
       p.instagramUsername = r.username;
@@ -578,8 +607,9 @@ export class PersonsService {
         p.photoAt = at;
       }
     }
-    this.log("personal contact added", kind, p.id);
-    this.update((d) => ({ ...d, people: [...d.people, p] }));
+    this.log("contact added", section, kind, p.id);
+    const added = p;
+    this.update((d) => ({ ...d, people: [...d.people, added] }));
     if (kind === "whatsapp") this.saveWhatsAppContact(undefined, p);
     return { person: p, existed: false, was: "", joined: true, renamed: false };
   }
