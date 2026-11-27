@@ -96,7 +96,7 @@ export function newNote(n: Partial<Note> = {}): Note {
 export function phoneWants(kind: string, key: string): boolean {
   if (kind === "limit") return key.startsWith("limit:");
   if (kind === "pc") return key.startsWith("pc:");
-  return true;
+  return kind === "input" || kind === "person";
 }
 
 function personJson(p: NotePerson): Json {
@@ -369,7 +369,9 @@ export async function aliveNotes(notes: Notes, body: unknown): Promise<Json | nu
   const w = o.wait_ms;
   const wait = typeof w === "number" && Number.isInteger(w) && w >= 0 ? Math.min(w, ALIVE_WAIT_MS) : 0;
   const [got, last] = await notes.wait(since, wait);
-  return notesWire(got, last);
+  // Phones get only what rings there (input, limit hit, PC offline, people's messages): an older phone app that
+  // doesn't know `phone` must not show the rest either.
+  return notesWire(got.filter((n) => n.phone), last);
 }
 
 /** `GET /mesh/v1/notes?since=`: this PC's own notes since it (0 or missing: only the newest id). */
