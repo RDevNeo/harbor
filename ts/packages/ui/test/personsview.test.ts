@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { type Rows, sameRow, syncRows } from "../src/modelsync.ts";
-import { aiFolds, aiPreview, chatRows, srTimeline, FLAT_BARS, fitImage, imageTiles, listRows, moveSection, nextSpeed, personSections, sectionOrder, shortAgo, sideRows, srImageSize, type ChatJson, type PersonJson, type SrListJson, type SrRowJson, type StateJson, type UiState } from "../src/tabs/persons/view.ts";
+import { aiFolds, aiPreview, chatRows, srTimeline, FLAT_BARS, fitImage, groupOfPerson, groupRows, imageTiles, listRows, moveSection, nextSpeed, personSections, sectionOrder, shortAgo, sideRows, srImageSize, type ChatJson, type PersonJson, type SrListJson, type SrRowJson, type StateJson, type UiState } from "../src/tabs/persons/view.ts";
 
 const row = (lastAt: string | null, unread = 0) => ({ lastAt, unread, presence: null, status: null, channel: "discord", typing: null });
 const person = (id: string, name: string, o: Partial<PersonJson> = {}, lastAt: string | null = null): PersonJson => ({
@@ -42,7 +42,7 @@ describe("Persons sidebar", () => {
     const folded = sideRows(state(), ui()).map((r) => `${r.kind}:${r.name}`);
     expect(folded.slice(0, 4)).toEqual(["all:All people", "section:STORES", "store:Meoow Store", "store:Shark Store"]);
     // A store's lead square shows its initial when it has no picture (ds-list.slint LeadLetter).
-    expect(sideRows(state(), ui()).filter((r) => r.kind === "store").map((r) => r.initials)).toEqual(["M", "S"]);
+    expect(sideRows(state(), ui()).filter((r) => r.kind === "store" && r.section === "stores").map((r) => r.initials)).toEqual(["M", "S"]);
     const open = sideRows(state(), ui({ stores: new Set(["s2"]) }));
     const shark = open.findIndex((r) => r.kind === "store" && r.id === "s2");
     expect(open.slice(shark + 1, shark + 3).map((r) => [r.name, r.owner, r.depth])).toEqual([["Owner", true, 1], ["Member", false, 1]]);
@@ -65,9 +65,30 @@ describe("Persons sidebar", () => {
     const rows = sideRows(state(), ui());
     const i = rows.findIndex((r) => r.kind === "section" && r.section === "spokpay");
     expect(rows[i]!.unread).toBe(4);
-    expect(rows.slice(i + 1).map((r) => `${r.kind}:${r.name || r.count}`)).toEqual(["person:Bia", "person:Ana", "settled:1"]);
+    // SpokPay's people sit under Clients and Leads (everyone without one is a Lead)
+    expect(rows.slice(i + 1).map((r) => `${r.kind}:${r.name || r.count}`)).toEqual(["store:Clients", "empty:No one yet.", "store:Leads", "person:Bia", "person:Ana", "settled:1"]);
     const unfolded = sideRows(state(), ui({ settledOpen: new Set(["spokpay"]) }));
     expect(unfolded.at(-1)).toMatchObject({ kind: "person", name: "Zed", dim: true });
+  });
+
+  test("SpokPay: Clients, then Leads, drawn as stores (letter square, count), open until folded; the people one step in", () => {
+    const s = state();
+    s.people = s.people.map((p) => (p.id === "a" ? { ...p, spokpayGroup: "clients" } : p.id === "b" ? { ...p, spokpayGroup: "leads" } : p));
+    s.people.push(person("n", "Nil", { listIds: ["spokpay"], spokpayGroup: null }, "2026-11-22T10:00:00Z"));
+    const rows = sideRows(s, ui({ open: { id: "a", section: "spokpay", store: "" } }));
+    const i = rows.findIndex((r) => r.kind === "section" && r.section === "spokpay");
+    expect(rows.slice(i + 1).map((r) => [r.kind, r.name || r.count, r.depth])).toEqual([["store", "Clients", 0], ["person", "Ana", 1], ["store", "Leads", 0], ["person", "Bia", 1], ["person", "Nil", 1], ["settled", 1, 0]]);
+    const heads = rows.filter((r) => r.section === "spokpay" && r.kind === "store");
+    expect(heads.map((r) => [r.id, r.initials, r.count, r.expanded, r.store])).toEqual([["spokpay:clients", "C", 1, true, ""], ["spokpay:leads", "L", 2, true, ""]]);
+    // the person opened from SpokPay is the active row; the section still counts every unread
+    expect(rows.find((r) => r.kind === "person" && r.id === "a")!.active).toBe(true);
+    expect(rows[i]!.unread).toBe(6);
+    // Leads folded: its people hide and its head carries their unread
+    const folded = sideRows(s, ui({ closed: new Set(["spokpay:leads"]) }));
+    const j = folded.findIndex((r) => r.id === "spokpay:leads");
+    expect([folded[j]!.expanded, folded[j]!.unread, folded[j + 1]!.kind]).toEqual([false, 4, "settled"]);
+    expect(groupRows([], ui()).map((r) => `${r.kind}:${r.name}:${r.depth}`)).toEqual(["store:Clients:0", "empty:No one yet.:1", "store:Leads:0", "empty:No one yet.:1"]);
+    expect([groupOfPerson({ spokpayGroup: "clients" }), groupOfPerson({ spokpayGroup: null }), groupOfPerson({})]).toEqual(["clients", "leads", "leads"]);
   });
 
   test("a folded section hides its rows; only the row the person was opened from is active", () => {
@@ -296,7 +317,7 @@ describe("SpokPay › Site requests (Headquarters' Home list)", () => {
     const rows = sideRows(withSr({ waits: true, notices: [], rows: [sr(), sr({ ref: "SR-2", subject: "", side: null, waiting: false })] }), ui());
     const kinds = rows.map((r) => `${r.kind}:${r.name}`);
     const at = kinds.indexOf("section:SPOKPAY");
-    expect(kinds.slice(at, at + 6)).toEqual(["section:SPOKPAY", "sr-head:Site requests", "sr:Banner", "sr:SR-2", "sr-gap:", "person:Bia"]);
+    expect(kinds.slice(at, at + 6)).toEqual(["section:SPOKPAY", "sr-head:Site requests", "sr:Banner", "sr:SR-2", "sr-gap:", "store:Clients"]);
     const head = rows.find((r) => r.kind === "sr-head")!;
     expect([head.count, head.tone, head.expanded]).toEqual([2, "needs", true]);
     const [a, b] = rows.filter((r) => r.kind === "sr");

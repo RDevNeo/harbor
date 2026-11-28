@@ -23,7 +23,8 @@ import java.util.Locale;
  *  first with a crown), then each list (Creators, SpokPay) with its people by their last message, each section with a
  *  "Settled (N)" fold (no connection chips: only a sign-in waiting for its QR code shows; All people is the head's
  *  magnifier). A long press on a person: Rename, Settle / Unsettle, Link with…, Unlink, Move to… (SpokPay,
- *  Creators, Stores › a store or New store…).
+ *  Creators, Stores › a store or New store…), and in SpokPay Move to Clients / Move to Leads. SpokPay's people sit
+ *  under its two sub-categories, Clients and Leads, each a fold drawn as a store.
  *  At the top of SpokPay: Headquarters' "Site requests" list (the state's siteRequests): its heading (amber dot while one
  *  waits on SpokPay, the count, the chevron), its notices, and each active request (the store's square icon, the
  *  subject, "Store replied" / "Store waiting" / "Nothing new", the ref); a tap opens its pane (PersonsSr, SpokPay's admin request page), a long
@@ -193,10 +194,52 @@ final class PersonsHome {
             List<JSONObject> live = new ArrayList<>();
             for (JSONObject q : in) if (section.isEmpty() || !settled(q, section)) live.add(q);
             Collections.sort(live, recent(section));
-            if (in.isEmpty()) note("No one yet.", false);
-            for (JSONObject q : live) person(q, section);
+            if ("spokpay".equals(section)) groups(live);
+            else {
+                if (in.isEmpty()) note("No one yet.", false);
+                for (JSONObject q : live) person(q, section);
+            }
             if (!section.isEmpty()) fold(section, in);
         }
+    }
+
+    /** SpokPay's Clients, then Leads (the PC's view.ts groupRows): each a fold drawn as a store (letter square, count),
+     *  open until folded (`closed` holds "spokpay:clients" / "spokpay:leads"), its people one step in. */
+    private void groups(List<JSONObject> live) {
+        for (String[] g : GROUPS) {
+            String key = "spokpay:" + g[0];
+            List<JSONObject> ms = new ArrayList<>();
+            for (JSONObject q : live) if (g[0].equals(groupOf(q))) ms.add(q);
+            Item gi = new Item(STORE);
+            gi.store = PersonsUi.put(PersonsUi.put(PersonsUi.put(new JSONObject(), "id", key), "name", g[1]), "color", g[2]);
+            gi.key = key;
+            gi.count = ms.size();
+            gi.open = !p.in("closed", key);
+            for (JSONObject q : ms) gi.unread += PersonsUi.info(q, "spokpay").optInt("unread");
+            items.add(gi);
+            if (!gi.open) continue;
+            if (ms.isEmpty()) note("No one yet.", true);
+            for (JSONObject q : ms) person(q, "spokpay").indent = true;
+        }
+    }
+
+    /** SpokPay's sub-categories: id, name, the letter square's colour (the PC's SPOKPAY_GROUPS). */
+    static final String[][] GROUPS = {{"clients", "Clients", "#10b981"}, {"leads", "Leads", "#3b82f6"}};
+
+    /** "clients" or "leads" for someone in SpokPay (none = a Lead), "" outside it. */
+    static String groupOf(JSONObject q) {
+        if (!PersonsUi.has(PersonsUi.arr(q, "listIds"), "spokpay")) return "";
+        return "clients".equals(PersonsUi.s(q, "spokpayGroup")) ? "clients" : "leads";
+    }
+
+    /** Move to Clients (a Lead) / Move to Leads (a Client): PATCH person {spokpayGroup}; nothing is sent to anyone. */
+    static void setGroup(PersonsState p, String id, String name, String to) {
+        JSONObject b = PersonsUi.put(new JSONObject(), "spokpayGroup", to);
+        Ui.bg(p.a, () -> p.hub.call("PATCH", "/v1/persons/person/" + PersonsUi.enc(id), b), r -> {
+            if (!r.optBoolean("ok", false)) { Ui.toast(p.a, r.optString("error", "Couldn't move them")); return; }
+            p.refresh();
+            Ui.toast(p.a, "Moved " + name + " to SpokPay › " + ("clients".equals(to) ? "Clients" : "Leads"));
+        });
     }
 
     /** Headquarters' Home › Site requests (the engine's siteRequests), at the top of the SpokPay section. */
@@ -369,7 +412,10 @@ final class PersonsHome {
                 r.addView(Ds.rowTitle(a, name, true, Ui.FG), Ui.weight());
                 r.addView(Ds.meta(a, String.valueOf(it.count)));
                 String sid = PersonsUi.s(it.store, "id");
-                r.setOnClickListener(v -> { p.flip("stores_open", sid); p.redrawHomes(); });
+                // SpokPay's Clients / Leads fold in `closed` (open by default); a store in `stores_open`
+                if (!it.key.isEmpty()) r.setOnClickListener(v -> { p.flip("closed", it.key); p.redrawHomes(); });
+                else r.setOnClickListener(v -> { p.flip("stores_open", sid); p.redrawHomes(); });
+                if (!it.open && it.unread > 0) r.addView(Ds.pill(a, it.unread, false), Ui.margins(Ui.wrap(), 8, 0, 0, 0));
                 r.setContentDescription(name + ", " + it.count + " people");
                 return Ds.inset(a, r, 0);
             }
@@ -526,9 +572,14 @@ final class PersonsHome {
         for (JSONObject l : linked) opts.add("Unlink " + PersonsUi.s(l, "name") + "…");
         int moveAt = opts.size();
         opts.add("Move to…");
+        // SpokPay: Move to Clients (a Lead) or Move to Leads (a Client)
+        String group = groupOf(person), groupTo = "clients".equals(group) ? "leads" : "clients";
+        int groupAt = group.isEmpty() ? -1 : opts.size();
+        if (!group.isEmpty()) opts.add("clients".equals(groupTo) ? "Move to Clients" : "Move to Leads");
         String from = !store.isEmpty() ? "store:" + store : isList(section) ? section : "";
         Ui.dialog(p.a).setTitle(name).setItems(opts.toArray(new String[0]), (d, w) -> {
             if (w == 0) rename(p, id, name);
+            else if (w == groupAt) setGroup(p, id, name, groupTo);
             else if (w == moveAt) moveTo(p, person, from);
             else if (w == linkAt) PersonsLink.pick(p, id);
             else if (w > linkAt) {

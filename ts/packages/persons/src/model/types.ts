@@ -1,11 +1,13 @@
 // Ported from creators-hub/src/lib/types.ts (Person Hub). Same JSON schema (data.json version 7), so the
 // migrated file loads unchanged and Person Hub could still read a copy back.
 
-/** data.json: version 7 (see data.ts normalizeData for the history). */
-export const DATA_VERSION = 7;
+/** data.json: version 8 (see data.ts normalizeData for the history). */
+export const DATA_VERSION = 8;
 
 export type SectionId = "stores" | "creators" | "spokpay" | "neobux" | "personal";
 export type ChannelKind = "discord" | "gmail" | "whatsapp" | "instagram";
+/** SpokPay's two sub-categories (model/spokpay-group.ts): Clients (the people SpokPay works with) and Leads. */
+export type SpokpayGroup = "clients" | "leads";
 
 export interface Person {
   id: string;
@@ -45,6 +47,8 @@ export interface Person {
   socials?: string[];
   /** Kept from version 1 (no longer shown). */
   tags?: string[];
+  /** In SpokPay: Clients or Leads (none = Leads: whoever joins SpokPay starts there). Only while in SpokPay. */
+  spokpayGroup?: SpokpayGroup;
   /** Sections they were moved out of (Move to…): those sections' chats with them still show, and can be sent on. */
   carried?: SectionId[];
   /** People linked into this one (Link with…): the same human on other channels. Unlink brings each back. */

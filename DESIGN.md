@@ -84,7 +84,8 @@ Per tab:
 - **Projects**: sidebar = projects (head rows with chevron and letter square) and their chats (two-line rows on a
   guide line), Threads, Settled; page = the chat; team = the corner badge's floating card.
 - **Persons**: sidebar = All people, then STORES / CREATORS / SPOKPAY / NEOBUX / PERSONAL sections (stores as head rows with their
-  picture or colour square, people as avatar rows with channel mark, status line, time and unread), Settled folds;
+  picture or colour square, people as avatar rows with channel mark, status line, time and unread; SpokPay's people
+  under Clients (green "C") and Leads (blue "L"), head rows drawn as stores, open until folded), Settled folds;
   page = All people (PageHead, search, rows) or a person's chat (PageBar); panel = the person's details.
 - **Routine**: sidebar = Today (with its %), History, Sleep, Goals, Coach as glyph rows, then PLAN (the current plan,
   Import); page = the screen's column (PageHead, Cards, Chips); the goal form, plans, wake times and import are

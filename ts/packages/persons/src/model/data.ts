@@ -1,6 +1,7 @@
 import { DATA_VERSION } from './types.ts'
 import type { AppData, ChannelUser, Identity, LinkAdded, Person, PersonLink, PersonList, SectionId, Store } from './types.ts'
 import { normalizeSocials, parseSocialUrl, type SocialTarget } from '../socials.ts'
+import { isSpokpayGroup, migrateClients, tidyGroup } from './spokpay-group.ts'
 
 export const STORE_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899', '#84cc16', '#f97316', '#8b5cf6', '#0ea5e9']
 
@@ -27,6 +28,7 @@ const obj = (v: unknown): Record<string, unknown> => (v && typeof v === 'object'
  * uses (SpokPay → spokpay, others → stores) and the Creators list is added before SpokPay.
  * 4 → 5: Creators gets its own Discord login (accountId creators). 5 → 6: Creators moves to Gmail
  * (accountId gmail) and people may have an email. 6 → 7: people may be settled per section (`settled`).
+ * 7 → 8: SpokPay has Clients and Leads (`spokpayGroup`, spokpay-group.ts): everyone in SpokPay then is a Client.
  */
 export function normalizeData(raw: unknown): AppData {
   const base = emptyData()
@@ -70,9 +72,11 @@ export function normalizeData(raw: unknown): AppData {
   }
   const listIds = new Set(lists.map((l) => l.id))
 
-  const people: Person[] = (Array.isArray(r.people) ? r.people : [])
+  let people: Person[] = (Array.isArray(r.people) ? r.people : [])
     .map((x) => normPerson(x, storeIds, listIds, now))
     .filter(validPerson)
+  // version 8: SpokPay's people before Leads existed are its Clients (once: a version 8 file is never marked again)
+  if (version < 8) people = migrateClients(people)
   const personIds = new Set(people.map((p) => p.id))
   for (const s of stores) if (s.ownerId && !personIds.has(s.ownerId)) delete s.ownerId
 
@@ -150,7 +154,8 @@ function normPerson(x: unknown, storeIds: Set<string>, listIds: Set<string>, now
   if (carried.length) person.carried = carried
   const links = depth < 8 ? normLinks(p.links, storeIds, listIds, now, depth) : []
   if (links.length) person.links = links
-  return person
+  if (isSpokpayGroup(p.spokpayGroup)) person.spokpayGroup = p.spokpayGroup
+  return tidyGroup(person)
 }
 
 const validPerson = (p: Person): boolean => !!(p.id && (p.name || p.discordId || p.discordUsername || p.email || p.whatsapp || p.instagram))
@@ -368,7 +373,11 @@ export function inScope(p: Person, s: Scope): boolean {
 /** Adds a person to a store or list (no-op when already in it). */
 export function joinScope(p: Person, s: Scope, at = new Date().toISOString()): Person {
   if (s.kind === 'all' || inScope(p, s)) return p
-  return s.kind === 'store' ? { ...p, storeIds: [...p.storeIds, s.id], updatedAt: at } : { ...p, listIds: [...p.listIds, s.id], updatedAt: at }
+  if (s.kind === 'store') return { ...p, storeIds: [...p.storeIds, s.id], updatedAt: at }
+  // joining SpokPay: a Lead (spokpay-group.ts), whatever they were the last time they were there
+  const n: Person = { ...p, listIds: [...p.listIds, s.id], updatedAt: at }
+  if (s.id === 'spokpay') delete n.spokpayGroup
+  return n
 }
 
 /** A new person from a Discord user (lookup result). */

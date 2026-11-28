@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { dataDir } from "@harbor/store";
 import { emptyData, normalizeData } from "./model/data.ts";
 import { mergeSeen } from "./model/readState.ts";
-import type { AppData, ChannelKind, SectionId } from "./model/types.ts";
+import { DATA_VERSION, type AppData, type ChannelKind, type SectionId } from "./model/types.ts";
 import type { ConnMeta } from "./conn/types.ts";
 
 /** ~/.local/share/hub/persons (HUB_PERSONS_DIR overrides, for the screenshot rig and tests). */
@@ -65,10 +65,22 @@ export class DataFile {
     if (existsSync(this.file)) {
       const text = readFileSync(this.file, "utf8");
       this.lastText = text;
+      let raw: unknown;
       try {
-        d = normalizeData(JSON.parse(text));
+        raw = JSON.parse(text);
+        d = normalizeData(raw);
       } catch {
-        d = emptyData();
+        return (this.base = emptyData());
+      }
+      // an older version (normalizeData migrated it): the file as it was is kept beside it, then the new one is written,
+      // so the migration runs once (a version 7 file → data.before-v8.json; SpokPay's people became its Clients)
+      const was = (raw as { version?: unknown } | null)?.version;
+      if (typeof was === "number" && was < DATA_VERSION) {
+        const backup = join(this.dir, `data.before-v${DATA_VERSION}.json`);
+        if (!existsSync(backup)) writeAtomic(backup, text);
+        this.base = d;
+        this.save(d);
+        return d;
       }
     } else d = emptyData();
     this.base = d;

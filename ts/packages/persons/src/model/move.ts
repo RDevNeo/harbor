@@ -5,6 +5,7 @@
 // AI chat follows in the service (PersonAi.move). Pure, so it is unit tested; nothing is sent anywhere.
 import { DEFAULT_LISTS } from './data.ts'
 import type { AppData, Person, SectionId } from './types.ts'
+import { tidyGroup } from './spokpay-group.ts'
 
 /** A place a person can be in: a store (in Stores), or the Creators / SpokPay / Neobux / Personal list. */
 export type ListSection = 'creators' | 'spokpay' | 'neobux' | 'personal'
@@ -53,7 +54,12 @@ export function movePerson(d: AppData, id: string, from: Place | null, to: Place
   n.listIds = p.listIds.filter((l) => !leftLists.has(l))
   if (to.section === 'stores') {
     if (!n.storeIds.includes(to.store)) n.storeIds = [...n.storeIds, to.store]
-  } else if (!n.listIds.includes(to.section)) n.listIds = [...n.listIds, to.section]
+  } else if (!n.listIds.includes(to.section)) {
+    n.listIds = [...n.listIds, to.section]
+    // moved into SpokPay: a Lead (spokpay-group.ts)
+    if (to.section === 'spokpay') delete n.spokpayGroup
+  }
+  n = tidyGroup(n)
 
   // stores they owned and left lose their owner (the store stays)
   const stores = d.stores.map((s) => (s.ownerId === id && leftStores.has(s.id) ? (({ ownerId: _, ...rest }) => rest)(s) : s))

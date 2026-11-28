@@ -124,7 +124,11 @@ conversation (`proposing`, then `proposals`); without a SpokPay project the mess
 The panel: `{ person: {...all fields of data.json's person}, avatarBig, stores: [{id,name}], lists: [...],
 identities: [{ kind, value, section, label }], socials: [{ url, platform, handle, uploads: [{ title, url, thumb, at, views }] }],
 spokpay: {...}|null }`
-## PATCH /v1/persons/person/{id}  { name?, notes?, settle?: { section, on }, storeIds?, listIds?, email?, whatsapp?, discordId?, socials? } → `{ ok, person }`
+## PATCH /v1/persons/person/{id}  { name?, notes?, settle?: { section, on }, spokpayGroup?: "clients"|"leads", storeIds?, listIds?, email?, whatsapp?, discordId?, socials? } → `{ ok, person }`
+`spokpayGroup` is SpokPay's Move to Clients / Move to Leads (400 when they aren't in SpokPay). Everyone who joins SpokPay
+(Add contact, Move to, a send from Collector or Persons) is a Lead; data.json version 8 made the people already there
+Clients (`model/spokpay-group.ts`; the version 7 file is kept as `data.before-v8.json`). The state's people and the
+panel carry `spokpayGroup` (null outside SpokPay).
 ## POST /v1/persons/people  { name, discordId?, email?, whatsapp?, storeIds?, listIds? } → `{ ok, person }`
 ## DELETE /v1/persons/person/{id} → `{ ok }`
 ## GET /v1/persons/lookup?section=S&kind=K&q=TEXT → `{ matches: [{ id, username, name, avatar }] }`

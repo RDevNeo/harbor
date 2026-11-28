@@ -77,6 +77,8 @@ export function mergeInto(into: Person, other: Person, d: Pick<AppData, 'stores'
   added.listIds = other.listIds.filter((l) => !next.listIds.includes(l))
   next.storeIds = [...next.storeIds, ...added.storeIds]
   next.listIds = [...next.listIds, ...added.listIds]
+  // joining SpokPay through them: their Clients / Leads too (Unlink's tidy drops it again with SpokPay)
+  if (added.listIds.includes('spokpay') && other.spokpayGroup) next.spokpayGroup = other.spokpayGroup
   added.socials = (other.socials ?? []).filter((u) => !(next.socials ?? []).includes(u))
   if (added.socials.length) next.socials = [...(next.socials ?? []), ...added.socials]
   // notes: theirs under a heading with their name

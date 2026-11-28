@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { aiMenu, blockedNote, composerHint, messageMenu, moveEntries, placeOfRow, quoteInto, type MsgMenuIn } from "../src/tabs/persons/menus.ts";
+import { aiMenu, blockedNote, composerHint, groupMove, messageMenu, moveEntries, placeOfRow, quoteInto, type MsgMenuIn } from "../src/tabs/persons/menus.ts";
 import { chatRows, proposalCard, type ChatJson, type ProposalJson } from "../src/tabs/persons/view.ts";
 
 const base: MsgMenuIn = { fromMe: false, hasText: true, hasFiles: false, canSend: true, aiOn: true, siteRequests: false };
@@ -122,5 +122,14 @@ describe("moveEntries", () => {
     expect(placeOfRow("stores", "b")).toBe("store:b");
     expect(placeOfRow("", "")).toBe("");
     expect(placeOfRow("neobux", "")).toBe("neobux");
+  });
+});
+
+describe("groupMove (SpokPay › Clients / Leads)", () => {
+  test("a Lead moves to Clients, a Client to Leads, nothing outside SpokPay", () => {
+    expect(groupMove({ listIds: ["spokpay"], spokpayGroup: "leads" })).toEqual({ to: "clients", label: "Move to Clients" });
+    expect(groupMove({ listIds: ["spokpay"] })).toEqual({ to: "clients", label: "Move to Clients" });
+    expect(groupMove({ listIds: ["creators", "spokpay"], spokpayGroup: "clients" })).toEqual({ to: "leads", label: "Move to Leads" });
+    expect(groupMove({ listIds: ["creators"], spokpayGroup: "clients" })).toBeNull();
   });
 });

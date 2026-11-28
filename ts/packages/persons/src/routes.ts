@@ -11,6 +11,7 @@ import { aiPartsJson } from "./aiparts.ts";
 import { attachmentKind } from "./model/conversation.ts";
 import { initials } from "./model/format.ts";
 import { parsePlace, type Place } from "./model/move.ts";
+import { groupOf, isSpokpayGroup } from "./model/spokpay-group.ts";
 import { cleanUsername, isDiscordId, isEmail, joinScope, normalizeData, personLabel, searchText } from "./model/data.ts";
 import { headerStatus } from "./model/presence.ts";
 import { seenOf } from "./model/readState.ts";
@@ -380,6 +381,8 @@ export class PersonsRoutes {
         avatarPath,
         storeIds: p.storeIds,
         listIds: p.listIds,
+        // SpokPay › Clients or Leads (null outside SpokPay)
+        spokpayGroup: groupOf(p),
         settled,
         rows,
         search: searchText(p).replace(/\n/g, " "),
@@ -1149,6 +1152,7 @@ export class PersonsRoutes {
       avatarPath: this.picture(p, 256) ?? this.picture(p),
       stores: d.stores.filter((s) => p.storeIds.includes(s.id) || s.ownerId === p.id).map((s) => ({ id: s.id, name: s.name, owner: s.ownerId === p.id, color: s.color ?? "#64748b" })),
       lists: d.lists.filter((l) => p.listIds.includes(l.id)).map((l) => ({ id: l.id, name: l.name })),
+      spokpayGroup: groupOf(p),
       identities: json(identities),
       linked: json((p.links ?? []).map((l) => ({ id: l.person.id, name: personLabel(l.person), at: l.at, ids: [l.person.discordUsername ? `@${l.person.discordUsername}` : l.person.discordId, l.person.email ? l.person.email : "", l.person.whatsapp ? `+${l.person.whatsapp}` : "", l.person.instagramUsername ? `@${l.person.instagramUsername}` : "", ...(l.person.identities ?? []).map((i) => (i.kind === "whatsapp" ? `+${i.value}` : i.value))].filter(Boolean), aiChats: this.extra.ai?.chatsOf?.(l.person) ?? [] }))),
       socials: socials ?? (p.socials ?? []).map((url) => ({ url, platform: null, handle: null, uploads: [] })),
@@ -1162,6 +1166,11 @@ export class PersonsRoutes {
     const settle = obj(b.settle);
     const sec = sectionOf(str(settle.section));
     if (sec) this.s.setSettled(id, sec, settle.on !== false);
+    // SpokPay's Move to Clients / Move to Leads
+    if (b.spokpayGroup !== undefined) {
+      if (!isSpokpayGroup(b.spokpayGroup)) return err(400, "spokpayGroup: clients or leads");
+      if (!this.s.setGroup(id, b.spokpayGroup)) return err(400, "they aren't in SpokPay");
+    }
     if (typeof b.name === "string") this.s.rename(id, b.name);
     this.s.updatePerson(id, (p) => {
       const n: Person = { ...p };

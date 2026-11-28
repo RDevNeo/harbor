@@ -47,7 +47,7 @@ for (const d of ["home", "run", "state", "data", "cache", "config", "persons"]) 
   const at = "2026-11-20T10:00:00.000Z";
   const person = (id: string, name: string, x: Record<string, unknown>) => ({ id, name, discordId: "", storeIds: [], listIds: [], createdAt: at, updatedAt: at, ...x });
   writeFileSync(join(dir, "persons", "data.json"), JSON.stringify({
-    version: 7,
+    version: 8,
     updatedAt: at,
     readSince: at,
     stores: [{ id: "s1", name: "Loja Aurora", color: "#3b82f6", ownerId: "p1" }, { id: "s2", name: "Bella Moda", color: "#10b981", ownerId: "p4" }, { id: "s3", name: "Casa Verde", color: "#f59e0b" }],
@@ -58,7 +58,10 @@ for (const d of ["home", "run", "state", "data", "cache", "config", "persons"]) 
       person("p4", "Diego Rocha", { discordId: "100000000000000004", storeIds: ["s2"] }),
       person("p5", "Elisa Prado", { email: "elisa@example.com", listIds: ["creators"] }),
       person("p6", "Felipe Costa", { email: "felipe@example.com", listIds: ["creators"] }),
-      person("p7", "Gabi Torres", { discordId: "100000000000000007", listIds: ["spokpay"] }),
+      // SpokPay: a Client and two Leads (none = a Lead)
+      person("p7", "Gabi Torres", { discordId: "100000000000000007", listIds: ["spokpay"], spokpayGroup: "clients" }),
+      person("p8", "Hugo Martins", { email: "hugo@example.com", listIds: ["spokpay"], spokpayGroup: "leads" }),
+      person("p9", "Iara Nunes", { email: "iara@example.com", listIds: ["spokpay"] }),
     ],
   }));
   // Ana's Discord chat (from the Stores connection's cache, offline): replies to a message further up (a tap on the

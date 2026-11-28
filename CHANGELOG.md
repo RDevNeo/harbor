@@ -6,6 +6,13 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 ## [Unreleased]
 
 ### Changed
+- **Persons: SpokPay has Clients and Leads (PC and phone).** SpokPay's people sit under two folds drawn as Stores'
+  stores are (a letter square, the count, open until folded): Clients, then Leads. Everyone already in SpokPay became a
+  Client once (data.json version 8; the version 7 file is kept as `data.before-v8.json` in the Persons folder), and
+  whoever joins SpokPay from now on is a Lead: Add contact, Move to SpokPay, a send or Approve from Collector with the
+  place "SpokPay", a link. A person's menu (right-click on the PC, long press on the phone) and their details have
+  Move to Clients on a Lead and Move to Leads on a Client (Undo on the PC). Someone who leaves SpokPay and comes back
+  is a Lead again. Collector's never-twice rule covers both, as it did SpokPay. Nothing is sent to anyone.
 - **Persons: a Person AI answer never sticks on "Answering"; its unread mark is on the person (PC and phone).** The
   open person page only read its AI answers again when something else of Persons changed (a message, typing,
   presence), so an answer that came while nothing else moved stayed "Answering" until the page was opened again. Hub

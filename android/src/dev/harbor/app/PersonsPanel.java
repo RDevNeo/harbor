@@ -141,6 +141,19 @@ final class PersonsPanel {
             body.addView(h, Ui.fill());
         }
 
+        // SpokPay › Clients or Leads, and the move to the other one
+        String group = PersonsHome.groupOf(st != null ? st : q);
+        if (!group.isEmpty()) {
+            boolean client = "clients".equals(group);
+            LinearLayout gr = Ui.row(a);
+            gr.setGravity(Gravity.CENTER_VERTICAL);
+            gr.setPadding(Ui.dp(6), Ui.dp(14), 0, 0);
+            gr.addView(Ui.text(a, "SpokPay › " + (client ? "Clients" : "Leads"), 14, Ui.G700), Ui.weight());
+            String gn = name;
+            gr.addView(Ds.chip(a, client ? "Move to Leads" : "Move to Clients", false, v -> PersonsHome.setGroup(p, pid, gn, client ? "leads" : "clients")));
+            body.addView(gr, Ui.fill());
+        }
+
         // Linked: people linked into this one (one chat over all their channels); Link… adds, Unlink splits one back out
         {
             List<JSONObject> linked = PersonsHome.objs(PersonsUi.arr(data, "linked"));

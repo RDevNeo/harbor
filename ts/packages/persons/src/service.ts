@@ -12,11 +12,12 @@ import { linkPeople, unlinkPerson } from "./model/link.ts";
 import { neobuxShares } from "./model/neobux.ts";
 import { lastMessage, mergeMessages } from "./model/conversation.ts";
 import { movePerson, type Place } from "./model/move.ts";
+import { groupOf, setGroup, tidyGroups } from "./model/spokpay-group.ts";
 import { DEFAULT_LISTS } from "./model/data.ts";
 import { applyDiscordUser, applyPhoto, applySocialPhoto, cleanUsername, emailsOf, inScope, isSettled, personLabel, photoStale, renamePerson, settlePerson, socialPhotoKey, socialPhotoSources, socialPhotoStale, staleProfiles, unsettlePerson, wakeSettled } from "./model/data.ts";
 import { mergePresence, PRESENCE_RANK, rowStatus, type RowStatus } from "./model/presence.ts";
 import { badgeChats, chatUnread, defaultChat, laterMark, migrateAllSeen, seenOf } from "./model/readState.ts";
-import type { AppData, ChannelKind, ChannelUser, ConnEvent, ConnState, Conversation, FriendResult, LookupResult, Message, OutgoingFile, Person, PresenceStatus, Relation, SectionId, SendResult } from "./model/types.ts";
+import type { AppData, ChannelKind, ChannelUser, ConnEvent, ConnState, Conversation, FriendResult, LookupResult, Message, OutgoingFile, Person, PresenceStatus, Relation, SectionId, SendResult, SpokpayGroup } from "./model/types.ts";
 import type { Connection, ConnFactory, ConnMeta } from "./conn/types.ts";
 import { attachmentFileName } from "./conn/discord-core.ts";
 import { DataFile, loadConnections, personsDir, saveConnections } from "./store.ts";
@@ -275,7 +276,8 @@ export class PersonsService {
     if (!this.data) return;
     const next = fn(this.data);
     if (next === this.data) return;
-    this.data = { ...next, updatedAt: new Date().toISOString() };
+    // whoever left SpokPay drops Clients / Leads (they're a Lead if they come back)
+    this.data = { ...tidyGroups(next), updatedAt: new Date().toISOString() };
     this.changed();
     this.retrack();
     // socials added or removed: their picture is read soon, not at the next half-hour pass
@@ -318,6 +320,18 @@ export class PersonsService {
     this.update(() => r.data);
     this.flush();
     return r.left;
+  }
+
+  /** SpokPay's Move to Clients / Move to Leads (model/spokpay-group.ts). False when they aren't in SpokPay. */
+  setGroup(id: string, g: SpokpayGroup): boolean {
+    const p = this.person(id);
+    if (!p || !groupOf(p)) return false;
+    if (groupOf(p) !== g) {
+      this.log("spokpay group", id, g);
+      this.updatePerson(id, (x) => setGroup(x, g));
+      this.flush();
+    }
+    return true;
   }
 
   setSettled(id: string, section: SectionId, on: boolean): void {

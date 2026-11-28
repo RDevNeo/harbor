@@ -17,9 +17,9 @@ import { attachMeta, attachType, attachTypeOf } from "./attachkind.ts";
 import { messageLinks } from "./links.ts";
 import { type AttachInfo, AttachPreviews } from "./attachprev.ts";
 import { customEmojiUrl, emojiCategories, emojiRows, inlineLayout, insertAt, jumboEmoji, plainEmoji, searchEmoji, type EmojiEntry } from "./emoji.ts";
-import { aiMenu, blockedNote, composerHint, CONTACT_FIELD, failedMenu, messageMenu, moveEntries, placeOfRow, quoteInto, type MenuEntry, type MoveEntry } from "./menus.ts";
+import { aiMenu, blockedNote, composerHint, CONTACT_FIELD, failedMenu, groupMove, messageMenu, moveEntries, placeOfRow, quoteInto, type MenuEntry, type MoveEntry } from "./menus.ts";
 import { fwdSubtitle, pickable, pickerRows, quoteMeta, stepPick, type FwdProject } from "./fwdproject.ts";
-import { aiFolds, LIST_SECTIONS, audioRow, blankRow, byRecent, CHAT_PAGE, chatRows, shownFor, discordLinks, friendButton, hhmm, shortAgo, listRows, matches, moveSection, nextSpeed, personSections, sectionOrder, servesSection, sideRows, srImageSize, srTimeline, restFiles, type AiJson, type AudioRow, type AudioStateJson, type ChatJson, type ImgTile, type MsgRow, type PersonJson, type Row, type SrFileJson, type SrPaneJson, type StateJson, type UiState } from "./view.ts";
+import { aiFolds, LIST_SECTIONS, audioRow, blankRow, byRecent, CHAT_PAGE, chatRows, shownFor, discordLinks, friendButton, groupOfPerson, hhmm, shortAgo, listRows, matches, moveSection, nextSpeed, personSections, sectionOrder, servesSection, sideRows, srImageSize, srTimeline, restFiles, type AiJson, type AudioRow, type AudioStateJson, type ChatJson, type ImgTile, type MsgRow, type PersonJson, type Row, type SrFileJson, type SrPaneJson, type StateJson, type UiState } from "./view.ts";
 
 interface Pixels {
   width: number;
@@ -304,7 +304,8 @@ class PersonsTab {
       const f = this.srFilesOf(owner).filter((x) => !x.image)[i];
       if (f) ctx.openExternal(f.url);
     }) as Cb);
-    on("toggle_store", ((id: string) => this.toggle(this.ui.stores, id)) as Cb);
+    // SpokPay's Clients / Leads fold as stores do, but start open (kept in `closed`)
+    on("toggle_store", ((id: string) => this.toggle(id.startsWith("spokpay:") ? this.ui.closed : this.ui.stores, id)) as Cb);
     on("toggle_section", ((sec: string) => (sec.startsWith("settled:") ? this.toggle(this.ui.settledOpen, sec.slice(8)) : this.toggle(this.ui.closed, sec))) as Cb);
     on("section_menu", ((sec: string, x: number, y: number) => this.sectionMenu(sec, x, y)) as Cb);
     // a section's head dragged onto another's: it takes that one's place (kept in folds.json)
@@ -1929,6 +1930,7 @@ class PersonsTab {
     const d = this.panelData;
     const linked = d?.person.id === id ? d.linked ?? [] : [];
     this.showMenu(x, y, [
+      ...this.groupItems(id),
       { label: "Link with…", run: () => this.linkDialog(id) },
       ...linked.map((l) => ({ label: `Unlink ${l.name}…`, run: () => this.unlinkDialog(id, l.id) })),
       ...linked.flatMap((l) => l.aiChats.map((c) => ({ label: `${l.name}'s AI chat`, sub: SECTION_LABEL[c.section] ?? c.section, run: () => this.ctx.openChat?.(c.chat) }))),
@@ -2105,6 +2107,7 @@ class PersonsTab {
             const on = !!p.settled[x];
             return { label: `${on ? "Unsettle" : "Settle"} in ${SECTION_LABEL[x] ?? x}`, run: () => void this.api("PATCH", `person/${encodeURIComponent(id)}`, { settle: { section: x, on: !on } }) };
           })),
+      ...this.groupItems(id),
       ...(store ? [{ label: `Remove from ${this.state?.stores.find((s) => s.id === store)?.name ?? "the store"}`, run: () => void this.removeFromStore(id, store) }] : []),
       ...(store ? [{ label: "Make store owner", run: () => void this.api("PATCH", `stores/${encodeURIComponent(store)}`, { ownerId: id }) }] : []),
       { sep: true, label: "" },
@@ -2113,6 +2116,24 @@ class PersonsTab {
       { sep: true, label: "" },
       { label: "Delete", danger: true, run: () => void this.deletePerson(id) },
     ]);
+  }
+
+  /** SpokPay's Move to Clients (a Lead) or Move to Leads (a Client); nothing for someone outside SpokPay. */
+  private groupItems(id: string): MenuIn[] {
+    const p = this.person(id);
+    const g = p ? groupMove(p) : null;
+    return g ? [{ label: g.label, run: () => void this.setGroup(id, g.to) }] : [];
+  }
+
+  /** Moves a SpokPay person between Clients and Leads (Undo puts them back). */
+  private async setGroup(id: string, to: "clients" | "leads", undo = true): Promise<void> {
+    const p = this.person(id);
+    if (!p) return;
+    const was = groupOfPerson(p);
+    const r = await this.api("PATCH", `person/${encodeURIComponent(id)}`, { spokpayGroup: to });
+    if (r.status !== 200) return this.setToast(String(r.body.error ?? "Not moved"));
+    await this.refresh();
+    if (undo) this.setToast(`Moved ${p.name} to SpokPay › ${to === "clients" ? "Clients" : "Leads"}`, "Undo", () => void this.setGroup(id, was, false));
   }
 
   /** Where a person is: their stores (and the ones they own), Creators, SpokPay (as menus.ts moveEntries' words). */

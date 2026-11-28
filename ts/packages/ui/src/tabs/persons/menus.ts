@@ -145,3 +145,10 @@ export function quoteInto(draft: string, text: string): string {
     .join("\n");
   return `${q}\n\n${draft.replace(/^\s+/, "")}`;
 }
+
+/** SpokPay's Clients / Leads move in a person's menu and panel (the phone's PersonsUi keeps the same rule): a Lead can be
+ *  moved to Clients, a Client to Leads; null outside SpokPay. */
+export function groupMove(p: { listIds: string[]; spokpayGroup?: string | null }): { to: "clients" | "leads"; label: string } | null {
+  if (!p.listIds.includes("spokpay")) return null;
+  return p.spokpayGroup === "clients" ? { to: "leads", label: "Move to Leads" } : { to: "clients", label: "Move to Clients" };
+}

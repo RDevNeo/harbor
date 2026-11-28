@@ -25,6 +25,8 @@ export interface PersonJson {
   avatarPath: string | null;
   storeIds: string[];
   listIds: string[];
+  /** SpokPay › Clients or Leads (null / absent outside SpokPay; an engine before them: everyone a Lead). */
+  spokpayGroup?: string | null;
   settled: Record<string, boolean>;
   rows: Record<string, RowJson>;
   search: string;
@@ -318,12 +320,41 @@ export function sideRows(s: StateJson, ui: UiState): Row[] {
       const members = all.filter((p) => !settledIn(p, sec));
       sectionRows(sec, l.name.toUpperCase(), all, () => {
         if (sec === "spokpay" && s.siteRequests) out.push(...siteRequestRows(s.siteRequests, ui));
+        if (sec === "spokpay") return void out.push(...groupRows(members, ui));
         if (!all.length) out.push({ ...base("empty"), name: "No one yet." });
         for (const p of members) out.push(personRow(p, sec, "", 0, ui.open));
       }, settled);
     });
   }
   for (const id of sectionOrder([...emit.keys()], ui.order)) emit.get(id)!();
+  return out;
+}
+
+/** SpokPay's sub-categories, in the sidebar's order (the engine's model/spokpay-group.ts). */
+export const SPOKPAY_GROUPS: readonly { id: "clients" | "leads"; name: string; color: string }[] = [
+  { id: "clients", name: "Clients", color: "#10b981" },
+  { id: "leads", name: "Leads", color: "#3b82f6" },
+];
+
+/** Their SpokPay sub-category: "clients" or "leads" (anyone in SpokPay without one is a Lead). */
+export const groupOfPerson = (p: Pick<PersonJson, "spokpayGroup">): "clients" | "leads" => (p.spokpayGroup === "clients" ? "clients" : "leads");
+
+/**
+ * SpokPay's people under Clients and Leads, drawn as Stores' stores are (a head row with its letter square, the count,
+ * the fold; the people one step in), open until folded (`closed` holds "spokpay:clients" / "spokpay:leads").
+ */
+export function groupRows(members: PersonJson[], ui: UiState): Row[] {
+  const out: Row[] = [];
+  for (const g of SPOKPAY_GROUPS) {
+    const id = `spokpay:${g.id}`;
+    const people = members.filter((p) => groupOfPerson(p) === g.id);
+    const expanded = !ui.closed.has(id);
+    const unread = people.reduce((n, p) => n + (p.rows.spokpay?.unread ?? 0), 0);
+    out.push({ ...base("store"), id, section: "spokpay", name: g.name, initials: g.name.charAt(0), color: g.color, count: people.length, expanded, unread: expanded ? 0 : unread });
+    if (!expanded) continue;
+    if (!people.length) out.push({ ...base("empty"), name: "No one yet.", depth: 1 });
+    for (const p of people) out.push(personRow(p, "spokpay", "", 1, ui.open));
+  }
   return out;
 }
 
