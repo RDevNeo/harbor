@@ -67,7 +67,9 @@ export interface AddedContact {
 
 export interface RowInfo {
   lastAt?: string;
+  /** Unread messages plus the Person AI's answers not seen yet (`aiUnread` of them). */
   unread: number;
+  aiUnread?: number;
   presence?: PresenceStatus;
   status?: RowStatus;
   channel?: ChannelKind;
@@ -136,6 +138,9 @@ export class PersonsService {
   private incoming = new Set<(m: Incoming) => void>();
   private sentTo = new Set<(s: Sent) => void>();
   rev = 1;
+  /** The Person AI's answers not seen yet of a person (and the people linked into them) in a section (null: all):
+   *  counted in their row's unread, so the row, its section, its store and the tab show them. */
+  aiUnread: ((ids: readonly string[], section: SectionId | null) => number) | null = null;
 
   constructor(private readonly o: ServiceOptions = {}) {
     this.dir = o.dir ?? personsDir();
@@ -926,7 +931,9 @@ export class PersonsService {
         return x;
       })),
     );
-    const out: RowInfo = { unread };
+    const ai = this.aiUnread?.([p.id, ...(p.links ?? []).map((l) => l.person.id)], section) ?? 0;
+    const out: RowInfo = { unread: unread + ai };
+    if (ai > 0) out.aiUnread = ai;
     if (lastAt) out.lastAt = lastAt;
     if (status?.dot) out.presence = status.dot;
     if (status) out.status = status;

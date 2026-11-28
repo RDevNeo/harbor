@@ -85,7 +85,19 @@ export const personsEngine: TabEngine = {
       fetch: (url, name, connId) => svc.fetchAttachment(url, name, connId),
       log: (...a) => ctx.log(a.map(String).join(" ")),
     });
-    routes = new PersonsRoutes(service, { agent, sites, board, audio, poster: (v) => media.poster(v), uploads: media.uploadsDir(), ...(voice ? { voice } : {}), ai: new PersonAi(service.dir, async (m, p, q, b) => ctx.call(m, p, q, b)), socials: panelSocials as never, qr: async (t) => (await qrRows(t))?.rows ?? null });
+    // The Person AI: its chats run in Projects' engine, their answers show (and count as unread) on the person's row here.
+    const personAi = new PersonAi(service.dir, async (m, p, q, b) => ctx.call(m, p, q, b));
+    service.aiUnread = (ids, section) => personAi.unreadOf(ids, section);
+    ctx.chats?.({
+      quiet: (chat) => personAi.owns(chat),
+      // An answer is there (or the turn stopped): one more unseen on the person's row, and an open page reads it now.
+      turnEnded: (chat, stopped) => {
+        if (!personAi.owns(chat)) return;
+        if (!stopped) personAi.answered(chat);
+        svc.touch();
+      },
+    });
+    routes = new PersonsRoutes(service, { agent, sites, board, audio, poster: (v) => media.poster(v), uploads: media.uploadsDir(), ...(voice ? { voice } : {}), ai: personAi, socials: panelSocials as never, qr: async (t) => (await qrRows(t))?.rows ?? null });
     // People the phones were told about (a notification each): once nothing of theirs is unread any more (read here
     // or on a phone, Mark as read, a reply), the phones take it away.
     const told = new Set<string>();

@@ -340,6 +340,21 @@ describe("a chat's turn", () => {
     store.close();
   });
 
+  test("a chat another tab shows its own way (quietUnread) ends its turn without Projects' unread mark, and the hook hears it", async () => {
+    const { e, store } = setup();
+    const c = newChat(store);
+    const ended: [number, boolean][] = [];
+    e.host.quietUnread = (id) => id === c.id;
+    e.host.turnEnded = (id, stopped) => void ended.push([id, stopped]);
+    e.reload();
+    e.send(c.id, "hello");
+    await until("the turn's end", () => !e.running(c.id));
+    expect(texts(e.transcript(c.id).items)).toEqual(["user: hello", "echo: hello"]);
+    expect(e.unread.has(c.id)).toBe(false);
+    expect(ended).toEqual([[c.id, false]]);
+    store.close();
+  });
+
   test("Hub's MCP servers Claude reports failed leave a notice in the chat, once a turn; the user's own don't", async () => {
     const failing = join(base, "claude-mcpfail");
     const src = readFileSync(fake, "utf8");

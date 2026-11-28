@@ -122,6 +122,7 @@ export class PersonsRoutes {
         if (m === "GET" && rest.length === 2) return await this.chat(rest[1], c);
         if (m === "POST" && rest[2] === "send") return await this.send(rest[1], obj(c.body));
         if (m === "POST" && rest[2] === "read") return this.read(rest[1], obj(c.body));
+        if (m === "POST" && rest[2] === "ai-seen") return this.aiSeen(rest[1], obj(c.body));
         if (m === "POST" && rest[2] === "unread") return this.unread(rest[1], obj(c.body));
         if (m === "POST" && rest[2] === "typing") return this.typing(rest[1], obj(c.body));
         if (m === "POST" && rest[2] === "friend") return await this.friend(rest[1], obj(c.body));
@@ -324,6 +325,7 @@ export class PersonsRoutes {
     return {
       lastAt: i.lastAt ?? null,
       unread: i.unread,
+      aiUnread: i.aiUnread ?? 0,
       presence: i.presence ?? null,
       status: i.status ? { text: i.status.text, tone: TONE[i.status.tone] ?? "muted" } : null,
       channel: i.channel ?? null,
@@ -802,11 +804,26 @@ export class PersonsRoutes {
     return ok(json(res));
   }
 
-  /** Seen: every chat on the page (one timeline shows them all). */
+  /** Seen: every chat on the page (one timeline shows them all), and the Person AI's answers shown on it. */
   private read(personId: string, b: Record<string, unknown>): Reply {
     const r = this.resolve(personId, b);
     if (r) for (const ch of r.choices) this.s.markSeen(r.p.id, ch.conn.id, str(b.upTo), ch.peer);
+    this.aiSeen(personId, b);
     return ok({ ok: !!r });
+  }
+
+  /**
+   * `POST chat/{person}/ai-seen { section?, account? }`: the person's page was looked at, so the Person AI's answers on it
+   * (the AI chat of that page's section, as `chat` picks it) aren't unread any more. Nothing goes to Discord or Gmail.
+   */
+  private aiSeen(personId: string, b: Record<string, unknown>): Reply {
+    const p = this.s.person(decodeURIComponent(personId));
+    const ai = this.extra.ai;
+    if (!p || !ai?.seen) return ok({ ok: false });
+    const section = sectionOf(str(b.section)) ?? this.chatConn(p, null, str(b.account)).chat?.conn.section ?? "stores";
+    const gone = ai.seen([p.id, ...(p.links ?? []).map((l) => l.person.id)], section);
+    if (gone) this.s.touch();
+    return ok({ ok: true, seen: gone });
   }
 
   private unread(personId: string, b: Record<string, unknown>): Reply {
@@ -1357,6 +1374,8 @@ export interface AiPort {
   noteSr?(ref: string, chat: string, text: string): void;
   /** A site request's own turns with the Person AI (its notes and their answers; queued ones too), in time order. */
   srItems?(ref: string, current: string | null): Promise<{ id: string; role: "user" | "assistant"; text: string; at: string; streaming?: boolean; queued?: boolean }[]>;
+  /** The answers of these people's AI chats in `section` were seen (their unread mark goes). True when any were unseen. */
+  seen?(ids: readonly string[], section: SectionId): boolean;
   /** Hub's `/v1/state` body (projects, chats): Forward to Projects' picker. */
   hubState?(): Promise<unknown>;
   /** Forward to Projects: a new chat in project `project` (Hub's id), titled `title`, `text` its first message. */

@@ -1355,9 +1355,44 @@ class PersonsTab {
     this.chat = c;
     this.render();
     if (first) this.placeOpened(c);
-    // seen: the newest message (as opening it in the official client does), unless it was just marked unread
-    const unread = this.person(open.id)?.rows[open.section]?.unread ?? 0;
-    if (unread > 0 && this.ctx.shown() && this.holdUnread !== this.chatKey()) void this.api("POST", `chat/${encodeURIComponent(open.id)}/read`, { section: open.section, account: c.account?.id });
+    this.seenOpen();
+    this.aiFollow(c.ai ?? []);
+  }
+
+  /**
+   * The open page is on screen: its unread messages are seen (the newest, as opening it in the official client does,
+   * unless it was just marked unread), and so are the Person AI's answers on it (ai-seen: nothing goes to Discord).
+   */
+  private seenOpen(): void {
+    const open = this.ui.open;
+    const c = this.chat;
+    if (!open || !c || !this.ctx.shown()) return;
+    const row = this.person(open.id)?.rows[open.section];
+    const ai = row?.aiUnread ?? 0;
+    const unread = (row?.unread ?? 0) - ai;
+    const q = { section: open.section, account: c.account?.id };
+    if (unread > 0 && this.holdUnread !== this.chatKey()) void this.api("POST", `chat/${encodeURIComponent(open.id)}/read`, q);
+    else if (ai > 0) void this.api("POST", `chat/${encodeURIComponent(open.id)}/ai-seen`, q);
+  }
+
+  private aiTimer: ReturnType<typeof setTimeout> | null = null;
+  /** A question just sent from page `key`: until `until` (ms) the page waits for its answer (its turn may not show yet). */
+  private aiSent: { key: string; until: number } | null = null;
+
+  /**
+   * Follows the open page's Person AI while an answer is on its way (a question queued or being answered, or one just
+   * sent): the page is read again every 1.5 s, so the answer shows as it's written and once it's done. The engine also
+   * moves `rev` when an AI turn ends, which reloads the page at once; this is the safety net for a missed one.
+   */
+  private aiFollow(ai: readonly AiJson[]): void {
+    if (this.aiTimer || !this.alive) return;
+    const key = this.chatKey();
+    const sent = this.aiSent?.key === key && Date.now() < this.aiSent.until && ai.at(-1)?.role !== "assistant";
+    if (!aiWaiting(ai) && !sent) return;
+    this.aiTimer = setTimeout(() => {
+      this.aiTimer = null;
+      if (this.alive && this.ui.open && this.chatKey() === key) void this.loadChat(false);
+    }, 1500);
   }
 
   /** The panel: at once with the socials as cached, then again once their latest uploads are read. */
@@ -1500,6 +1535,7 @@ class PersonsTab {
         this.aiFiles = paths;
         this.setToast(`AI: ${String(r.body.error ?? "the Person AI didn't answer")}`);
       }
+      if (r.status === 200) this.aiSent = { key: `${open.id}:${open.section}`, until: Date.now() + 30_000 };
       void this.loadChat(false);
       return;
     }
@@ -3036,12 +3072,17 @@ export const personsUi: TabUi = {
     await tab.start();
   },
   shown: (on) => {
-    if (on) void tab?.["refresh"]();
+    if (on) void tab?.["refresh"]().then(() => tab?.["seenOpen"]());
     else tab?.["trim"]();
   },
   snapshot: () => tab?.snapshot() ?? null,
   restore: (s) => tab?.restore(s),
 };
+
+/** A page's Person AI is working: an answer being written or waited for (its question queued). */
+export function aiWaiting(ai: readonly AiJson[]): boolean {
+  return ai.some((a) => a.streaming || a.queued);
+}
 
 /** A request's turn with the AI is on its way: a note queued, or an answer being written. */
 function srAiBusy(ai: readonly AiJson[]): boolean {

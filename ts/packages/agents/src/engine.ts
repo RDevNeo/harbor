@@ -95,6 +95,9 @@ export interface EngineHost {
   notify?(kind: string, key: string, title: string, body: string, chat?: string): void;
   /** After a turn's end, for limits, recaps, pull requests and git status. */
   turnEnded?(chatId: number, stopped: boolean): void;
+  /** A chat another of Hub's tabs shows its own way (a Person AI's, in Persons): its ended turns aren't unread in
+   *  Projects (no dot, no count there); that tab marks them where it shows them. */
+  quietUnread?(chatId: number): boolean;
   /** The overlay profiles of chats commanded from other PCs, where a session may have been written (net's meshctx.rs). */
   overlays?(): string[];
   /** A chat changed project: its remembered workspace grants go (mcp's workspace.rs). */
@@ -1058,7 +1061,7 @@ export class Engine {
         // Subagents work behind the lead: only the lead notifies, once its subagents are done too.
         const sub = chat?.role === "sub";
         const teamBusy = !failed && this.teamStarted(id) !== null;
-        if (!visible && !sub && !resumes && !teamBusy) {
+        if (!visible && !sub && !resumes && !teamBusy && !(this.host.quietUnread?.(id) ?? false)) {
           this.unread.add(id);
           if (failed) this.failed.add(id);
           else this.failed.delete(id);

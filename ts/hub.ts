@@ -150,6 +150,7 @@ import {
 } from "./packages/net/src/index.ts";
 import { WindowMesh } from "./windowmesh.ts";
 import { TAB_ENGINES } from "./tabs/index.ts";
+import type { TabChats } from "./tabs/api.ts";
 import { DeviceMemory, sshOutput } from "./devicemem.ts";
 import { GUEST_NOTICE, MeshTurns } from "./meshturns.ts";
 import { type Chat, dataDir, home, pins, repoDir, secrets, settingsync, stateDir, Store, wssettings } from "./packages/store/src/index.ts";
@@ -160,7 +161,7 @@ import { chatCloud, cloudLog } from "./cloudsync.ts";
 import { carrySource, ContinueHere } from "./continuehere.ts";
 import { desktop } from "./packages/os/src/index.ts";
 
-export type HubHost = Pick<EngineHost, "changed" | "isForeign" | "copyTurn" | "hostname" | "chatLink" | "offline" | "turnEnded" | "moving" | "hold" | "prepare" | "hookBase" | "missingFolder" | "holdForClone" | "remoteSpec" | "turnContext" | "adopt" | "accounts" | "rediscover" | "computer" | "syncing" | "afterSync" | "tool" | "makeWorktree">;
+export type HubHost = Pick<EngineHost, "changed" | "isForeign" | "copyTurn" | "hostname" | "chatLink" | "offline" | "turnEnded" | "quietUnread" | "moving" | "hold" | "prepare" | "hookBase" | "missingFolder" | "holdForClone" | "remoteSpec" | "turnContext" | "adopt" | "accounts" | "rediscover" | "computer" | "syncing" | "afterSync" | "tool" | "makeWorktree">;
 
 export interface HubOptions {
   /** What peers and phones compare (advertised: older ones read only the first three numbers). */
@@ -1192,6 +1193,8 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
       ),
     remote: (m, args, ctx) => machines.remoteComputer(m, args, ctx),
   });
+  // Tabs that show some chats their own way (TabEngineCtx.chats): told of those chats' ended turns.
+  const tabChats: TabChats[] = [];
   const host: HubHost = {
     tool: (chat, name, args) => secretTools.tool(chat, name, args) ?? checkoutTools.tool(chat, name, args),
     makeWorktree: (lead, branch, base) => checkoutTools.makeWorktree(lead, branch, base),
@@ -1218,12 +1221,21 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
     remoteSpec,
     hookBase: () => hookcert.publicBase() ?? funnel.base,
     offline,
-    turnEnded: (id) => {
+    turnEnded: (id, stopped) => {
       prs.want(id, null);
       // Its session and work go up soon (continue anywhere): this PC may be switched off right after.
       cloud.soon();
       void meshTurns.afterTurn(id).catch(() => undefined);
+      // Hub's tabs that show chats their own way (Persons' Person AI) hear of it too.
+      for (const w of tabChats) {
+        try {
+          w.turnEnded(String(id), stopped);
+        } catch (e) {
+          console.error(`hub: a tab's turn hook failed: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
     },
+    quietUnread: (id) => tabChats.some((w) => w.quiet(String(id))),
     turnContext: (chat, remote) => meshTurns.context(chat, remote),
     adopt: (id, from) => meshTurns.adopt(id, from),
     moving: (chat) => (move?.movingTo(chat) ?? null) !== null,
@@ -1539,7 +1551,7 @@ export async function startHub(o: HubOptions): Promise<RunningHub> {
         const post = engine?.host.notify ?? own.notify;
         post?.(t.id, `${t.id}:${key}`, title, body);
       };
-      await t.start?.({ store, dir, env, changed: () => hub.touch(null, true), log: (line) => console.error(`hub: ${t.id}: ${line}`), call: callHere, notify, notePerson: (p) => notifier.notePerson(p), seenPerson: (id) => notifier.seenPerson(id) });
+      await t.start?.({ store, dir, env, changed: () => hub.touch(null, true), log: (line) => console.error(`hub: ${t.id}: ${line}`), call: callHere, chats: (w) => void tabChats.push(w), notify, notePerson: (p) => notifier.notePerson(p), seenPerson: (id) => notifier.seenPerson(id) });
     } catch (e) {
       console.error(`hub: the ${t.id} tab didn't start: ${e instanceof Error ? e.message : String(e)}`);
     }

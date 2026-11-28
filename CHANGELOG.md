@@ -6,6 +6,14 @@ still change); the version in `ts/package.json` is the source of truth, and a `v
 ## [Unreleased]
 
 ### Changed
+- **Persons: a Person AI answer never sticks on "Answering"; its unread mark is on the person (PC and phone).** The
+  open person page only read its AI answers again when something else of Persons changed (a message, typing,
+  presence), so an answer that came while nothing else moved stayed "Answering" until the page was opened again. Hub
+  now tells the Persons engine when a Person AI chat's turn ends, which moves its state at once, and the page follows
+  a running answer (every 1.5 s while one is written or a question waits). A finished answer nobody looked at is now
+  counted on that person's row in Persons (the white count, rolled up into the section, the store and the tab, on the
+  phone too) instead of a dot and count in Projects; opening the person's page clears it (nothing goes to Discord or
+  Gmail for that). The phone app is unchanged: it shows the engine's counts and its Mark as read clears them.
 - **Persons: files in chat messages show what they are and open (PC).** A file sent or received in a chat
   (WhatsApp, Discord, Gmail) is a card under the message: a PDF shows the top of its first page and "PDF · 2 pages ·
   65 KB"; a DOCX, XLSX, CSV, ZIP, APK… its type's icon, colour and extension with its size; a picture or video sent as

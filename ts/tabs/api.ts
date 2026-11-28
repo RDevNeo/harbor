@@ -22,6 +22,16 @@ export interface TabEngineCtx {
   notePerson?(p: NotePerson): void;
   /** A person's messages were all read (here, on a phone, or by a reply): the phones' notification for them goes. */
   seenPerson?(id: string): void;
+  /** Hub chats this tab shows its own way (Persons' Person AI chats): it hears of every ended turn, and the ones it
+   *  calls `quiet` get no unread mark in Projects (the tab shows its own). */
+  chats?(w: TabChats): void;
+}
+
+export interface TabChats {
+  /** Chat `chatId` (Hub's id) is shown by the tab: its ended turns aren't unread in Projects. */
+  quiet(chatId: string): boolean;
+  /** A chat's turn ended (every chat's; `stopped`: Stop ended it). */
+  turnEnded(chatId: string, stopped: boolean): void;
 }
 
 export interface TabEngine {

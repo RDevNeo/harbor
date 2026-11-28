@@ -8,7 +8,9 @@ export type SectionId = "stores" | "creators" | "spokpay" | "neobux" | "personal
 
 export interface RowJson {
   lastAt: string | null;
+  /** Unread messages plus the Person AI's answers not seen yet (`aiUnread` of them). */
   unread: number;
+  aiUnread?: number;
   presence: string | null;
   status: { text: string; tone: string } | null;
   channel: string | null;

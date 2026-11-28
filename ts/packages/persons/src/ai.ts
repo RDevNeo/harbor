@@ -204,6 +204,27 @@ export function srMerge(turns: readonly AiTurn[], pending: readonly SrPending[],
   return { items, pending: left };
 }
 
+/** ai-unread.json as read: positive whole counts only. */
+export function aiUnreadOf(v: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!v || typeof v !== "object" || Array.isArray(v)) return out;
+  for (const [k, n] of Object.entries(v as Record<string, unknown>)) if (typeof n === "number" && Number.isInteger(n) && n > 0) out[k] = n;
+  return out;
+}
+
+/** Key `k` ("<person id>:<section>") is one of these people's, in `section` (null: any). */
+export function aiKeyMatches(k: string, ids: readonly string[], section: SectionId | null): boolean {
+  const i = k.lastIndexOf(":");
+  return i > 0 && ids.includes(k.slice(0, i)) && (section === null || k.slice(i + 1) === section);
+}
+
+/** The unseen answers of these people in `section` (null: all sections). */
+export function aiUnreadCount(unread: Readonly<Record<string, number>>, ids: readonly string[], section: SectionId | null): number {
+  let n = 0;
+  for (const [k, c] of Object.entries(unread)) if (aiKeyMatches(k, ids, section)) n += c;
+  return n;
+}
+
 type HubCall = (method: string, path: string, query?: Record<string, string>, body?: unknown) => Promise<{ status: number; body: unknown }>;
 
 export class PersonAi implements AiPort {
@@ -216,6 +237,12 @@ export class PersonAi implements AiPort {
       if (existsSync(this.file)) this.chats = JSON.parse(readFileSync(this.file, "utf8")) as Record<string, string>;
     } catch {
       this.chats = {};
+    }
+    this.unreadFile = join(dir, "ai-unread.json");
+    try {
+      if (existsSync(this.unreadFile)) this.unread = aiUnreadOf(JSON.parse(readFileSync(this.unreadFile, "utf8")));
+    } catch {
+      this.unread = {};
     }
     this.srFile = join(dir, "sr-ai.json");
     try {
@@ -261,6 +288,46 @@ export class PersonAi implements AiPort {
   }
 
   private key = (p: Person, s: SectionId): string => `${p.id}:${s}`;
+  private unreadFile: string;
+  /** Answers not seen yet, by person+section key (ai-unread.json): the person's row shows them as unread. */
+  private unread: Record<string, number> = {};
+
+  private saveUnread(): void {
+    writeAtomic(this.unreadFile, JSON.stringify(this.unread, null, 2));
+  }
+
+  /** The person+section keys whose AI chat is `chat` (a site request's own chats, `sr:…`, aren't a person's). */
+  private keysOf(chat: string): string[] {
+    return Object.entries(this.chats).filter(([k, c]) => c === chat && !k.startsWith("sr:")).map(([k]) => k);
+  }
+
+  /** Chat `chat` is a person's AI chat: Persons shows its answers (and their unread mark), not Projects. */
+  owns(chat: string): boolean {
+    return this.keysOf(chat).length > 0;
+  }
+
+  /** A turn of `chat` ended with an answer: one more unseen on its person's row. False when it isn't a person's. */
+  answered(chat: string): boolean {
+    const keys = this.keysOf(chat);
+    if (!keys.length) return false;
+    for (const k of keys) this.unread[k] = (this.unread[k] ?? 0) + 1;
+    this.saveUnread();
+    return true;
+  }
+
+  /** Answers not seen yet of these people (a person and the ones linked into them), in `section` (null: all of them). */
+  unreadOf(ids: readonly string[], section: SectionId | null): number {
+    return aiUnreadCount(this.unread, ids, section);
+  }
+
+  /** The people's answers in `section` (null: all) were seen. True when there were any. */
+  seen(ids: readonly string[], section: SectionId | null): boolean {
+    const keys = Object.keys(this.unread).filter((k) => aiKeyMatches(k, ids, section));
+    if (!keys.length) return false;
+    for (const k of keys) delete this.unread[k];
+    this.saveUnread();
+    return true;
+  }
   private srFile: string;
   private srNotes: SrNotes = {};
 
@@ -308,6 +375,12 @@ export class PersonAi implements AiPort {
     this.chats[this.key(p, to)] = chat;
     delete this.chats[this.key(p, from)];
     writeAtomic(this.file, JSON.stringify(this.chats, null, 2));
+    const n = this.unread[this.key(p, from)];
+    if (n) {
+      this.unread[this.key(p, to)] = n;
+      delete this.unread[this.key(p, from)];
+      this.saveUnread();
+    }
   }
 
   async items(p: Person, s: SectionId): Promise<{ id: string; role: "user" | "assistant"; text: string; at: string }[]> {
