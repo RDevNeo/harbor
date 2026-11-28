@@ -157,6 +157,7 @@ function ensure(s: PersonsService, rec: CreatorRecord, kind: SendKind | null, to
       id: s.newId("p"),
       name: rec.name,
       discordId: kind === "discord" ? to : "",
+      ...(kind === "discord" && to && username ? { discordUsername: username } : {}),
       ...(email ? { email } : {}),
       ...(wa ? { whatsapp: wa } : {}),
       ...(kind === "instagram" && to ? { instagram: to, ...(username ? { instagramUsername: username } : {}) } : {}),
@@ -175,7 +176,7 @@ function ensure(s: PersonsService, rec: CreatorRecord, kind: SendKind | null, to
     let n = joinScope(x, scope, now);
     if (kind === "gmail" && to && !n.email) n = { ...n, email: to, updatedAt: now };
     if (kind === "whatsapp" && to && !n.whatsapp) n = { ...n, whatsapp: to, updatedAt: now };
-    if (kind === "discord" && to && !n.discordId) n = { ...n, discordId: to, updatedAt: now };
+    if (kind === "discord" && to && !n.discordId) n = { ...n, discordId: to, ...(username && !n.discordUsername ? { discordUsername: username } : {}), updatedAt: now };
     if (kind === "instagram" && to && !n.instagram) n = { ...n, instagram: to, ...(username ? { instagramUsername: username } : {}), updatedAt: now };
     const merged = normalizeSocials([...(n.socials ?? []), ...socials]).slice(0, 12);
     if (merged.length !== (n.socials ?? []).length) n = { ...n, socials: merged, updatedAt: now };
@@ -286,7 +287,20 @@ export function livePersons(svc: () => PersonsService | null): PersonsBridge {
       let username = "";
       if (kind === "gmail") to = i.to.trim().toLowerCase();
       else if (kind === "whatsapp") to = normWhatsApp(i.to);
-      else if (kind === "discord") to = /^\d{15,21}$/.test(i.to.trim().replace(/^@/, "")) ? i.to.trim().replace(/^@/, "") : "";
+      else if (kind === "discord") {
+        // a user ID as typed; a username is looked up on that Discord for its user ID (only people it shares a server
+        // or a DM with can be found)
+        const t = i.to.trim().replace(/^@/, "");
+        if (/^\d{15,21}$/.test(t)) to = t;
+        else
+          try {
+            const r = await resolveContact("discord", t, (q) => s.lookup(v.id, q));
+            to = r.id;
+            username = r.username;
+          } catch (e) {
+            return { ok: false, error: e instanceof Error ? e.message : String(e) };
+          }
+      }
       else {
         username = instagramHandle(i.to);
         const own = i.rec.platform === "instagram" && (i.rec.handle ?? "").replace(/^@/, "").toLowerCase() === username.toLowerCase() && isInstagramId(i.rec.platform_id) ? i.rec.platform_id : "";

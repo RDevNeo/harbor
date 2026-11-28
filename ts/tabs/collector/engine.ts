@@ -31,13 +31,14 @@
 //   GET  v1/collector/export?which=   {text, count}: the Available (or "approved") leads as JSONL for SpokPayCRM →
 //                                     Creators → Import
 //   GET  v1/collector/avatar?id=      a cached picture or thumbnail (the phone)
-//   GET  v1/collector/templates       the Send menu's templates; POST template {id?, name, description, subject, body};
+//   GET  v1/collector/templates       the Send menu's templates; POST template {id?, name, description, subject, body, place?};
 //                                     POST template-delete {id} (a built-in one is reset)
-//   GET  v1/collector/compose?id=&template=&channel=&kind=&place=&remember=1   the message for that lead (remember=1: the
+//   GET  v1/collector/compose?id=&template=&channel=&kind=&place=&remember=1&bytemplate=1   the message for that lead (remember=1: the
 //                                     template / channel was picked by the user, the next composer opens on it): channels (every Persons ›
 //                                     Creators connection: Gmail, WhatsApp, Discord, Instagram, with who they are
 //                                     there), template (the one asked for, else the one picked last, else ""
-//                                     = none: no default), to, subject (email), text, guard
+//                                     = none: no default), to, subject (email), text, guard; place: the template's
+//                                     Persons place when it was just picked (bytemplate=1) or opens on it, else the one asked for
 //   POST v1/collector/send            {id, channel, to, subject, text, place}: a real send (only on the user's click);
 //                                     place: where in Persons they go (compose's `places`, "creators" when absent)
 //   POST v1/collector/session         {platform: "instagram", cookie}; POST session-clear {platform}
@@ -61,10 +62,10 @@ import { allKeys, linkedKeys, ownKeys, recordId } from "./lib/identity.ts";
 import { Instagram } from "./lib/instagram.ts";
 import { kindOf, mergeLinks, normalizeUrl, whatsappOf } from "./lib/links.ts";
 import { crmCreators, crmRecord } from "./lib/crm.ts";
-import { isReachKind, normalizeReach, parseLinks, reachDrafts, reachError, whatsappDigits } from "./lib/reach.ts";
+import { isReachKind, normalizeReach, parseLinks, reachError, sendToError, sendToOf, whatsappDigits } from "./lib/reach.ts";
 import { sweepSocial, type SocialClient } from "./lib/social.ts";
 import { sweepYouTube, type Stats } from "./lib/sweep.ts";
-import { BLANK_TEMPLATE, fillTemplate, loadTemplates, templatesToSave, type Template } from "./lib/templates.ts";
+import { BLANK_TEMPLATE, fillTemplate, loadTemplates, templatePlace, templatesToSave, type Template } from "./lib/templates.ts";
 import { TikTok, TT_NOTE } from "./lib/tiktok.ts";
 import { APPROVE_PLACE, APPROVE_TO, normalizePlatforms, SORT_MODES, type SortMode, defaultData, exportText, GAP_CHOICES, listOf, type ApproveTo, migrate, normalizeTarget, PLATFORM_LABEL, PLATFORMS, type CollectorData, type CreatorPlatform, type CreatorRecord, type LogLine, type RecentVideo } from "./lib/types.ts";
 import { YouTube } from "./lib/youtube.ts";
@@ -77,13 +78,13 @@ import { normWhatsApp } from "../../packages/persons/src/model/accounts.ts";
 const NO_TO: Record<SendKind, string> = {
   gmail: "No email yet: type one.",
   whatsapp: "No WhatsApp number in their bio: type one.",
-  discord: "No Discord user ID yet: type one (17-20 digits).",
+  discord: "No Discord username or user ID yet: type one.",
   instagram: "No Instagram handle yet: type one.",
 };
 const TYPE_TO: Record<SendKind, string> = {
   gmail: "Type their email address.",
   whatsapp: "Type their WhatsApp number.",
-  discord: "Type their Discord user ID.",
+  discord: "Type their Discord username or user ID.",
   instagram: "Type their Instagram handle.",
 };
 import { buildView, creatorDetail, type SessionInfo, type SourceInfo } from "./view.ts";
@@ -924,7 +925,7 @@ export class Collector {
 
   saveTemplate(b: Record<string, unknown>): Template {
     const id = typeof b.id === "string" && b.id ? b.id : `t_${Date.now().toString(36)}`;
-    const t: Template = { id, name: String(b.name ?? "").trim() || "Untitled", description: String(b.description ?? ""), subject: String(b.subject ?? ""), body: String(b.body ?? "") };
+    const t: Template = { id, name: String(b.name ?? "").trim() || "Untitled", description: String(b.description ?? ""), subject: String(b.subject ?? ""), body: String(b.body ?? ""), ...(typeof b.place === "string" ? { place: b.place } : {}) };
     const i = this.templates.findIndex((x) => x.id === id);
     if (i >= 0) this.templates[i] = { ...this.templates[i]!, ...t };
     else this.templates.splice(Math.max(0, this.templates.length - 1), 0, t);
@@ -940,13 +941,26 @@ export class Collector {
     this.touch();
   }
 
-  /** The message for a creator: the channels it can go on (and to whom), the template filled, the CRM's guards. */
-  compose(id: string, templateId: string, channelId: string, kind = "", remember = false, placeWord = ""): unknown | null {
+  /** The message for a creator: the channels it can go on (and to whom), the template filled, the CRM's guards.
+   *  `byTemplate`: the template was just picked, so its Persons place (if it has one) replaces `placeWord`. */
+  compose(id: string, templateId: string, channelId: string, kind = "", remember = false, placeWord = "", byTemplate = false): unknown | null {
     const c = this.find(id);
     if (!c) return null;
-    // where in Persons they go: the place asked for, else the one picked last, else Creators
     const places = this.o.persons.places();
-    const place = places.find((x) => x.value === placeWord) ?? places.find((x) => x.value === this.data.settings.lastPlace) ?? places.find((x) => x.value === DEFAULT_PLACE) ?? places[0] ?? { value: DEFAULT_PLACE, label: "Creators", section: "creators" as const };
+    // No default template: the one asked for, else the one picked last, else none (an empty message, Blank's).
+    const t = this.templates.find((x) => x.id === templateId) ?? this.templates.find((x) => x.id === this.data.settings.lastTemplate) ?? null;
+    const from = t ?? BLANK_TEMPLATE;
+    // the template's Persons place ("Robux Paradise" → that store, SpokPay's → SpokPay; Blank and most of the user's own:
+    // none); an older saved template's is found by its name once, then kept in templates.json
+    const tp = t ? templatePlace(t, places) : { place: "", found: false };
+    if (t && tp.found && places.length) {
+      t.place = tp.place;
+      this.writeSide("templates.json", templatesToSave(this.templates));
+    }
+    // where in Persons they go: a template just picked with a place, else the place asked for (picked by hand, or the
+    // composer's as it was), else the template's when it opens (the one picked last), else the place picked last, else Creators
+    const word = (byTemplate && tp.place) || placeWord || tp.place;
+    const place = places.find((x) => x.value === word) ?? places.find((x) => x.value === this.data.settings.lastPlace) ?? places.find((x) => x.value === DEFAULT_PLACE) ?? places[0] ?? { value: DEFAULT_PLACE, label: "Creators", section: "creators" as const };
     const sectionName = SECTION_LABEL[place.section];
     // a template or channel the user picked in the composer is where the next one opens (kept in state.json: PC and phone)
     if (remember) {
@@ -965,14 +979,11 @@ export class Collector {
       }
       if (moved) this.save();
     }
-    // No default template: the one asked for, else the one picked last, else none (an empty message, Blank's).
-    const t = this.templates.find((x) => x.id === templateId) ?? this.templates.find((x) => x.id === this.data.settings.lastTemplate) ?? null;
-    const from = t ?? BLANK_TEMPLATE;
     // Every way Persons › Creators can write to them: its connections (Gmail, WhatsApp, Discord, Instagram), each with
     // who they are there (the email, the number, the Reach's Discord ID or Instagram handle); a kind Creators has no
     // connection for is still listed, with why it can't send.
-    const drafts = reachDrafts(c);
-    const toOf = (k: SendKind): string => (k === "gmail" ? (c.email ?? "") : k === "whatsapp" ? (c.whatsapp ?? "") : k === "discord" ? drafts.discord : drafts.instagram);
+    // who they are on each kind: their email, number, Discord user ID or username, Instagram handle (as the card shows)
+    const toOf = (k: SendKind): string => (k === "gmail" ? (c.email ?? "") : k === "whatsapp" ? (c.whatsapp ?? "") : sendToOf(c, k));
     const live = this.o.persons.channels(place.section);
     const chans = [
       ...live,
@@ -994,21 +1005,18 @@ export class Collector {
     const want: SendKind | "" = kind === "email" || kind === "gmail" ? "gmail" : (SEND_KINDS as readonly string[]).includes(kind) ? (kind as SendKind) : "";
     const reachKind: SendKind | "" = c.reach ? (c.reach.kind === "email" ? "gmail" : c.reach.kind) : "";
     const byKind = (k: SendKind | ""): (typeof chans)[number] | undefined => (k ? (chans.find((x) => x.kind === k && x.connected) ?? chans.find((x) => x.kind === k)) : undefined);
-    // the channel picked last, when it can send and the lead has someone valid there (an email, a number…)
-    const lastCh = this.data.settings.lastChannel;
-    const valid = (x: (typeof chans)[number]): boolean => x.connected && !!x.to && !reachError(x.kind === "gmail" ? "email" : x.kind, x.to);
-    // that connection, else (another place's connections) one of the same kind here
-    const lastKind = lastCh ? this.o.persons.channels().find((y) => y.id === lastCh)?.kind : undefined;
-    const last = lastCh ? (chans.find((x) => x.id === lastCh && valid(x)) ?? (lastKind ? chans.find((x) => x.kind === lastKind && valid(x)) : undefined)) : undefined;
-    // else the lead's own best way of contact (Reach first, then what was found) that Persons can send on
-    const theirs = [...new Set([...(reachKind ? [reachKind] : []), ...contactsOf(c).map((x): SendKind => (x.kind === "email" ? "gmail" : x.kind))])];
-    const best = theirs.map((k) => chans.find((x) => x.kind === k && valid(x))).find(Boolean);
-    const pick = chans.find((x) => x.id === channelId) ?? byKind(want) ?? last ?? best ?? (reachKind ? chans.find((x) => x.kind === reachKind && x.connected && x.to) : undefined) ?? chans.find((x) => x.connected && x.to) ?? chans.find((x) => x.connected) ?? chans[0] ?? null;
+    const valid = (x: (typeof chans)[number]): boolean => x.connected && !!x.to && !sendToError(x.kind === "gmail" ? "email" : x.kind, x.to);
+    const pick = chans.find((x) => x.id === channelId) ?? byKind(want) ?? composeChannel(chans, valid, {
+      // the lead's ways of contact in the card's order (the Reach first): the To it opens on
+      theirs: [...new Set([...(reachKind ? [reachKind] : []), ...contactsOf(c).map((x): SendKind => (x.kind === "email" ? "gmail" : x.kind))])].filter((k) => !!toOf(k)),
+      last: this.data.settings.lastChannel ?? "",
+      lastKind: this.data.settings.lastChannel ? this.o.persons.channels().find((y) => y.id === this.data.settings.lastChannel)?.kind : undefined,
+    });
     const who = { name: c.name, handle: (c.handle ?? "").replace(/^@/, "") };
     return {
       id,
       name: c.name,
-      templates: this.templates.map((x) => ({ id: x.id, name: x.name, description: x.description, builtin: !!x.builtin })),
+      templates: this.templates.map((x) => ({ id: x.id, name: x.name, description: x.description, builtin: !!x.builtin, place: x.place ?? "" })),
       template: t?.id ?? "",
       channels: chans,
       places: places.map((x) => ({ value: x.value, label: x.label, section: x.section })),
@@ -1043,7 +1051,7 @@ export class Collector {
     const text = String(b.text ?? "").trim();
     const subject = String(b.subject ?? "").trim();
     if (!to) return { ok: false, error: TYPE_TO[ch.kind] };
-    const bad = reachError(ch.kind === "gmail" ? "email" : ch.kind, to);
+    const bad = sendToError(ch.kind === "gmail" ? "email" : ch.kind, to);
     if (bad) return { ok: false, error: bad };
     if (!text) return { ok: false, error: "The message is empty." };
     if (ch.kind === "gmail" && !subject) return { ok: false, error: "Add a subject." };
@@ -1242,7 +1250,7 @@ export async function collectorRoute(c: Collector, call: Call): Promise<Reply | 
       c.deleteTemplate(String(bodyOf(call).id ?? ""));
       return ok({ templates: c.templates } as never);
     case "GET compose": {
-      const d = c.compose(queryOf(call, "id"), queryOf(call, "template"), queryOf(call, "channel"), queryOf(call, "kind"), queryOf(call, "remember") === "1", queryOf(call, "place"));
+      const d = c.compose(queryOf(call, "id"), queryOf(call, "template"), queryOf(call, "channel"), queryOf(call, "kind"), queryOf(call, "remember") === "1", queryOf(call, "place"), queryOf(call, "bytemplate") === "1");
       return d ? ok(d as never) : err(404, "No such creator");
     }
     case "POST send": {
@@ -1261,6 +1269,18 @@ export async function collectorRoute(c: Collector, call: Call): Promise<Reply | 
       return ok(c.view() as never);
   }
   return err(404, "No such Collector route");
+}
+
+/** Where Send message's To opens when nothing was asked for (pure: tested). The channel picked last when the lead has
+ *  someone valid there (an email, a number, a Discord user…); else the lead's best way of contact that can send (the
+ *  card's order, `theirs`); a lead with no contact at all opens on the channel picked last; one whose contacts can't
+ *  send yet (the connection isn't signed in) still opens on the best one, with its value and why; then any channel. */
+export function composeChannel<C extends { id: string; kind: SendKind; connected: boolean; to: string }>(chans: C[], valid: (x: C) => boolean, o: { theirs: SendKind[]; last: string; lastKind?: SendKind | undefined }): C | null {
+  const lastOf = (ok: (x: C) => boolean): C | undefined => (o.last ? (chans.find((x) => x.id === o.last && ok(x)) ?? (o.lastKind ? chans.find((x) => x.kind === o.lastKind && ok(x)) : undefined)) : undefined);
+  const byKind = (k: SendKind): C | undefined => chans.find((x) => x.kind === k && x.connected) ?? chans.find((x) => x.kind === k);
+  const best = o.theirs.map((k) => chans.find((x) => x.kind === k && valid(x))).find(Boolean);
+  const none = o.theirs.length === 0;
+  return lastOf(valid) ?? best ?? (none ? lastOf((x) => x.connected) : o.theirs[0] ? byKind(o.theirs[0]) : undefined) ?? chans.find((x) => x.connected && x.to) ?? chans.find((x) => x.connected) ?? chans[0] ?? null;
 }
 
 export const collectorEngine: TabEngine = {

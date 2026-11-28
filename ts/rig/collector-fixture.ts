@@ -92,7 +92,7 @@ export async function writeCollectorFixture(cdir: string, o: FixtureOpts = {}): 
       { email: "contato@lialooks.com.br", email_source: "YouTube About", subscriber_count: 570_000, video_count: 1_000, view_count: 69_000_000, description: "todo dia tem vídeo de Dress to Impress, espero você :)))\n\n📍contato@lialooks.com.br", reach: { kind: "email", value: "contato@lialooks.com.br" } },
     ),
     base("tiktok", "68110022334455", "Caio Runway", "@caiorunway", [{ label: "Beacons", url: "https://beacons.ai/caiorunway" }], [0, 2, 4], "DTI speedrun", { email: "caio.runway@gmail.com", email_source: "TikTok bio", view_count: 2_400_000, reach: { kind: "whatsapp", value: "+5521975709440" }, whatsapp: "5521975709440" }),
-    base("youtube", "UCrig0008leo", "Leo Builds", "@leobuilds", [], [1, 3, 6], "Construindo a casa dos inscritos", { email: null, subscriber_count: 8_400 }),
+    base("youtube", "UCrig0008leo", "Leo Builds", "@leobuilds", [], [1, 3, 6], "Construindo a casa dos inscritos", { email: null, subscriber_count: 8_400, description: "Construções toda semana\nDiscord: leobuilds" }),
     base("instagram", "4455667788", "Bia Joga", "@biajoga", [{ label: "Link in bio", url: "https://linktr.ee/biajoga" }], [2, 5, 8], "Look do dia no DTI", { email: null }),
     base("youtube", "UCrig0005raf", "Rafa Styles", "@rafastyles", [], [4, 9, 12], "Ranking every DTI theme", { email: "rafa.styles@outlook.com", email_source: "typed", email_manual: true }),
     base("tiktok", "68110099887766", "Tia Kitsune", "@tiakitsune", [{ label: "Instagram", url: "https://instagram.com/tiakitsune" }], [1, 1, 3], "POV: tema Y2K", { email: null, description: "POV de todo tema 💅\nDiscord: tiakitsune" }),

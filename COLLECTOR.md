@@ -74,7 +74,11 @@ the same content as a full-screen sheet:
 
 - Header: the picture (rounded square), the name, PLATFORM @handle, "Has Contact" when there's an email, a WhatsApp or a
   Reach; on the right Open channel (Open profile), Edit (name, handle, bio, links typed by hand; a later read never
-  replaces them), "3 of 12" and × (the phone: Open channel, Edit and "3 of 12" under its bar).
+  replaces them), "← 3 of 12 →" and × (the phone: Open channel, Edit and "3 of 12" under its bar, previous / next on
+  it). **← and →** (the arrow caps beside "3 of 12", too) go to the previous and next lead of the list the detail was
+  opened from, in every list (Collector's run, Available, Approved, Sent, Restricted, a History run), under review or
+  not, through the list as it was when opened (a lead that left it since can be opened again); never while a text
+  field has the focus or Edit / Send message is open. The phone: a hardware keyboard's ← → do the same.
 - Stat tiles, only those with data: YouTube Subscribers / Videos / Views, TikTok Followers / Videos / Likes, Instagram
   Followers / Posts (570K, 1K, 69M).
 - MOST RECENT: the 3 newest videos as the CRM's podium (#2, #1 wider and raised, #3): thumbnail, two lines of title,
@@ -92,7 +96,7 @@ the same content as a full-screen sheet:
 - The **review bar** at the bottom, only for leads still under review (a run's, Available's, Restricted's: not an
   Approved lead's, wherever it's opened, nor one opened from Approved or Sent; `underReview` in the PC's ui.ts), always under the content (the podium gives way in a short window; nothing reaches
   the bar) (a review queue's: four equal cells, the keys' caps after each label):
-  **Reject** (R or ←) moves the lead to Restricted; **Skip** (S or ↓) leaves it as it is; **Approve** (A or →) marks
+  **Reject** (R) moves the lead to Restricted; **Skip** (S or ↓) leaves it as it is; **Approve** (A) marks
   it approved (out of Available, into Approved) and adds them to **Persons › Creators**; **Neobux** (N) does the same
   into **Persons › Neobux** instead (`POST approve {to: "persons" | "neobux"}`). Both make (or join) the person the way
   Send message does (email and WhatsApp number when known, their profiles, Collector's notes; the list made when
@@ -182,7 +186,22 @@ Example, "dress to impress", Last upload 30 days (Nov 2026): YouTube @callmehhal
   (or joins) a person in the place picked (a store's people, or the Creators / SpokPay / Neobux / Personal list, made when
   missing) with that identifier (email, WhatsApp number, Discord ID, Instagram id: an
   Instagram lead's own id, else the handle looked up through Persons' Instagram) and the message is in that chat; a
-  Discord ID or Instagram handle sent to becomes their Reach when they have none. The CRM's guards: 30 new emails a
+  Discord ID or Instagram handle sent to becomes their Reach when they have none. A send from a lead's detail moves the
+  detail on to the lead that was after it in its list (the one right after, though the lead sent to has just left
+  Available or Approved for Sent: `leadAfterSend`), or closes it after the last one; a detail not opened from a list
+  stays on the lead (the phone: the same, back to the list at its end).
+- **To opens on the lead's own contact** (`composeChannel` in engine.ts): the channel picked last when the lead has
+  someone valid there; else their best way of contact that can send, in the card's order (Reach first), with its value
+  in To (a Discord contact found as a username counts: Send passes it to Persons, which looks up its user ID on that
+  Discord, "No Discord user @x found" when it can't; an invite is nobody to write to); a lead with no contact at all
+  opens on the channel picked last; one whose contacts can't send yet still opens on the best one, with its value and
+  why. Picking another channel fills To with their contact there, when they have one.
+- **A template sends to a Persons place** (`Template.place` in templates.json; `templatePlace`): SpokPay's go to
+  SpokPay, Blank to none; a template saved before places were linked takes the place named like it once ("Robux
+  Paradise" → Stores › Robux Paradise, "Neobux" → Neobux), kept in templates.json from then on; the user's own
+  otherwise none. Picking one (`compose?…&bytemplate=1`) moves Add to Persons › to its place (one without a place
+  leaves it); the user can still pick another place after. The composer opening on the template picked last opens on
+  its place. Save as template stores the place picked with the template (an edit without a place keeps its own). The CRM's guards: 30 new emails a
   rolling 24 h (shown only once reached), no second send to the same person within 2 minutes.
   `HUB_COLLECTOR_SEND=fake` records instead of sending (its fake Persons has Gmail, WhatsApp, Discord and a signed-out
   Instagram).

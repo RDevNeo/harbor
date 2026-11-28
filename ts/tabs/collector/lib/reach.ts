@@ -50,6 +50,30 @@ export function reachError(kind: ReachKind, value: string): string | null {
   }
 }
 
+/** Discord's usernames (the new kind: 2-32 of letters, digits, _ and .). */
+const DISCORD_USERNAME = /^[\w.]{2,32}$/;
+
+/** Send message's To (pure: tested): as Reach's checks, except that Discord also takes a username (Persons looks it up
+ *  for the user ID when it sends), so a Discord contact found as a username can be written to. Null: fine. */
+export function sendToError(kind: ReachKind, value: string): string | null {
+  const v = value.trim();
+  if (kind === "discord") {
+    const t = v.replace(/^@/, "");
+    // digits alone are a user ID (17-20 of them), anything else a username
+    return !t || SNOWFLAKE.test(t) || (!/^\d+$/.test(t) && DISCORD_USERNAME.test(t)) ? null : "A Discord username, or a user ID (17-20 digits).";
+  }
+  return reachError(kind, v);
+}
+
+/** The value Send message's To takes for a contact on `kind` (pure: tested): a Discord user ID or username (not an
+ *  invite: nobody to write to), the others as found. "" when there is none. */
+export function sendToOf(c: CreatorRecord, kind: ReachKind): string {
+  const drafts = reachDrafts(c);
+  if (drafts[kind] && !sendToError(kind, drafts[kind])) return drafts[kind];
+  const found = contactsOf(c).find((x) => x.kind === kind && !!x.value.trim() && !sendToError(kind, x.value));
+  return found ? (kind === "discord" ? found.value.trim().replace(/^@/, "") : found.value) : drafts[kind];
+}
+
 export function normalizeReach(kind: ReachKind, value: string): string {
   const v = value.trim();
   if (kind === "email") return v.toLowerCase();

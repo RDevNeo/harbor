@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bioLine, contactLine, destRows, formOf, historyItems, leadsOf, runHead, nextLead, platformCounts, sortRows, sortShort, podium, reachState, runLine, underReview, approveTarget, REVIEW_MOVES, type CollectorView, type Compose, type Row } from "../src/tabs/collector/ui.ts";
+import { bioLine, contactLine, destRows, formOf, historyItems, leadsOf, runHead, nextLead, stepLead, leadAfterSend, platformCounts, sortRows, sortShort, podium, reachState, runLine, underReview, approveTarget, REVIEW_MOVES, type CollectorView, type Compose, type Row } from "../src/tabs/collector/ui.ts";
 import type { DetailView } from "../../../tabs/collector/view.ts";
 import { GAP_CHOICES, defaultSettings } from "../../../tabs/collector/lib/types.ts";
 
@@ -145,6 +145,25 @@ describe("collector review bar", () => {
     expect(nextLead(q, "c", ["a", "b", "c"])).toBeNull();
     expect(nextLead(q, "zz", q)).toBeNull();
     expect(nextLead([], "a", ["a"])).toBeNull();
+  });
+  it("← / → step through the list as it was opened, in every list (leads that left it too); null at the ends", () => {
+    const q = ["a", "b", "c"];
+    expect([stepLead(q, "b", -1), stepLead(q, "b", 1)]).toEqual(["a", "c"]);
+    expect([stepLead(q, "a", -1), stepLead(q, "c", 1)]).toEqual([null, null]);
+    // not opened from a list: nowhere to go
+    expect([stepLead([], "a", 1), stepLead(q, "zz", 1), stepLead(q, "b", 0)]).toEqual([null, null, null]);
+  });
+  it("a send from the detail goes on to the lead that was after it, never one further; closes at the end", () => {
+    // "49 of 190": 49 was sent to and left Available for Sent; the next is 50, not 51
+    const q = Array.from({ length: 190 }, (_, i) => `l${i + 1}`);
+    const live = q.filter((x) => x !== "l49");
+    expect(leadAfterSend(q, "l49", live)).toBe("l50");
+    // in Sent the lead stays in the list: still the one after it
+    expect(leadAfterSend(q, "l49", q)).toBe("l50");
+    // the last one: "" (the detail closes)
+    expect(leadAfterSend(q, "l190", q.slice(0, 189))).toBe("");
+    // a detail not opened from a list stays on the lead
+    expect(leadAfterSend([], "l1", q)).toBeNull();
   });
 });
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { YouTube, handleOf, ytParseCount, ytSearchParam, ytParseFeed, ytUnwrapRedirect, ytUploadersFromSearch, ytParseAbout } from "../lib/youtube.ts";
@@ -11,10 +11,10 @@ import { extractUrls, normalizeUrl, profileKeyOf, kindOf, whatsappOf } from "../
 import { bestEmail, extractEmails } from "../lib/email.ts";
 import { enrich, linktreeLinks } from "../lib/enrich.ts";
 import { allKeys } from "../lib/identity.ts";
-import { fillTemplate, loadTemplates, templatesToSave } from "../lib/templates.ts";
+import { fillTemplate, loadTemplates, templatePlace, templatesToSave } from "../lib/templates.ts";
 import { sweepSocial, type Profile, type SocialClient } from "../lib/social.ts";
 import { fakePersons, livePersons, type SendInput, type SentEvent } from "../persons-bridge.ts";
-import { brandOf, linkTitle, normalizeReach, parseLinks, reachError, reachHref } from "../lib/reach.ts";
+import { brandOf, linkTitle, normalizeReach, parseLinks, reachError, reachHref, sendToError } from "../lib/reach.ts";
 import { crmRecord } from "../lib/crm.ts";
 import type { DetailView } from "../view.ts";
 
@@ -525,6 +525,92 @@ describe("collector", () => {
     await c.flush();
     const again = new Collector(dir, deps({ persons }));
     expect(again.data.settings).toMatchObject({ lastTemplate: "loja-parceira", lastChannel: "creators-whatsapp" });
+  });
+  it("Send message opens on the lead's own contact (a Discord username too), prefilled; the last channel only when they're there or have none", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "collector-"));
+    const sent: SendInput[] = [];
+    const c = new Collector(dir, deps({ persons: fakePersons({ sent }) }));
+    c.data.creators.push(
+      // AdrianSky: only a Discord username, found in the bio
+      rec({ platform: "youtube", platform_id: "UC1", name: "AdrianSky", contacts: [{ kind: "discord", value: "adriansky", source: "YouTube bio" }] }),
+      rec({ platform: "youtube", platform_id: "UC2", name: "Bo" }),
+      rec({ platform: "youtube", platform_id: "UC3", name: "Cy", email: "cy@x.com", whatsapp: "5521975709440" }),
+      rec({ platform: "youtube", platform_id: "UC4", name: "Di", contacts: [{ kind: "discord", value: "discord.gg/abc", source: "YouTube bio" }] }),
+    );
+    c.data.settings.lastChannel = "creators-gmail";
+    const call = caller(c);
+    type M = { channel: string; kind: string; to: string; channels: { id: string; to: string }[] };
+    const open = async (id: string, q: [string, string][] = []): Promise<M> => (await call("GET", "compose", null, [["id", id], ...q]))!.body as M;
+    // the last channel was Email, but Adrian has no email: Discord, with his username in To
+    expect(await open("youtube:UC1")).toMatchObject({ channel: "creators-discord", kind: "discord", to: "adriansky" });
+    // another channel picked: its contact when they have one there, else empty
+    expect(await open("youtube:UC1", [["channel", "creators-gmail"]])).toMatchObject({ channel: "creators-gmail", to: "" });
+    // no contact at all: the channel picked last
+    expect((await open("youtube:UC2")).channel).toBe("creators-gmail");
+    c.data.settings.lastChannel = "creators-whatsapp";
+    expect((await open("youtube:UC2")).channel).toBe("creators-whatsapp");
+    // a contact on the last channel: that one (Cy's best is the email, but WhatsApp was picked last and he's there)
+    expect(await open("youtube:UC3")).toMatchObject({ channel: "creators-whatsapp", to: "5521975709440" });
+    expect((await open("youtube:UC3", [["channel", "creators-gmail"]])).to).toBe("cy@x.com");
+    // a Discord invite is nobody to write to: no To, and the channel picked last (they have no contact it can use)
+    expect((await open("youtube:UC4")).channels.find((x) => x.id === "creators-discord")!.to).toBe("");
+    // a username goes to Persons as typed (it looks the user ID up when it sends)
+    expect((await call("POST", "send", { id: "youtube:UC1", channel: "creators-discord", to: "adriansky", text: "Oi" }))!.status).toBe(200);
+    expect(sent.map((x) => [x.channel, x.to])).toEqual([["creators-discord", "adriansky"]]);
+    expect([sendToError("discord", "adriansky"), sendToError("discord", "@adrian.sky"), sendToError("discord", "123456789012345678")]).toEqual([null, null, null]);
+    expect(sendToError("discord", "discord.gg/abc")).not.toBeNull();
+    // Reach keeps the CRM's rule: a Discord user ID only
+    expect(reachError("discord", "adriansky")).not.toBeNull();
+  });
+  it("a template sends to its Persons place: picking it moves Add to Persons there; Blank and placeless ones leave it; Save as template keeps the place", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "collector-"));
+    const places = [
+      { value: "store:rp", label: "Robux Paradise", section: "stores" as const },
+      { value: "store:meoow", label: "Meoow Store", section: "stores" as const },
+      { value: "creators", label: "Creators", section: "creators" as const },
+      { value: "spokpay", label: "SpokPay", section: "spokpay" as const },
+      { value: "neobux", label: "Neobux", section: "neobux" as const },
+    ];
+    // the user's templates as saved before places were linked (no `place`), and one of their own
+    writeFileSync(join(dir, "templates.json"), JSON.stringify([
+      { id: "robux-paradise", name: "Robux Paradise", description: "", subject: "Oi", body: "Oi {name}" },
+      { id: "meoow-store", name: "Meoow Store", description: "", subject: "Oi", body: "Oi {name}" },
+      { id: "neobux", name: "Neobux", description: "", subject: "Oi", body: "Oi {name}" },
+      { id: "mine", name: "Meu texto", description: "", subject: "Oi", body: "Oi {name}" },
+    ]));
+    const c = new Collector(dir, deps({ persons: fakePersons({ places }) }));
+    c.data.creators.push(rec({ platform: "youtube", platform_id: "UC1", name: "Ana", email: "ana@x.com" }));
+    const call = caller(c);
+    type M = { place: string; template: string; templates: { id: string; place: string }[] };
+    const open = async (q: [string, string][] = []): Promise<M> => (await call("GET", "compose", null, [["id", "youtube:UC1"], ...q]))!.body as M;
+    expect((await open()).place).toBe("creators");
+    // picked (the UI passes the place it shows, and bytemplate=1): the template's place
+    const pick = (tid: string, from: string) => open([["template", tid], ["place", from], ["remember", "1"], ["bytemplate", "1"]]);
+    expect((await pick("robux-paradise", "creators")).place).toBe("store:rp");
+    expect((await pick("meoow-store", "store:rp")).place).toBe("store:meoow");
+    expect((await pick("padrao", "store:meoow")).place).toBe("spokpay");
+    expect((await pick("site-da-loja", "creators")).place).toBe("spokpay");
+    expect((await pick("neobux", "creators")).place).toBe("neobux");
+    // Blank and one of their own without a place: the place stays
+    expect((await pick("blank", "store:rp")).place).toBe("store:rp");
+    expect((await pick("mine", "neobux")).place).toBe("neobux");
+    // changed by hand after a template: that place
+    expect((await open([["template", "robux-paradise"], ["place", "creators"], ["remember", "1"]])).place).toBe("creators");
+    // the composer opens on the template picked last: its place
+    await pick("neobux", "creators");
+    expect(await open()).toMatchObject({ template: "neobux", place: "neobux" });
+    // found by name once, then kept in templates.json (a renamed template keeps it)
+    const kept = JSON.parse(readFileSync(join(dir, "templates.json"), "utf8")) as { id: string; place?: string }[];
+    expect(Object.fromEntries(kept.map((t) => [t.id, t.place]))).toMatchObject({ "robux-paradise": "store:rp", "meoow-store": "store:meoow", neobux: "neobux", mine: "" });
+    expect((await open()).templates.find((t) => t.id === "padrao")!.place).toBe("spokpay");
+    // Save as template: the place picked goes with it
+    const saved = (await call("POST", "template", { name: "Shark", subject: "S", body: "B", place: "store:meoow" }))!.body as { template: { id: string; place: string } };
+    expect(saved.template.place).toBe("store:meoow");
+    expect((await pick(saved.template.id, "creators")).place).toBe("store:meoow");
+    // an edit without a place keeps the one it had
+    await call("POST", "template", { id: saved.template.id, name: "Shark 2", subject: "S", body: "B2" });
+    expect((await pick(saved.template.id, "creators")).place).toBe("store:meoow");
+    expect([templatePlace({ name: "robux paradise" }, places), templatePlace({ name: "X", place: "store:gone" }, places)]).toEqual([{ place: "store:rp", found: true }, { place: "", found: false }]);
   });
   it("Send message picks where in Persons they go (its places); the channels follow that place's section; remembered", async () => {
     const dir = mkdtempSync(join(tmpdir(), "collector-"));

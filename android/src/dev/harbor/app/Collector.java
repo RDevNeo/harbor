@@ -209,6 +209,52 @@ public class Collector extends Base {
         }
     }
 
+    /** A hardware keyboard's ← / → on a lead's detail: the previous / next lead of its list (as the PC's dialog), never
+     *  while a text field has the focus (the note, Reach, Edit) or with a modifier. */
+    @Override
+    public boolean dispatchKeyEvent(android.view.KeyEvent e) {
+        int k = e.getKeyCode();
+        if ((k == android.view.KeyEvent.KEYCODE_DPAD_LEFT || k == android.view.KeyEvent.KEYCODE_DPAD_RIGHT) && !stack.isEmpty()
+                && stack.get(stack.size() - 1) instanceof CollectorCreator.Detail && !(getCurrentFocus() instanceof android.widget.EditText)
+                && !e.isCtrlPressed() && !e.isAltPressed() && !e.isMetaPressed() && !e.isShiftPressed()) {
+            Swap.input();
+            Swap.dirty();
+            if (e.getAction() == android.view.KeyEvent.ACTION_DOWN)
+                ((CollectorCreator.Detail) stack.get(stack.size() - 1)).step(k == android.view.KeyEvent.KEYCODE_DPAD_LEFT ? -1 : 1);
+            return true;
+        }
+        return super.dispatchKeyEvent(e);
+    }
+
+    /** Send message went out (CollectorCreator.Compose): back to what's under it. Over a lead's detail opened from a
+     *  list, on to the lead that was after it in that list (it may have just left the list for Sent: never one further),
+     *  or back to the list at its end; the composer stays up until the list is read again. */
+    void sent(String id) {
+        int n = stack.size();
+        Screen under = n >= 2 ? stack.get(n - 2) : null;
+        if (!(under instanceof CollectorCreator.Detail) || !((CollectorCreator.Detail) under).id().equals(id) || !((CollectorCreator.Detail) under).queue().contains(id)) { pop(); return; }
+        final List<String> queue = ((CollectorCreator.Detail) under).queue();
+        final Hub h = hub;
+        Runnable next = () -> {
+            if (isDestroyed() || stack.size() != n) return;
+            stack.remove(n - 1);
+            String o = LeadNav.afterSend(queue, id, rowIds());
+            if (o == null || o.isEmpty()) pop();
+            else replace(new CollectorCreator.Detail(this, o, nameOf(o), queue));
+        };
+        if (h == null) { next.run(); return; }
+        Ui.pool.execute(() -> {
+            JSONObject v = null;
+            try { v = h.get("/v1/collector"); } catch (Exception ignored) { }
+            final JSONObject got = v;
+            Ui.main.post(() -> {
+                if (got != null && got.has("settings")) { view = got; draw(); }
+                next.run();
+            });
+        });
+    }
+
+
     private void hideKeyboard() {
         View f = getCurrentFocus();
         if (f != null) ((InputMethodManager) getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(f.getWindowToken(), 0);
@@ -1004,12 +1050,8 @@ public class Collector extends Base {
     }
 
     /** The lead after `current` in `queue` that is still in `live` (the review bar's next); null at the end. */
-    static String nextLead(List<String> queue, String current, List<String> live) {
-        int at = queue.indexOf(current);
-        if (at < 0) return null;
-        for (int i = at + 1; i < queue.size(); i++) if (!queue.get(i).equals(current) && live.contains(queue.get(i))) return queue.get(i);
-        return null;
-    }
+    static String nextLead(List<String> queue, String current, List<String> live) { return LeadNav.nextLead(queue, current, live); }
+
 
     /** The review bar: "reject" (to Restricted), "skip" (as it is), "approve" (to the Approved list and Persons ›
      *  Creators), "neobux" (to the Approved list and Persons › Neobux); then the next

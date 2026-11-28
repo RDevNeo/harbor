@@ -154,13 +154,17 @@ final class CollectorCreator {
         /** GET compose: the message for this template, channel and Persons place ("" the one picked last); keep = what
          *  was written stays (another channel or place); remember = the user picked it, so the next composer (PC or
          *  phone) opens on it. */
-        private void load(String template, String channel, boolean keep, boolean remember, String place) {
+        private void load(String template, String channel, boolean keep, boolean remember, String place) { load(template, channel, keep, remember, place, false); }
+
+        /** The same; byTemplate: the template was just picked, so its Persons place (if it has one) moves "Add to
+         *  Persons ›" there. */
+        private void load(String template, String channel, boolean keep, boolean remember, String place, boolean byTemplate) {
             if (h == null) return;
             final String keepText = keep && text != null ? text.getText().toString() : null;
             final String keepSubject = keep && subject != null ? subject.getText().toString() : null;
             final String pl = place.isEmpty() ? place() : place;
             final String want = !switchKind.isEmpty() ? switchKind : kind;
-            Ui.bg(a, () -> h.get("/v1/collector/compose?id=" + Collector.q(id) + "&template=" + Collector.q(template) + "&channel=" + Collector.q(channel) + (channel.isEmpty() ? "&kind=" + Collector.q(want) : "") + "&place=" + Collector.q(pl) + (remember ? "&remember=1" : "")), r -> {
+            Ui.bg(a, () -> h.get("/v1/collector/compose?id=" + Collector.q(id) + "&template=" + Collector.q(template) + "&channel=" + Collector.q(channel) + (channel.isEmpty() ? "&kind=" + Collector.q(want) : "") + "&place=" + Collector.q(pl) + (remember ? "&remember=1" : "") + (byTemplate ? "&bytemplate=1" : "")), r -> {
                 c = r;
                 draw();
                 if (!switchTo.isEmpty() && to != null && sendKind().equals(switchKind)) to.setText(switchTo);
@@ -218,8 +222,8 @@ final class CollectorCreator {
             tr.addView(label("To"), Ui.wrap());
             tr.addView(pill(brand(a, mark(sk), 16, picked != null && picked.optBoolean("connected") ? brandColor(mark(sk)) : Ui.G600), picked == null ? "Pick where it goes" : kindLabel(sk), v -> pickDestination()), Ui.wrap());
             card.addView(tr, Ui.fill());
-            to = Ui.input(a, em ? "their@email.com" : "whatsapp".equals(sk) ? "+55 11 91234-5678" : "discord".equals(sk) ? "Discord user ID (17-20 digits)" : "@handle", false);
-            to.setInputType(em ? InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS : "whatsapp".equals(sk) ? InputType.TYPE_CLASS_PHONE : "discord".equals(sk) ? InputType.TYPE_CLASS_NUMBER : InputType.TYPE_CLASS_TEXT);
+            to = Ui.input(a, em ? "their@email.com" : "whatsapp".equals(sk) ? "+55 11 91234-5678" : "discord".equals(sk) ? "Discord username or user ID" : "@handle", false);
+            to.setInputType(em ? InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS : "whatsapp".equals(sk) ? InputType.TYPE_CLASS_PHONE : InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
             to.setTypeface(Ui.sans);
             to.setBackground(Ui.round(Ui.BG, Ui.LINE, 12));
             to.setText(c.optString("to"));
@@ -402,7 +406,7 @@ final class CollectorCreator {
                 final String tid = t.optString("id");
                 boolean on = tid.equals(template());
                 rows.add(sheetRow(null, t.optString("name"), "", t.optString("description"), Ui.G600, on, false));
-                picks.add(on ? null : () -> load(tid, channel(), false, true, ""));
+                picks.add(on ? null : () -> load(tid, channel(), false, true, "", true));
             }
             sheet("Template", rows, picks);
         }
@@ -415,7 +419,7 @@ final class CollectorCreator {
             final String msg = text.getText().toString().trim();
             final boolean em = email();
             final String sk = sendKind();
-            if (dest.isEmpty()) { Ui.toast(a, em ? "Type their email address." : "whatsapp".equals(sk) ? "Type their WhatsApp number." : "discord".equals(sk) ? "Type their Discord user ID." : "Type their Instagram handle."); return; }
+            if (dest.isEmpty()) { Ui.toast(a, em ? "Type their email address." : "whatsapp".equals(sk) ? "Type their WhatsApp number." : "discord".equals(sk) ? "Type their Discord username or user ID." : "Type their Instagram handle."); return; }
             if (msg.isEmpty()) { Ui.toast(a, "The message is empty."); return; }
             if (em && subj.isEmpty()) { Ui.toast(a, "Add a subject."); return; }
             String preview = msg.length() > 280 ? msg.substring(0, 280) + "…" : msg;
@@ -442,7 +446,8 @@ final class CollectorCreator {
                     Ui.main.post(() -> {
                         sending = false;
                         Ui.toast(a, "Sent. They're in Persons › " + placeLabel() + ".");
-                        if (!a.isDestroyed()) a.pop();
+                        // over a lead's detail: on to the next lead of its list
+                        if (!a.isDestroyed()) a.sent(id);
                     });
                 } catch (Exception e) {
                     Ui.main.post(() -> {
@@ -474,7 +479,8 @@ final class CollectorCreator {
             try {
                 if (!tid.isEmpty() && !"blank".equals(tid)) b.put("id", tid).put("name", templateName());
                 else b.put("name", "Template " + new java.text.SimpleDateFormat("dd/MM/yyyy", Locale.US).format(new java.util.Date())).put("description", "");
-                b.put("subject", subject == null ? "" : subject.getText().toString()).put("body", bd);
+                // the place picked goes with it: picking it again sends them there
+                b.put("subject", subject == null ? "" : subject.getText().toString()).put("body", bd).put("place", place());
             } catch (Exception ignored) { }
             final String keepS = subject == null ? null : subject.getText().toString();
             final String keepT = text.getText().toString();
@@ -747,11 +753,10 @@ final class CollectorCreator {
 
         @Override public void shown() { load(false); }
 
-        /** The previous (-1) or next (+1) lead of the list, in place of this one. */
-        private void step(int dir) {
-            int at = queue.indexOf(id) + dir;
-            if (at < 0 || at >= queue.size()) return;
-            String other = queue.get(at);
+        /** The previous (-1) or next (+1) lead of the list, in place of this one (the top bar's arrows, a keyboard's ← →). */
+        void step(int dir) {
+            String other = LeadNav.step(queue, id, dir);
+            if (other == null) return;
             a.replace(new Detail(a, other, a.nameOf(other), queue));
         }
 

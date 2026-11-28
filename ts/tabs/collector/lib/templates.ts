@@ -11,11 +11,15 @@ export interface Template {
   body: string;
   /** One of the built-ins (it can be edited and reset, not deleted). */
   builtin?: boolean;
+  /** Where in Persons picking it sends them (Send message's "Add to Persons ›"): a Persons place word ("store:<id>",
+   *  "creators", "spokpay", "neobux", "personal"); "" leaves the place as it is (Blank). Absent on a template saved
+   *  before places were linked: found once from its name (templatePlace), then kept. */
+  place?: string;
 }
 
 const SIGNATURE = "Igor, SpokPay\nspokpay.com";
 
-export const BLANK_TEMPLATE: Template = { id: "blank", name: "Blank", description: "Em branco", subject: "", body: "", builtin: true };
+export const BLANK_TEMPLATE: Template = { id: "blank", name: "Blank", description: "Em branco", subject: "", body: "", builtin: true, place: "" };
 
 /** The built-ins: SpokPay's CRM outreach emails (ids kept, so edited copies in templates.json still map), named
  *  "SpokPay · …" (none is a default), and Blank, always last. */
@@ -24,6 +28,7 @@ export const BUILTIN_TEMPLATES: Template[] = [
     id: "padrao",
     name: "SpokPay · Sem loja",
     description: "Criador sem loja: uma loja própria do canal",
+    place: "spokpay",
     subject: "Sua loja profissional.",
     body: `Olá {name}, tudo bem?
 
@@ -40,6 +45,7 @@ ${SIGNATURE}`,
     id: "loja-parceira",
     name: "SpokPay · Loja parceira",
     description: "Criador que divulga a loja de um parceiro",
+    place: "spokpay",
     subject: "Sua loja própria",
     body: `Olá {name}, tudo bem?
 
@@ -56,6 +62,7 @@ ${SIGNATURE}`,
     id: "site-da-loja",
     name: "SpokPay · Site para a loja",
     description: "Criador com loja num template genérico",
+    place: "spokpay",
     subject: "Um site feito para a sua loja",
     body: `Olá {name}, tudo bem?
 
@@ -105,6 +112,7 @@ export function loadTemplates(raw: unknown): Template[] {
     subject: String(t.subject ?? "").slice(0, 300),
     body: String(t.body ?? "").slice(0, 20_000),
     ...(builtin ? { builtin: true } : {}),
+    ...(typeof t.place === "string" ? { place: t.place.slice(0, 120) } : {}),
   });
   const out = BUILTIN_TEMPLATES.map((b) => {
     const s = saved.find((x) => x.id === b.id);
@@ -118,6 +126,16 @@ export function loadTemplates(raw: unknown): Template[] {
 export function templatesToSave(list: Template[]): Template[] {
   return list.filter((t) => {
     const b = BUILTIN_TEMPLATES.find((x) => x.id === t.id);
-    return !b || b.name !== t.name || b.description !== t.description || b.subject !== t.subject || b.body !== t.body;
+    return !b || b.name !== t.name || b.description !== t.description || b.subject !== t.subject || b.body !== t.body || (b.place ?? "") !== (t.place ?? "");
   }).map(({ builtin: _b, ...t }) => t);
+}
+
+/** The Persons place a template sends to (pure: tested): its own `place` ("" none); a template saved before places were
+ *  linked (no `place`) takes the place whose name is its name ("Robux Paradise" → that store, "Neobux" → Neobux), else
+ *  none. `found` says it was found by name, so the caller keeps it in the template from then on. */
+export function templatePlace(t: Pick<Template, "name" | "place">, places: { value: string; label: string }[]): { place: string; found: boolean } {
+  if (typeof t.place === "string") return { place: places.some((p) => p.value === t.place) ? t.place : "", found: false };
+  const n = t.name.trim().toLowerCase();
+  const hit = n ? places.find((p) => p.label.trim().toLowerCase() === n) : undefined;
+  return { place: hit?.value ?? "", found: true };
 }

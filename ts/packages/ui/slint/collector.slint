@@ -165,6 +165,9 @@ export global CollectorBus {
     in property <bool> d-review: true;
     /** "3 of 12": where this lead is in the list the detail was opened from ("" alone). */
     in property <string> d-position;
+    /** The detail has a lead before / after it in the list it was opened from (← and → go there). */
+    in property <bool> d-has-prev;
+    in property <bool> d-has-next;
     in property <bool> review-busy;
     // The lists' Sort and "Show only — platforms" (beside the filter box)
     in property <string> sort-label;
@@ -229,6 +232,8 @@ export global CollectorBus {
     /** "reject", "skip", "approve" (Approved and Persons › Creators) or "neobux" (Approved and Persons › Neobux): then
      *  the next lead of the list. */
     callback review(string);
+    /** The previous (-1) or next (+1) lead of the list the detail was opened from (← and →, in every list). */
+    callback detail-step(int);
     /** A card's Unapprove (false). */
     callback approve-set(string, bool);
     callback list-menu-show(string);
@@ -1969,10 +1974,22 @@ component DetailDialog inherits Rectangle {
                 return accept;
             }
             // Only while no text field has the focus (the scope itself has it), and never with a modifier.
-            if !self.has-focus || e.modifiers.control || e.modifiers.alt || e.modifiers.meta || !CollectorBus.d-review {
+            if !self.has-focus || e.modifiers.control || e.modifiers.alt || e.modifiers.meta {
                 return reject;
             }
-            if e.text == "r" || e.text == "R" || e.text == Key.LeftArrow {
+            // ← and →: the previous and next lead, in every list (under review or not).
+            if e.text == Key.LeftArrow {
+                CollectorBus.detail-step(-1);
+                return accept;
+            }
+            if e.text == Key.RightArrow {
+                CollectorBus.detail-step(1);
+                return accept;
+            }
+            if !CollectorBus.d-review {
+                return reject;
+            }
+            if e.text == "r" || e.text == "R" {
                 CollectorBus.review("reject");
                 return accept;
             }
@@ -1980,7 +1997,7 @@ component DetailDialog inherits Rectangle {
                 CollectorBus.review("skip");
                 return accept;
             }
-            if e.text == "a" || e.text == "A" || e.text == Key.RightArrow {
+            if e.text == "a" || e.text == "A" {
                 CollectorBus.review("approve");
                 return accept;
             }
@@ -2124,11 +2141,43 @@ component DetailDialog inherits Rectangle {
                                 }
                             }
                         }
-                        if CollectorBus.d-position != "": Text {
-                            text: CollectorBus.d-position;
-                            font-size: 12.5px;
-                            color: Theme.gray-800;
-                            vertical-alignment: center;
+                        // "49 of 190" between the ← and → caps: a click (or the key) goes to the previous / next lead.
+                        if CollectorBus.d-position != "": HorizontalLayout {
+                            spacing: 6px;
+                            VerticalLayout {
+                                alignment: center;
+                                ReviewCap {
+                                    icon: Icons.arrow-left;
+                                    opacity: CollectorBus.d-has-prev ? (prev-area.has-hover ? 1 : 0.85) : 0.35;
+                                    prev-area := TipArea {
+                                        enabled: CollectorBus.d-has-prev;
+                                        tip: "Previous lead (←)";
+                                        clicked => {
+                                            CollectorBus.detail-step(-1);
+                                        }
+                                    }
+                                }
+                            }
+                            Text {
+                                text: CollectorBus.d-position;
+                                font-size: 12.5px;
+                                color: Theme.gray-800;
+                                vertical-alignment: center;
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                ReviewCap {
+                                    icon: Icons.arrow-right;
+                                    opacity: CollectorBus.d-has-next ? (next-area.has-hover ? 1 : 0.85) : 0.35;
+                                    next-area := TipArea {
+                                        enabled: CollectorBus.d-has-next;
+                                        tip: "Next lead (→)";
+                                        clicked => {
+                                            CollectorBus.detail-step(1);
+                                        }
+                                    }
+                                }
+                            }
                         }
                         VerticalLayout {
                             alignment: center;
@@ -2337,7 +2386,6 @@ component DetailDialog inherits Rectangle {
                     icon: CollectorBus.d-restricted ? Icons.rotate-cw : Icons.x;
                     ink: CollectorBus.d-restricted ? Theme.fg.with-alpha(0.8) : Theme.red-900;
                     cap: "R";
-                    cap-icon: Icons.arrow-left;
                     tip: CollectorBus.d-restricted ? "Back to Available, then the next lead" : "To Restricted (never collected again), then the next lead";
                     enabled: !CollectorBus.review-busy;
                     clicked => {
@@ -2371,7 +2419,6 @@ component DetailDialog inherits Rectangle {
                     icon: CollectorBus.d-approved ? Icons.rotate-cw : Icons.check;
                     ink: CollectorBus.d-approved ? Theme.fg.with-alpha(0.8) : Theme.green-900;
                     cap: "A";
-                    cap-icon: Icons.arrow-right;
                     tip: CollectorBus.d-approved ? "Back to Available, then the next lead" : "To Approved and Persons › Creators (nothing sent), then the next lead";
                     enabled: !CollectorBus.review-busy;
                     clicked => {

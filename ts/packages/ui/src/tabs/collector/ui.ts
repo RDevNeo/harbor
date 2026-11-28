@@ -2,8 +2,9 @@
 // same routes Hub for Android calls) and sends every change back. Five views (Collector, Available, Approved, Restricted,
 // History), picked in the sidebar; one filter box on the lists. History is every search run by day (Headquarters'
 // Timeline); a click on one shows the leads it found. A lead's detail has the review bar (Reject / Skip / Approve / Neobux,
-// R S A N or ← ↓ →; Approve puts them in the Approved list and Persons › Creators, Neobux in Approved and Persons ›
-// Neobux): each goes on to the next lead of the list the detail was opened from. Pictures and video thumbnails are files the engine cached, decoded here.
+// R S A N, ↓ Skip; Approve puts them in the Approved list and Persons › Creators, Neobux in Approved and Persons ›
+// Neobux): each goes on to the next lead of the list the detail was opened from, as a send from its Send message does.
+// ← and → go to the previous / next lead in every list. Pictures and video thumbnails are files the engine cached, decoded here.
 // While a run is going it re-reads every second; otherwise on the tabs' change events.
 // Send message is a real send: it only goes out from the dialog's second step ("Send now").
 import * as slint from "slint-ui";
@@ -80,7 +81,7 @@ export interface CollectorView {
 export interface Compose {
   id: string;
   name: string;
-  templates: { id: string; name: string; description: string; builtin: boolean }[];
+  templates: { id: string; name: string; description: string; builtin: boolean; place?: string }[];
   template: string;
   channels: { id: string; kind: string; label: string; account: string | null; connected: boolean; to: string; why: string; conn?: string }[];
   /** Where in Persons they go: Persons' places ("store:<id>", "creators"…) and the one picked. */
@@ -134,6 +135,23 @@ export function nextLead(queue: string[], current: string, live: Iterable<string
   if (at < 0) return null;
   for (let i = at + 1; i < queue.length; i++) if (queue[i] !== current && now.has(queue[i]!)) return queue[i]!;
   return null;
+}
+
+/** ← / →: the lead before (-1) or after (+1) `current` in the list the detail was opened from, as it was then (pure:
+ *  tested). Leads that left the list since (approved, sent…) are still stepped through, so one reviewed by mistake can
+ *  be opened again. Null at either end, or when the detail wasn't opened from a list. */
+export function stepLead(queue: string[], current: string, dir: number): string | null {
+  const at = queue.indexOf(current);
+  if (at < 0 || !dir) return null;
+  return queue[at + Math.sign(dir)] ?? null;
+}
+
+/** After a send from the detail (pure: tested): the next lead of its list that is still in it (the one right after the
+ *  lead sent to, which may itself have just left the list for Sent), "" at the end of the list (the detail closes), or
+ *  null when the detail wasn't opened from a list (it stays on the lead). */
+export function leadAfterSend(queue: string[], current: string, live: Iterable<string>): string | null {
+  if (!queue.includes(current)) return null;
+  return nextLead(queue, current, live) ?? "";
 }
 
 export const LIST_PLATFORMS: { key: string; label: string; color: string }[] = [
@@ -199,7 +217,7 @@ export function reachState(d: DetailView, kind: ReachKind, text: string): { erro
 export const DEST_META: Record<string, { glyph: string; color: string; app: string; hint: string }> = {
   gmail: { glyph: "email", color: "#9aa4b2", app: "Gmail", hint: "their@email.com" },
   whatsapp: { glyph: "whatsapp", color: "#25D366", app: "WhatsApp", hint: "+55 11 91234-5678" },
-  discord: { glyph: "discord", color: "#5865F2", app: "Discord", hint: "Discord user ID (17-20 digits)" },
+  discord: { glyph: "discord", color: "#5865F2", app: "Discord", hint: "Discord username or user ID" },
   instagram: { glyph: "instagram", color: "#E1306C", app: "Instagram", hint: "@handle" },
 };
 export function destRows(c: Compose): { value: string; kind: string; color: string; label: string; to: string; via: string; on: boolean; available: boolean }[] {
@@ -380,6 +398,9 @@ export function createCollectorUi(): TabUi {
   // The review bar: the list the detail was opened from (its ids in its filter and order).
   let queue: string[] = [];
   let reviewBusy = false;
+  /** The lead ← / → asked for, still being read ("" none), and the newest read's number (older ones are dropped). */
+  let stepping = "";
+  let detailSeq = 0;
   /** The open detail is being read again (its pictures came in). */
   let redetail = false;
   /** The lists' Sort or platform menu, open ("" none). */
@@ -433,8 +454,8 @@ export function createCollectorUi(): TabUi {
   };
 
   // The screenshot rig opens the Send dialog for the first lead straight away, once the first view is in.
-  let shot = process.env.HUB_COLLECTOR_SHOT_SEND === "1";
-  let shotDetail = process.env.HUB_COLLECTOR_SHOT_DETAIL === "1";
+  let shot = !!process.env.HUB_COLLECTOR_SHOT_SEND;
+  let shotDetail = Number(process.env.HUB_COLLECTOR_SHOT_DETAIL) > 0;
   // …or History's newest run that found someone (HUB_COLLECTOR_SHOT_RUN=1).
   let shotRun = process.env.HUB_COLLECTOR_SHOT_RUN === "1";
   const load = async (): Promise<void> => {
@@ -442,7 +463,9 @@ export function createCollectorUi(): TabUi {
       take((await call("GET", "v1/collector")) as CollectorView);
       if (shot) {
         shot = false;
-        const first = view?.creators.find((c) => !c.restricted);
+        // "1": the first lead; else the lead with that id or name
+        const want = process.env.HUB_COLLECTOR_SHOT_SEND ?? "1";
+        const first = view?.creators.find((c) => !c.restricted && (want === "1" || c.id === want || c.name === want));
         if (first) {
           sendId = first.id;
           await openCompose("", "");
@@ -459,8 +482,21 @@ export function createCollectorUi(): TabUi {
       }
       if (shotDetail) {
         shotDetail = false;
-        const first = view?.creators.find((c) => !c.restricted);
+        // "1": the first lead; N: the Nth of the page's list (HUB_COLLECTOR_SHOT_PAGE)
+        const n = Number(process.env.HUB_COLLECTOR_SHOT_DETAIL) || 1;
+        const first = n > 1 && view ? leadsOf(view, page, bus?.filter ?? "", historyRun).rows[n - 1] : view?.creators.find((c) => !c.restricted);
         if (first) await showDetail(first.id);
+        // HUB_COLLECTOR_SHOT_SENDS=S (only with the fake Persons, HUB_COLLECTOR_SEND=fake: nothing goes out): S s later
+        // the detail's Send message opens, then (S s apart) the template HUB_COLLECTOR_SHOT_TEMPLATE is picked (when
+        // set), "Send it?", Send now.
+        const gap = Number(process.env.HUB_COLLECTOR_SHOT_SENDS) || 0;
+        const b = bus;
+        if (gap > 0 && b && process.env.HUB_COLLECTOR_SEND === "fake") {
+          const fire = (name: string, ...a: string[]): void => (b[name] as (...x: string[]) => void)(...a);
+          const tpl = process.env.HUB_COLLECTOR_SHOT_TEMPLATE ?? "";
+          const steps: (() => void)[] = [() => fire("detail_send"), ...(tpl ? [() => fire("pick_template", tpl)] : []), () => fire("send_ask"), () => fire("send_confirm")];
+          steps.forEach((f, i) => setTimeout(f, (i + 1) * gap * 1000));
+        }
       }
     } catch (e) {
       set("error", errText(e));
@@ -687,6 +723,8 @@ export function createCollectorUi(): TabUi {
     set("d_review", underReview(d, page));
     const pos = queue.indexOf(d.id);
     set("d_position", pos >= 0 && queue.length > 1 ? `${pos + 1} of ${queue.length}` : "");
+    set("d_has_prev", !!stepLead(queue, d.id, -1));
+    set("d_has_next", !!stepLead(queue, d.id, 1));
     set("review_busy", reviewBusy);
   }
 
@@ -711,6 +749,9 @@ export function createCollectorUi(): TabUi {
     detailOpen = false;
     editOpen = false;
     queue = [];
+    // a lead still being read for ← / → doesn't open the detail again
+    stepping = "";
+    detailSeq++;
     render();
     ctx?.saveSoon?.();
   };
@@ -744,10 +785,15 @@ export function createCollectorUi(): TabUi {
   };
 
   const showDetail = async (id: string, fromList = true): Promise<void> => {
+    // the lead asked for last wins (← → pressed fast: each read that comes back late is dropped)
+    const my = ++detailSeq;
+    stepping = id;
     try {
       // Opened from a card: the review bar goes through that list, in its filter and order.
       if (fromList && view && bus) queue = leadsOf(view, page, bus.filter, historyRun).rows.map((r) => r.id);
       const d = (await call("GET", `v1/collector/creator?id=${encodeURIComponent(id)}`)) as DetailView;
+      if (my !== detailSeq) return;
+      stepping = "";
       detailOpen = true;
       editOpen = false;
       takeDetail(d, true);
@@ -761,8 +807,18 @@ export function createCollectorUi(): TabUi {
       else render();
     } catch (e) {
       filling = false;
+      if (my === detailSeq) stepping = "";
       ctx?.toast(errText(e));
     }
+  };
+
+  /** ← / → (and the header's caps): the previous or next lead of the list, in every list. Not while Edit or Send message
+   *  is over the detail, nor during a review move. */
+  const step = (dir: number): void => {
+    const d = detail;
+    if (!d || !detailOpen || editOpen || sendOpen || reviewBusy) return;
+    const other = stepLead(queue, stepping || d.id, dir);
+    if (other) void showDetail(other, false);
   };
 
   /** The rows in place (a run adds one at a time: no full redraw of the list). */
@@ -776,10 +832,10 @@ export function createCollectorUi(): TabUi {
     }
   }
 
-  const openCompose = async (template = "", channel = "", kind = "", to = "", remember = false, place = ""): Promise<void> => {
+  const openCompose = async (template = "", channel = "", kind = "", to = "", remember = false, place = "", byTemplate = false): Promise<void> => {
     if (!sendId || !bus) return;
     try {
-      const c = (await call("GET", `v1/collector/compose?id=${encodeURIComponent(sendId)}&template=${encodeURIComponent(template)}&channel=${encodeURIComponent(channel)}&kind=${encodeURIComponent(kind)}&place=${encodeURIComponent(place || compose?.place || "")}${remember ? "&remember=1" : ""}`)) as Compose;
+      const c = (await call("GET", `v1/collector/compose?id=${encodeURIComponent(sendId)}&template=${encodeURIComponent(template)}&channel=${encodeURIComponent(channel)}&kind=${encodeURIComponent(kind)}&place=${encodeURIComponent(place || compose?.place || "")}${remember ? "&remember=1" : ""}${byTemplate ? "&bytemplate=1" : ""}`)) as Compose;
       const keepTo = compose && compose.id === c.id && compose.channel === c.channel ? bus.s_to : null;
       // another destination keeps what was written (the same template); another template fills it again
       const keep = !!compose && compose.id === c.id && compose.template === c.template && (compose.channel !== c.channel || compose.place !== c.place);
@@ -921,7 +977,8 @@ export function createCollectorUi(): TabUi {
       render();
     });
     // what the user picks is remembered (the next composer opens on that template and channel)
-    on("pick_template", (id: string) => void openCompose(id, compose?.channel ?? "", "", "", true));
+    // a template with a Persons place moves "Add to Persons ›" there (the user can still pick another after)
+    on("pick_template", (id: string) => void openCompose(id, compose?.channel ?? "", "", "", true, "", true));
     on("pick_channel", (id: string) => void openCompose(compose?.template ?? "", id, "", "", true));
     // another place in Persons: its connections (the same kind of channel when it has one), what's written stays
     on("pick_place", (v: string) => {
@@ -944,12 +1001,19 @@ export function createCollectorUi(): TabUi {
       sendError = "";
       render();
       void call("POST", "v1/collector/send", { id: c.id, channel: c.channel, to: b.s_to.trim(), subject: b.s_subject.trim(), text: b.s_text, template: c.template, place: c.place ?? "creators" })
-        .then(() => {
+        .then(async () => {
           sendOpen = false;
           sendConfirm = false;
           ctx?.toast(`Sent to ${c.name}. They're in Persons › ${c.placeLabel ?? "Creators"}.`);
-          void load();
-          if (detailOpen && detail?.id === c.id) void call("GET", `v1/collector/creator?id=${encodeURIComponent(c.id)}`).then((d) => takeDetail(d as DetailView, false), () => {});
+          await load();
+          if (!detailOpen || detail?.id !== c.id) return;
+          // Sent from the detail: on to the lead that was after this one in its list (this one may have just left it
+          // for Sent), the list again at its end; a detail not opened from a list stays, up to date.
+          const v = view;
+          const next = v ? leadAfterSend(queue, c.id, leadsOf(v, page, b.filter ?? "", historyRun).rows.map((r) => r.id)) : null;
+          if (next) void showDetail(next, false);
+          else if (next === "") closeDetail();
+          else void call("GET", `v1/collector/creator?id=${encodeURIComponent(c.id)}`).then((d) => takeDetail(d as DetailView, false), () => {});
         })
         .catch((e: unknown) => {
           sendError = errText(e);
@@ -972,6 +1036,7 @@ export function createCollectorUi(): TabUi {
       ctx?.saveSoon?.();
     });
     on("detail_close", () => closeDetail());
+    on("detail_step", (dir: number) => step(dir));
     on("review", (what: string) => {
       if ((REVIEW_MOVES as readonly string[]).includes(what)) void review(what as ReviewMove);
     });
@@ -1085,12 +1150,13 @@ export function createCollectorUi(): TabUi {
       const c = compose;
       if (!c) return;
       const t = c.templates.find((x) => x.id === c.template);
-      const body = { ...(t && t.id !== "blank" ? { id: t.id, name: t.name, description: t.description } : { name: `Template ${new Date().toLocaleDateString("en-GB")}`, description: "" }), subject: b.s_subject, body: b.s_text.split(c.name).join("{name}") };
+      // the place picked goes with it: picking it again sends them there
+      const body = { ...(t && t.id !== "blank" ? { id: t.id, name: t.name, description: t.description } : { name: `Template ${new Date().toLocaleDateString("en-GB")}`, description: "" }), subject: b.s_subject, body: b.s_text.split(c.name).join("{name}"), place: c.place ?? "" };
       void call("POST", "v1/collector/template", body)
         .then((r) => {
           const id = (r as { template: { id: string } }).template.id;
           if (compose) {
-            compose.templates = ((r as { templates: Compose["templates"] }).templates ?? compose.templates).map((x) => ({ id: x.id, name: x.name, description: x.description, builtin: x.builtin }));
+            compose.templates = ((r as { templates: Compose["templates"] }).templates ?? compose.templates).map((x) => ({ id: x.id, name: x.name, description: x.description, builtin: x.builtin, place: x.place ?? "" }));
             compose.template = id;
           }
           saved = "Saved";

@@ -113,7 +113,8 @@ Per tab:
   Clear, Send message); the review bar under it while the lead is under review (none for an Approved one, as on the PC). Under the footer's row (Quick note Input, the
   "Approve to: …" trigger and its menu above it, Open channel / Edit) the review bar: three equal 56px cells with
   hairlines, Reject (red-900) / Skip (fg 60%) / Approve (green-900), icon + 15px/500 label + 16px outlined key caps,
-  the cell tinted 8% on hover; keys R S A, ← ↓ →, N (the note) only while no field has the focus. Send message (the Reach section's one button) is a DialogFrame (760): templates on the left; on the right
+  the cell tinted 8% on hover; keys R S A N and ↓ (Skip) only while no field has the focus; ← → (16px outlined caps
+  either side of the header's "3 of 12", clickable) go to the previous / next lead in every list, also outside review. Send message (the Reach section's one button) is a DialogFrame (760): templates on the left; on the right
   Persons' composer frame (radius 12, hairline): a 48px To row (the destination pill, brand mark + name + chevron, whose
   PopoverFrame lists Email / WhatsApp / Discord / Instagram as 46px rows: tinted brand mark, who they are there, the
   account or why not in amber, a tick on the one picked; then the address Input), a hairline, Subject (email), a
